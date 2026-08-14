@@ -246,6 +246,9 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   // This car's own history + whether it already has a request in flight. Both are best-effort: a failed
   // fetch just leaves the panel off. The server guard is the real fence, not these notes.
   useEffect(() => {
+    // A refusal belongs to the car it was about. Leaving it on screen while a DIFFERENT car is picked
+    // is how "89529 — Available" ends up sitting above "this car is already in the pipeline".
+    setError(null);
     if (!vehicleId) { setRecent([]); setInFlight(null); return undefined; }
     let alive = true;
     setRecentLoading(true);
@@ -313,9 +316,11 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     || (mode === MODE_REASON && !!reasonCode && (reasonCode !== 'other' || !!note.trim()))
     || (mode === MODE_NOTE   && !!note.trim());
 
-  // A car with a request already in flight can't be flagged again (the server refuses it too) — but an
-  // observation is a note, not a request, so that path stays open.
-  const blocked = door === DOOR_INSPECTION && !isObservation && !!inFlight;
+  // A car with a request already in flight can't be flagged again, and it can't be sent straight to a
+  // garage either — the server refuses BOTH doors on the same fact, so both must say so before the form
+  // is filled in rather than after it is submitted. An observation is a note, not a request, so that
+  // path stays open.
+  const blocked = !isObservation && !!inFlight;
   const disabled = saving || !vehicleId || blocked || !statementReady;
 
   // ── submit ─────────────────────────────────────────────────────────────────────────────────────
@@ -484,7 +489,7 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
 
           {/* Already in flight — say what stage it's at, who raised it and what they reported, so the
               point that's already been made is visible before this one is written out. */}
-          {inFlight && door === DOOR_INSPECTION && (
+          {inFlight && (
             <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-900 ring-1 ring-inset ring-amber-500/30">
               <p className="font-semibold">{t('workflow.hint.inFlightTitle')}</p>
               <p className="mt-0.5">
@@ -495,7 +500,13 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
                     : 'workflow.hint.inFlightPending')}
               </p>
               {inFlight.note && <p className="mt-1 text-amber-800/80">{t('workflow.hint.inFlightNote', { note: inFlight.note })}</p>}
-              <p className="mt-1.5">{t(isObservation ? 'workflow.hint.inFlightObservation' : 'workflow.hint.inFlightBlocked')}</p>
+              <p className="mt-1.5">
+                {t(isObservation
+                  ? 'workflow.hint.inFlightObservation'
+                  : door === DOOR_DISPATCH
+                    ? 'workflow.hint.inFlightDispatchBlocked'
+                    : 'workflow.hint.inFlightBlocked')}
+              </p>
               {inFlight.url && (
                 <a href={inFlight.url} className="mt-1 inline-block font-semibold underline hover:no-underline">
                   {t('workflow.hint.inFlightLink')}

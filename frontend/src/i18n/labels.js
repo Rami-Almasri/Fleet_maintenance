@@ -2448,6 +2448,9 @@ const en = {
       inFlightBySystem: 'Raised automatically by the system · {when}',
       inFlightNote: 'What was reported: “{note}”',
       inFlightBlocked: 'One request per car — no need to flag it again. If you have something new to add, tell the office and it goes on the request that’s already open.',
+      // Same fact on the other door: the car can't be committed to a garage while its own request is
+      // still being decided — the open one has to be settled first, not raced.
+      inFlightDispatchBlocked: 'This car can’t be sent to a garage while that request is still open — settle it there first, and it can go straight out from the same ticket.',
       inFlightObservation: 'You can still log your note — an observation is a record on the car, not a second request.',
       inFlightObservationRaise: 'A request is already open for this car, so this note can’t raise a new one.',
       inFlightLink: 'Open the request',
@@ -7260,6 +7263,7 @@ const ar = {
       inFlightBySystem: 'رفعها النظام تلقائيًا · {when}',
       inFlightNote: 'ما تم الإبلاغ عنه: «{note}»',
       inFlightBlocked: 'طلب واحد لكل سيارة — لا حاجة للإبلاغ عنها مرة أخرى. إن كان لديك ما تضيفه، أبلغ المكتب ليُضاف إلى الطلب المفتوح.',
+      inFlightDispatchBlocked: 'لا يمكن إرسال هذه السيارة إلى كراج والطلب المفتوح لم يُبتّ فيه بعد — احسم ذلك الطلب أولًا، ومنه تخرج السيارة مباشرة.',
       inFlightObservation: 'لا يزال بإمكانك تسجيل ملاحظتك — الملاحظة سجلّ على السيارة، وليست طلبًا ثانيًا.',
       inFlightObservationRaise: 'يوجد طلب مفتوح لهذه السيارة، لذا لا يمكن لهذه الملاحظة أن ترفع طلبًا جديدًا.',
       inFlightLink: 'افتح الطلب',

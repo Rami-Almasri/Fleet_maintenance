@@ -1327,13 +1327,36 @@ class MaintenanceWorkflowService
         $this->assertActiveFleet($vehicle);
 
         // A car already in the pipeline must not be sent in twice: the second ticket would compete with
-        // the first for the same physical car and split its story. The same guard the inspection door
-        // uses, for the same reason — but widened, because here we must also refuse a car that is
-        // already a committed ticket, not merely a pending request.
-        if ($open = Maintenance::openWorkflow()->where('vehicle_id', $vehicleId)->orderByDesc('id')->first()) {
+        // the first for the same physical car and split its story. Two facts make that true, and only
+        // two — asking `openWorkflow()` instead (ANY non-terminal ticket) refused cars that are plainly
+        // free, and the form had no way to know it: a car back in service with only its invoice
+        // outstanding, an on-site job, a paused-and-rented repair, a fenced complaint/recommendation.
+        // Each of those reads Available in the picker, so the person saw a green badge and a refusal in
+        // the same breath.
+        //
+        //   1. the car is actually HELD — the same authority the picker hides cars by, so the two can
+        //      never disagree (committed ticket, open U contract, manual garage event, returned-pending-
+        //      handover). See OperationsService::vehicleInMaintenance().
+        if ($this->operations->vehicleInMaintenance($vehicleId)) {
+            $held = Maintenance::openWorkflow()->where('vehicle_id', $vehicleId)
+                ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)
+                ->orderByDesc('id')->first();
             throw new WorkflowTransitionException(
                 'This car is already in the maintenance pipeline — it cannot be sent in twice.',
-                ['field' => 'vehicle_id', 'ticket_id' => $open->id, 'state' => $open->workflow_status]
+                array_filter([
+                    'field'     => 'vehicle_id',
+                    'ticket_id' => $held?->id,
+                    'state'     => $held?->workflow_status,
+                ], fn ($v) => $v !== null)
+            );
+        }
+
+        //   2. a live inspection request is in flight — the pre-ticket states the picker CANNOT see, and
+        //      the identical guard the inspection door applies. Same fact, same source, one message each.
+        if ($inFlight = $this->liveInspectionRequest($vehicleId)) {
+            throw new WorkflowTransitionException(
+                'This car already has an inspection request in progress — decide on that one instead of opening a second.',
+                ['field' => 'vehicle_id', 'ticket_id' => $inFlight->id, 'state' => $inFlight->workflow_status]
             );
         }
 
