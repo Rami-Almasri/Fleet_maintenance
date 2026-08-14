@@ -49,7 +49,7 @@ export default function NotificationBell() {
   const badge = unreadCount > 99 ? '99+' : unreadCount;
 
   return (
-    <div ref={wrapRef} className="relative">
+    <div ref={wrapRef} className="relative shrink-0">
       <button
         onClick={() => setOpen((v) => !v)}
         className={`relative rounded-xl p-2 text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 ${open ? 'bg-slate-100 text-slate-700' : ''}`}
@@ -79,7 +79,11 @@ export default function NotificationBell() {
           {/* mobile scrim */}
           <div className="fixed inset-0 z-30 sm:hidden" onClick={() => setOpen(false)} />
 
-          <div className="absolute end-0 z-40 mt-2 w-[min(92vw,24rem)] origin-top-right animate-pop overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-card">
+          {/* On a phone the panel is anchored to the viewport, not to the bell:
+              a 92vw panel hung off a button that sits ~50px from the right edge
+              spills past the left edge and gives the whole page a sideways
+              scroll. From sm up it goes back to a normal anchored dropdown. */}
+          <div className="fixed inset-x-3 top-[4.25rem] z-40 origin-top animate-pop overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-card sm:absolute sm:inset-x-auto sm:end-0 sm:top-full sm:mt-2 sm:w-96 sm:origin-top-right">
             {/* header */}
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-4 py-3">
               <div className="flex items-center gap-2">

@@ -445,10 +445,12 @@ export default function AppLayout() {
       {/* Full-width shell — no sidebar. The launcher (/) is home; the header
           Back/Home buttons + the module tab bar + ⌘K search carry navigation. */}
       <div>
-        <header className="glass sticky top-0 z-20 flex h-16 items-center gap-2 border-b border-slate-200/70 px-4 sm:gap-4 sm:px-6 lg:px-8">
+        <header className="glass sticky top-0 z-20 flex h-16 items-center gap-2 border-b border-slate-200/70 px-3 sm:gap-4 sm:px-6 lg:px-8">
           {isLauncher ? (
             // Home surface — show the full brand lockup, no nav buttons needed.
-            <div className="flex min-w-0 flex-1 items-center">
+            // `overflow-hidden` keeps the lockup inside its share of the bar so a
+            // long wordmark truncates instead of sliding under the action cluster.
+            <div className="flex min-w-0 flex-1 items-center overflow-hidden">
               <Brand />
             </div>
           ) : (
@@ -492,7 +494,10 @@ export default function AppLayout() {
             </div>
           )}
 
-          <div className="flex items-center gap-1.5 sm:gap-3">
+          {/* Action cluster. `shrink-0` is load-bearing: without it flexbox
+              shrinks this box below the width of its (non-shrinkable) buttons,
+              and they spill backwards across the brand / page title. */}
+          <div className="flex shrink-0 items-center gap-1 sm:gap-3">
             <LiveClock name={user?.name} />
 
             <LanguageToggle />
@@ -527,12 +532,12 @@ export default function AppLayout() {
               <p className="text-sm font-semibold leading-tight text-slate-900">{user?.name}</p>
               <p className="text-xs text-slate-500">{user?.email}</p>
             </div>
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-600 text-sm font-semibold text-white shadow-sm ring-2 ring-white">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-sm font-semibold text-white shadow-sm ring-2 ring-white">
               {initial}
             </div>
             <button
               onClick={handleLogout}
-              className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+              className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600 sm:p-2"
               title={t('shell.logout')}
               aria-label={t('shell.logout')}
             >

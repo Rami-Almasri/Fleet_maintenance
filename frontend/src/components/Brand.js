@@ -20,7 +20,7 @@ export default function Brand({ collapsed = false, markOnly = false }) {
   return (
     <div className={`flex items-center gap-3 ${collapsed ? 'lg:justify-center' : ''}`}>
       {/* Mark / logo — fixed 36px square on a dark tile so the yellow pops. */}
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-navy-950 p-1 shadow-sm ring-1 ring-accent-400/25">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-navy-950 p-1 shadow-sm ring-1 ring-violet-400/25">
         {imgOk ? (
           <img
             src={LOGO_SRC}
@@ -29,7 +29,7 @@ export default function Brand({ collapsed = false, markOnly = false }) {
             onError={() => setImgOk(false)}
           />
         ) : (
-          <svg className="h-5 w-5 text-accent-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <svg className="h-5 w-5 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 13l2-5a3 3 0 0 1 2.8-2h8.4A3 3 0 0 1 19 8l2 5M5 13h14M5 13v4m14-4v4M7 17h.01M17 17h.01" />
           </svg>
         )}
@@ -39,8 +39,14 @@ export default function Brand({ collapsed = false, markOnly = false }) {
           when the caller asks for the mark only (e.g. a compact header). */}
       {!markOnly && (
       <div className={`min-w-0 leading-tight ${collapsed ? 'lg:hidden' : ''}`}>
-        <p className="truncate font-display text-[16px] font-bold tracking-tight text-white">Faster</p>
-        <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-400/90">{t('Fleet Maintenance')}</p>
+        {/* The lockup sits on the LIGHT glass header, so the wordmark is ink —
+            white only in the dark cockpit theme, where the header goes navy. */}
+        <p className="truncate font-display text-[15px] font-bold tracking-tight text-slate-900 dark:text-white sm:text-[16px]">Faster</p>
+        {/* The tagline is the first thing to go on a phone — it costs a whole
+            line of width and the mark already carries the identity. */}
+        {/* The lemon accent ramp is exposed to Tailwind as `violet-*` (see
+            tailwind.config.js → --accent-*); `accent-*` is not a color key. */}
+        <p className="hidden truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-600 dark:text-violet-400/90 sm:block">{t('Fleet Maintenance')}</p>
       </div>
       )}
     </div>
