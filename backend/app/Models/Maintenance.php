@@ -756,15 +756,33 @@ class Maintenance extends Model
      *   not the stint was ever visible as an open contract. Only ever applied to a system_schedule
      *   request: a person's request stands until a person answers it.
      *   See MaintenanceWorkflowService::withdrawRequestsWhoseConditionCleared().
+     *
+     *   superseded_by_test — somebody DROVE the car and sent it to a garage. The three codes above are
+     *   facts about where the car is; this one is a fact about what is known. A system request is the
+     *   scanner SUGGESTING a test because a threshold moved — it is a guess made from mileage and dates,
+     *   by nobody, about a car nobody has been in. When a person then drives that car and commits it to a
+     *   workshop (openDirectDispatch), the question the suggestion was asking has been answered by the
+     *   only authority that could answer it, and leaving the card up would ask a Controller to approve a
+     *   test drive for a car that is already on its way to a garage.
+     *   Only ever applied to a system request that is still `pending_review`, and only while the car is
+     *   OUT ON HIRE — the case the rule was written for. A person's request is never retired by this
+     *   (a person's request stands until a person answers it), and a request the Inspector already holds
+     *   is never yanked out from under him.
+     *   Like `condition_cleared`, this one is EXCLUDED from the review queue entirely: a ticket already
+     *   exists for the car and is on the board, so a card asking a Controller to decide it would be
+     *   backlog. The withdrawal row stays for audit; only the queue stops carrying it.
+     *   See MaintenanceWorkflowService::weighInFlightRequest().
      */
     public const REVIEW_REJECT_IN_MAINTENANCE_CONTRACT = 'in_maintenance_contract';
     public const REVIEW_REJECT_IN_WORKSHOP_LOG         = 'in_workshop_log';
     public const REVIEW_REJECT_CONDITION_CLEARED       = 'condition_cleared';
+    public const REVIEW_REJECT_SUPERSEDED_BY_TEST      = 'superseded_by_test';
 
     public const REVIEW_SYSTEM_WITHDRAWAL_REASONS = [
         self::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT => 'Already in maintenance (OfficeManager contract)',
         self::REVIEW_REJECT_IN_WORKSHOP_LOG         => 'Already in the workshop (garage log)',
         self::REVIEW_REJECT_CONDITION_CLEARED       => 'Back from maintenance — the check clock restarted',
+        self::REVIEW_REJECT_SUPERSEDED_BY_TEST      => 'Someone drove the car and sent it in',
     ];
 
     /** True when a stored rejection code was written by the system, not chosen by a reviewer. */

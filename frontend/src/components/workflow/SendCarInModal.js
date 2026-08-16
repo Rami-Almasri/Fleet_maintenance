@@ -29,6 +29,7 @@
 // Every string resolves through the i18n catalog (workflow.sendIn.*) so it mirrors cleanly in Arabic/RTL.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
 import { useI18n } from '../../i18n/I18nContext';
@@ -38,6 +39,9 @@ import Button from '../ui/Button';
 import Icon from '../ui/Icon';
 import { Textarea } from '../ui/Field';
 import VehicleStatusSelect from './VehicleStatusSelect';
+// One normaliser for the Symptom → Root-Cause key, shared with the Diagnosis step — two copies of this
+// rule is how the intake panel and the Inspector's picker quietly start quoting different lists.
+import { normalizeSymptom } from './RootCausePicker';
 
 // The two doors. `dispatch` is filtered out for anyone without dispatch/diagnostic authority — the
 // route refuses it anyway; hiding it stops people filling in a form they cannot submit.
@@ -218,7 +222,8 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   const [note, setNote]           = useState('');
   const [observationRaise, setObservationRaise] = useState(false);
 
-  const [options, setOptions] = useState(null);     // { fault_groups, reasons, filed_by, can_dispatch }
+  const navigate = useNavigate();
+  const [options, setOptions] = useState(null);     // { fault_groups, fault_causes, reasons, filed_by, … }
   const [recent, setRecent]   = useState([]);       // this car's own fault history
   const [recentLoading, setRecentLoading] = useState(false);
   const [inFlight, setInFlight] = useState(null);
@@ -286,6 +291,8 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
       return [...prev, {
         text: f.name, slug: f.slug, fault_catalog_id: f.id,
         category_key: f.category_key, repeat_of_ticket_id: null,
+        // Filled in only if they go on to say what they think it is (see pickCause).
+        root_cause: null, root_cause_id: null,
       }];
     });
   }, []);
@@ -301,6 +308,7 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
       return [...prev, {
         text: h.text, slug: null, fault_catalog_id: h.fault_catalog_id,
         category_key: h.category_key, repeat_of_ticket_id: h.ticket_id,
+        root_cause: null, root_cause_id: null,
       }];
     });
   }, []);
@@ -308,6 +316,31 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   const historyPicked = (h) => faults.some(
     (p) => p.text.toLowerCase() === h.text.toLowerCase() && p.repeat_of_ticket_id === h.ticket_id
   );
+
+  // The probable causes behind each fault currently picked, in pick order. Faults the knowledge base has
+  // nothing for are dropped rather than shown empty — "no causes listed" tells the requester nothing and
+  // reads as a gap in the car's story rather than a gap in the library. `index` addresses the fault row,
+  // not its text: the same fault can be picked from the catalog and from history, and a text key would
+  // make one tap light up both.
+  const causesForPicked = useMemo(() => {
+    const catalog = options?.fault_causes || {};
+    return faults
+      .map((f, index) => ({
+        index,
+        text:   f.text,
+        picked: f.root_cause_id || null,
+        causes: catalog[normalizeSymptom(f.text)] || [],
+      }))
+      .filter((row) => row.causes.length > 0);
+  }, [faults, options]);
+
+  // Pick (or unpick) the suspected cause on ONE fault. Never more than one per fault — "it's this or
+  // that" is not a suspicion, it is the absence of one, and the inspector is the one being asked.
+  const pickCause = useCallback((index, cause) => {
+    setFaults((prev) => prev.map((f, i) => (i === index
+      ? { ...f, root_cause: cause?.root_cause || null, root_cause_id: cause?.id || null }
+      : f)));
+  }, []);
 
   // ── validity ───────────────────────────────────────────────────────────────────────────────────
   const reasonList = options?.reasons?.[door] || {};
@@ -320,7 +353,19 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   // garage either — the server refuses BOTH doors on the same fact, so both must say so before the form
   // is filled in rather than after it is submitted. An observation is a note, not a request, so that
   // path stays open.
-  const blocked = !isObservation && !!inFlight;
+  //
+  // ONE exception, and the server computes it (`can_supersede`) rather than the form guessing: the system
+  // SUGGESTED a test for a car that is out on hire. That suggestion was made from mileage and dates by
+  // nobody, and it is the only thing standing in the way. The person filling this form has been in the
+  // car, so BOTH doors stay open and the suggestion is stood down on submit — a guess does not outrank a
+  // statement, whichever door the statement comes through. (A person's request still blocks both doors:
+  // that is the duplicate this guard exists to stop.)
+  const canSupersede = !!inFlight?.can_supersede;
+  // The request door ADDS to an open request rather than opening a second one, so an open request is not
+  // a refusal there — it only changes what the button does and what happens next. The one genuine dead
+  // end left is the garage door while the Inspector already holds the car: that is assigned work.
+  const isAdding = !isObservation && !!inFlight && door === DOOR_INSPECTION;
+  const blocked = !isObservation && !!inFlight && !isAdding && !canSupersede;
   const disabled = saving || !vehicleId || blocked || !statementReady;
 
   // ── submit ─────────────────────────────────────────────────────────────────────────────────────
@@ -363,23 +408,39 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
       // C) The Controller's own call: past the review gate (she IS the review authority), straight to
       //    the inspector, who is notified now.
       if (isOffice) {
-        await api.post('/maintenance-tickets/request-inspection', {
+        const officeResp = await api.post('/maintenance-tickets/request-inspection', {
           vehicle_id: Number(vehicleId),
           trigger_reason: 'test_drive',
           notes: note.trim() || null,
           ...statementBody(),
         });
+        // Same rule on this door: if it was added to an open request, the card is the next step.
+        if (isAdding) {
+          const id = officeResp?.data?.data?.id || inFlight?.ticket_id;
+          onDone?.(t('workflow.sendIn.success.added'));
+          if (id) navigate(`/inspection-review?ticket=${id}`);
+          return;
+        }
         onDone?.(t('workflow.success.requestOffice', { who: '' }).trim());
         return;
       }
 
       // D) The driver's request — into the Controllers' review queue.
-      await api.post('/maintenance-tickets/request', {
+      const resp = await api.post('/maintenance-tickets/request', {
         vehicle_id: Number(vehicleId),
         trigger_reason: VOICE_DROVE,
         customer_complaint: note.trim() || null,
         ...statementBody(),
       });
+      // Added to a request that was already open: the useful next step is the card itself, so hand them
+      // straight to it (deep-link highlights it) instead of leaving them to find it in the queue. This is
+      // where a rented car is marked and where it gets approved.
+      if (isAdding) {
+        const id = resp?.data?.data?.id || inFlight?.ticket_id;
+        onDone?.(t('workflow.sendIn.success.added'));
+        if (id) navigate(`/inspection-review?ticket=${id}`);
+        return;
+      }
       onDone?.(t('workflow.sendIn.success.request'));
     } catch (e) {
       setError(e?.response?.data?.message || t('workflow.error.generic'));
@@ -413,9 +474,11 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
       >
         {isObservation
           ? t('workflow.sendIn.submit.observation')
-          : door === DOOR_DISPATCH
-            ? t('workflow.sendIn.submit.dispatch')
-            : t('workflow.sendIn.submit.request')}
+          : isAdding
+            ? t('workflow.sendIn.submit.add')
+            : door === DOOR_DISPATCH
+              ? t('workflow.sendIn.submit.dispatch')
+              : t('workflow.sendIn.submit.request')}
       </Button>
     </>
   );
@@ -503,9 +566,11 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
               <p className="mt-1.5">
                 {t(isObservation
                   ? 'workflow.hint.inFlightObservation'
-                  : door === DOOR_DISPATCH
-                    ? 'workflow.hint.inFlightDispatchBlocked'
-                    : 'workflow.hint.inFlightBlocked')}
+                  : isAdding
+                    ? 'workflow.hint.inFlightAdd'
+                    : canSupersede
+                      ? 'workflow.hint.inFlightSupersede'
+                      : 'workflow.hint.inFlightDispatchBlocked')}
               </p>
               {inFlight.url && (
                 <a href={inFlight.url} className="mt-1 inline-block font-semibold underline hover:no-underline">
@@ -627,6 +692,57 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
                     <span className="ms-auto pe-1 text-[11px] font-medium text-indigo-600">
                       {t('workflow.sendIn.fault.count', { n: faults.length })}
                     </span>
+                  </div>
+                )}
+
+                {/* ── WHAT DO YOU THINK IT IS? ─────────────────────────────────────────────────────
+                    The curated short-list a mechanic works through for the fault just named — the SAME
+                    list the Inspector is offered at the Diagnosis step, so the two can never quote
+                    different vocabularies.
+
+                    OPTIONAL, and one per fault. What is recorded is a SUSPICION (`suspected_cause`)
+                    sitting beside the fault name, which is itself a claim — picking one does not
+                    diagnose the car, skip the inspector or change where the request goes. Tap again to
+                    unpick. (On the straight-to-garage door there is no inspector following, so the
+                    server writes the pick onto the finding instead — same tap, more authority behind
+                    it.) */}
+                {causesForPicked.length > 0 && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <Icon.Wrench className="h-3.5 w-3.5 text-slate-400" />
+                      {t('workflow.sendIn.causes.title')}
+                    </p>
+                    <div className="space-y-2.5">
+                      {causesForPicked.map(({ index, text, causes, picked }) => (
+                        <div key={`${text}-${index}`}>
+                          <p className="text-[11px] font-semibold text-slate-600">{text}</p>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {causes.map((c) => {
+                              const on = picked === c.id;
+                              return (
+                                <button
+                                  key={c.id}
+                                  type="button"
+                                  onClick={() => pickCause(index, on ? null : c)}
+                                  aria-pressed={on}
+                                  title={c.description || undefined}
+                                  className={`rounded-full px-2.5 py-0.5 text-[11px] ring-1 transition ${
+                                    on
+                                      ? 'bg-indigo-600 text-white ring-indigo-600'
+                                      : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  {c.root_cause}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-2 border-t border-slate-100 pt-2 text-[11px] leading-relaxed text-slate-400">
+                      {t('workflow.sendIn.causes.note')}
+                    </p>
                   </div>
                 )}
 

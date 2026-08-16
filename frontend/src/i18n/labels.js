@@ -2448,9 +2448,16 @@ const en = {
       inFlightBySystem: 'Raised automatically by the system · {when}',
       inFlightNote: 'What was reported: “{note}”',
       inFlightBlocked: 'One request per car — no need to flag it again. If you have something new to add, tell the office and it goes on the request that’s already open.',
+      // One request per car, reached by ADDING to it rather than by turning the second person away. What
+      // they write here joins the open request, and they land on it so they can act on it.
+      inFlightAdd: 'One request per car — so this goes onto the one that’s already open instead of starting a second. Say what you found and we’ll add it, then take you to the request so you can approve it.',
       // Same fact on the other door: the car can't be committed to a garage while its own request is
       // still being decided — the open one has to be settled first, not raced.
       inFlightDispatchBlocked: 'This car can’t be sent to a garage while that request is still open — settle it there first, and it can go straight out from the same ticket.',
+      // The one case where the open request does NOT stand in the way: the system suggested a test for a
+      // car that is out on hire. Nobody has been in that car — you have. Sending it in answers the
+      // suggestion, so it is stood down rather than left waiting in a queue nobody can honestly decide.
+      inFlightSupersede: 'The system suggested this test on its own — nobody had driven the car. You have, so what you say here answers it: that suggestion is stood down and this car goes on your word instead. Carry on.',
       inFlightObservation: 'You can still log your note — an observation is a record on the car, not a second request.',
       inFlightObservationRaise: 'A request is already open for this car, so this note can’t raise a new one.',
       inFlightLink: 'Open the request',
@@ -3024,6 +3031,12 @@ const en = {
         detailPlaceholder: 'When it happens, what it sounds like, how bad…',
       },
 
+      // Optional "what do you think it is?" pick under each named fault — a suspicion, not a diagnosis.
+      causes: {
+        title: 'What do you think it is? (optional)',
+        note:  'This is the list the workshop works through for that fault. Pick one if you have a hunch — it goes in as what YOU think, not as the answer, and whoever looks at the car still decides. Tap it again to unpick.',
+      },
+
       reason: {
         // Per-code wording. These mirror Maintenance::REQUEST_REASON_CODES; the code is the stored
         // fact and this is only how it reads, so rewording here rewrites nothing.
@@ -3065,11 +3078,13 @@ const en = {
         request:     'Send request',
         dispatch:    'Send to the garage',
         observation: 'Save note',
+        add:         'Add to the open request',
       },
 
       success: {
         request:  'Sent — the office will review it and the inspector takes it from there.',
         dispatch: 'Sent in — waiting for a supervisor to pick the garage.',
+        added:    'Added to the request that was already open — here it is.',
       },
     },
     success: {
@@ -7263,7 +7278,9 @@ const ar = {
       inFlightBySystem: 'رفعها النظام تلقائيًا · {when}',
       inFlightNote: 'ما تم الإبلاغ عنه: «{note}»',
       inFlightBlocked: 'طلب واحد لكل سيارة — لا حاجة للإبلاغ عنها مرة أخرى. إن كان لديك ما تضيفه، أبلغ المكتب ليُضاف إلى الطلب المفتوح.',
+      inFlightAdd: 'طلب واحد لكل سيارة — لذلك سيُضاف هذا إلى الطلب المفتوح بدل فتح طلب ثانٍ. قل ما وجدته وسنضيفه، ثم ننقلك إلى الطلب لتوافق عليه.',
       inFlightDispatchBlocked: 'لا يمكن إرسال هذه السيارة إلى كراج والطلب المفتوح لم يُبتّ فيه بعد — احسم ذلك الطلب أولًا، ومنه تخرج السيارة مباشرة.',
+      inFlightSupersede: 'النظام اقترح هذا الفحص من تلقاء نفسه — لم يكن أحد قد قاد السيارة. أنت قدتها، وما تقوله هنا يُجيب على الاقتراح: يُسحَب ذلك الاقتراح وتمضي السيارة بكلامك أنت. تابع.',
       inFlightObservation: 'لا يزال بإمكانك تسجيل ملاحظتك — الملاحظة سجلّ على السيارة، وليست طلبًا ثانيًا.',
       inFlightObservationRaise: 'يوجد طلب مفتوح لهذه السيارة، لذا لا يمكن لهذه الملاحظة أن ترفع طلبًا جديدًا.',
       inFlightLink: 'افتح الطلب',
@@ -7805,6 +7822,11 @@ const ar = {
         detailPlaceholder: 'متى يحدث، كيف يبدو صوته، وما مدى سوئه…',
       },
 
+      causes: {
+        title: 'ما الذي تظنّه السبب؟ (اختياري)',
+        note:  'هذه هي القائمة التي تمرّ عليها الورشة لهذا العطل. اختر واحدًا إن كان لديك ترجيح — يُسجَّل بوصفه ما تظنّه أنت، لا بوصفه الجواب، ويبقى القرار لمن يفحص السيارة. اضغط عليه مرة أخرى لإلغاء الاختيار.',
+      },
+
       reason: {
         inspection: {
           warning_light:       'ضوء تحذير مضاء',
@@ -7843,11 +7865,13 @@ const ar = {
         request:     'إرسال الطلب',
         dispatch:    'أرسِل إلى الكراج',
         observation: 'حفظ الملاحظة',
+        add:         'أضِف إلى الطلب المفتوح',
       },
 
       success: {
         request:  'أُرسل — سيراجعه المكتب ثم يتولّاه المفتش.',
         dispatch: 'أُرسلت — بانتظار اختيار المشرف للكراج.',
+        added:    'أُضيف إلى الطلب المفتوح أصلًا — وها هو.',
       },
     },
     success: {

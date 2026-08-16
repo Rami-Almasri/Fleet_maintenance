@@ -319,10 +319,34 @@ class MaintenanceWorkflowController extends Controller
                 ])
                 ->values();
 
+            // WHAT A NAMED FAULT USUALLY TURNS OUT TO BE — the curated Symptom → Root-Cause short-list
+            // (FaultCause, approved rows only), keyed by the same normalised symptom the Diagnosis step
+            // keys it by, so the intake form and the Inspector's picker can never quote different lists.
+            //
+            // SELECTABLE at intake: the requester may name the cause they suspect, and it is stored beside
+            // their fault as `suspected_cause` — a claim, exactly as the fault name is a claim. It does not
+            // diagnose the car; the Inspector still decides at the Decide step from this same short-list.
+            // (The one exception is the straight-to-garage door, where the person holds diagnostic
+            // authority and no inspector follows, so the pick lands on the finding itself.)
+            //
+            // The `id` is what rides back, because the code is the stored fact and the words are only how
+            // it reads. `fault_catalog_id` is NOT used to join — it is unpopulated on every row;
+            // `symptom_key` is the live key.
+            $causes = \App\Models\FaultCause::approved()
+                ->orderBy('root_cause')
+                ->get(['id', 'symptom_key', 'root_cause', 'description'])
+                ->groupBy('symptom_key')
+                ->map(fn ($rows) => $rows->map(fn ($c) => array_filter([
+                    'id'          => $c->id,
+                    'root_cause'  => $c->root_cause,
+                    'description' => $c->description,
+                ], fn ($v) => $v !== null && $v !== ''))->values());
+
             $user = $request->user();
 
             return ResponseHelper::SuccessResponse([
                 'fault_groups' => $groups,
+                'fault_causes' => $causes,
                 // CODE => label. The code is the stored fact; the label is presentation and the client is
                 // free to render its own translation instead (see [[reason-code-contract]]).
                 'reasons'      => [
@@ -1256,6 +1280,9 @@ class MaintenanceWorkflowController extends Controller
                 'reported_faults.*.text'                => ['nullable', 'string', 'max:255'],
                 'reported_faults.*.category_key'        => ['nullable', 'string', 'max:64'],
                 'reported_faults.*.repeat_of_ticket_id' => ['nullable', 'integer'],
+                // The cause they SUSPECT, by id. Shape only here; that the id belongs to THIS fault's own
+                // approved short-list is proved in the service, beside the fault-name provenance rule.
+                'reported_faults.*.root_cause_id'       => ['nullable', 'integer'],
                 'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_INSPECTION))],
             ]);
 
@@ -1464,6 +1491,8 @@ class MaintenanceWorkflowController extends Controller
                 'reported_faults.*.text'                => ['nullable', 'string', 'max:255'],
                 'reported_faults.*.category_key'        => ['nullable', 'string', 'max:64'],
                 'reported_faults.*.repeat_of_ticket_id' => ['nullable', 'integer'],
+                // The cause they SUSPECT, by id — proved against this fault's own list in the service.
+                'reported_faults.*.root_cause_id'       => ['nullable', 'integer'],
                 'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_INSPECTION))],
                 // requested_by is NOT accepted: the filer comes from the token, never from the payload.
             ]);
@@ -1505,6 +1534,9 @@ class MaintenanceWorkflowController extends Controller
                 'reported_faults.*.text'                => ['nullable', 'string', 'max:255'],
                 'reported_faults.*.category_key'        => ['nullable', 'string', 'max:64'],
                 'reported_faults.*.repeat_of_ticket_id' => ['nullable', 'integer'],
+                // On THIS door the pick is a diagnosis, not a suspicion — the service writes it onto the
+                // finding, because there is no inspector coming behind this ticket.
+                'reported_faults.*.root_cause_id'       => ['nullable', 'integer'],
                 'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_DISPATCH))],
                 'customer_complaint'                    => ['nullable', 'string', 'max:2000'],
             ]);

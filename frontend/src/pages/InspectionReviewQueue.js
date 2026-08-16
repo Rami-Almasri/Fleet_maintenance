@@ -546,6 +546,8 @@ function WithdrawnNote({ ctx, at }) {
   // above describe a car that is away right now; this one is the count itself — it restarted on the day
   // the car returned, so what the system asked for is no longer due.
   const fromClock = ctx?.source === 'clock_restarted';
+  // (A fourth code, `superseded_by_test`, never reaches this component: a person already opened a ticket
+  // for that car, so the queue drops the request entirely rather than carding it. See pendingReview().)
   const returned = dueDate(ctx?.anchor_at);
   const label = ctx?.contract_no ? `#${ctx.contract_no}` : ctx?.contract_id ? `#${ctx.contract_id}` : null;
   // Where the "it came back" fact came from — a closed ticket, the garage log, or an OM contract.
@@ -1085,9 +1087,10 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
         )}
 
         {!isLegacy && !isWithdrawn && awaitingReturn && (
-          <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
-            <Icon.Clock className="h-3.5 w-3.5 shrink-0" />
-            {t('Waiting for return — the car is with a customer. Review it once it’s back and available to inspect.')}
+          <p className="flex items-start gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
+            <Icon.Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {tf('review.rented.mayApprove',
+              'The car is with a customer, so normally this waits until it comes back. You can still approve it now — it sits in Abu Maroof’s queue until the car is available, and the ordinary workflow runs from there. Or use Remind me and come back to it.')}
           </p>
         )}
 
@@ -1158,19 +1161,26 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
           </Button>
         ) : (
           <>
-            {/* Deliberately NOT disabled while the car is out on hire — "the customer still has it, ask
-                me again after lunch" is precisely the case this button exists for, and it is the only
-                action on the card that is honest to take on a car you cannot inspect yet. */}
+            {/* "The customer still has it, ask me again after lunch" is precisely the case this button
+                exists for — and it is now the alternative to approving early rather than the only thing
+                a reviewer can do with a rented car. */}
             <Button variant="ghost" loading={remindBusy} onClick={() => onRemind(tk)}>
               <Icon.Clock className="h-4 w-4" />
               {tk.my_reminder
                 ? tf('review.remind.change', 'Change reminder')
                 : tf('review.remind.button', 'Remind me')}
             </Button>
-            <Button variant="danger" disabled={awaitingReturn} onClick={() => onReject(tk)}>
+            {/* NOT disabled while the car is out on hire. Being with a customer is a fact worth STATING
+                — the panel above says it — but it is not the reviewer's answer, and locking the buttons
+                made it one: the request sat here undecidable until somebody happened to notice the car
+                had come back. Approving early is already the established behaviour for a recalled car
+                (it waits in Abu Maroof's queue until the car arrives); a rented car is the same
+                situation with a less certain date, and the person reading the card is the one entitled
+                to weigh that. */}
+            <Button variant="danger" onClick={() => onReject(tk)}>
               <Icon.XCircle className="h-4 w-4" /> {t('Reject')}
             </Button>
-            <Button variant="success" disabled={awaitingReturn} onClick={() => onApprove(tk)}>
+            <Button variant="success" onClick={() => onApprove(tk)}>
               <Icon.Check className="h-4 w-4" /> {t('Approve & send')}
             </Button>
           </>
