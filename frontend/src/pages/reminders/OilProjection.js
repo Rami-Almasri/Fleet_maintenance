@@ -138,6 +138,36 @@ export const laneFor = (p) => {
   return 'safe';
 };
 
+/**
+ * HOW MUCH RUN IS LEFT before the car passes the point it must not pass.
+ *
+ * It is the same pair of numbers the card already puts side by side — "Max allowed" against
+ * "Today (est.)" — so the order of the list, the column in the call list and the sentence on the
+ * card can never tell three different stories. Nothing new is computed here: `allowed_max` is the
+ * oil limit plus the grace, `expected` is today's projection, both straight off the API.
+ *
+ *   km  — negative once the estimate is already past the allowance (the dangerous end)
+ *   days— how long that headroom lasts at the projection's own km/day pace
+ *
+ * A car we cannot project has no margin at all — `km: null` — and sorts to the BOTTOM, never to the
+ * top: "we don't know" is not the same as "it's on fire".
+ */
+export const oilMarginFor = (p) => {
+  if (!p || p.allowed_max == null || p.expected == null) return { km: null, days: null };
+  const km = p.allowed_max - p.expected;
+  return { km, days: p.rate ? Math.floor(km / p.rate) : null };
+};
+
+/** Most dangerous first: least headroom (and the already-over cars) at the top, unknowns last. */
+export const byUrgency = (a, b) => {
+  const x = oilMarginFor(a?.projection).km;
+  const y = oilMarginFor(b?.projection).km;
+  if (x == null && y == null) return 0;
+  if (x == null) return 1;
+  if (y == null) return -1;
+  return x - y;
+};
+
 export const LANES = [
   { key: 'action_required',   label: 'Action required',   tone: 'red' },
   { key: 'service_on_return', label: 'Service on return', tone: 'amber' },
@@ -1367,19 +1397,35 @@ export function RecallQueue({ tasks, canRecord, onChanged }) {
 export function CallListDialog({ rows, laneLabel, onClose }) {
   const { t } = useI18n();
 
-  const csvRows = useMemo(() => rows.map((r) => ({
-    car:      r.car || '',
-    plate:    r.plate || '',
-    customer: r.customer || '',
-    phone:    r.customer_phone || '',
-    cx:       r.customer_no || '',
-    contract: r.contract_no || '',
-  })), [rows]);
+  // Same order as the board behind it — worst first, so the list is worked from the top down.
+  const ordered = useMemo(() => [...rows].sort(byUrgency), [rows]);
+
+  const csvRows = useMemo(() => ordered.map((r) => {
+    const p = r.projection || {};
+    const m = oilMarginFor(p);
+    return {
+      car:      r.car || '',
+      plate:    r.plate || '',
+      customer: r.customer || '',
+      phone:    r.customer_phone || '',
+      cx:       r.customer_no || '',
+      contract: r.contract_no || '',
+      // The figures the margin is made of travel WITH it — a spreadsheet handed to someone else has
+      // to be able to show its own arithmetic, exactly like the page does.
+      left:     m.km == null ? '' : m.km,
+      days:     m.days == null ? '' : m.days,
+      now:      p.expected ?? '',
+      max:      p.allowed_max ?? '',
+    };
+  }), [ordered]);
 
   const download = () => {
-    const head = [t('Car'), t('Plate'), t('Customer'), t('Phone'), t('CX number'), t('Contract')];
+    const head = [
+      t('Car'), t('Plate'), t('Customer'), t('Phone'), t('CX number'), t('Contract'),
+      t('Km left before the allowance'), t('Days left (est.)'), t('Today (est.) km'), t('Max allowed km'),
+    ];
     const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const lines = csvRows.map((r) => [r.car, r.plate, r.customer, r.phone, r.cx, r.contract].map(cell).join(','));
+    const lines = csvRows.map((r) => [r.car, r.plate, r.customer, r.phone, r.cx, r.contract, r.left, r.days, r.now, r.max].map(cell).join(','));
     // A leading BOM so Excel opens Arabic customer names as Arabic, not as mojibake.
     const blob = new Blob(['﻿' + [head.map(cell).join(','), ...lines].join('\r\n')], {
       type: 'text/csv;charset=utf-8',
@@ -1398,7 +1444,7 @@ export function CallListDialog({ rows, laneLabel, onClose }) {
       onClose={onClose}
       size="xl"
       title={t('Call list')}
-      subtitle={t('{n} car(s) in “{lane}”. Everything you need to make the call.', { n: rows.length, lane: laneLabel })}
+      subtitle={t('{n} car(s) in “{lane}”, worst first — the least room left against the allowance is at the top.', { n: rows.length, lane: laneLabel })}
       footer={(
         <div className="flex items-center justify-between gap-2">
           <Button variant="secondary" onClick={download} disabled={!rows.length}>{t('Download CSV')}</Button>
@@ -1418,10 +1464,14 @@ export function CallListDialog({ rows, laneLabel, onClose }) {
                 <th className="px-2 py-2 text-start">{t('Customer')}</th>
                 <th className="px-2 py-2 text-start">{t('Phone')}</th>
                 <th className="px-2 py-2 text-start">{t('CX number')}</th>
+                <th className="px-2 py-2 text-end">{t('Km left for oil')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {rows.map((r) => (
+              {ordered.map((r) => {
+                const p = r.projection || {};
+                const m = oilMarginFor(p);
+                return (
                 <tr key={r.contract_id} className="align-top">
                   <td className="px-2 py-2 text-slate-700">
                     {r.car || '—'}
@@ -1445,10 +1495,44 @@ export function CallListDialog({ rows, laneLabel, onClose }) {
                     )}
                   </td>
                   <td className="px-2 py-2 text-slate-700" dir="ltr">{r.customer_no || '—'}</td>
+                  {/* How much run is left before this car passes what it is allowed. The order of
+                      the list is this column, so the person dialling can stop wherever they run out
+                      of time and know the cars they skipped were the least urgent ones. */}
+                  <td className="px-2 py-2 text-end tabular-nums">
+                    {m.km == null ? (
+                      <span className="text-slate-400">{t('Can’t project')}</span>
+                    ) : m.km < 0 ? (
+                      <>
+                        <div className="font-bold text-rose-700">{t('{n} km over', { n: num(Math.abs(m.km)) })}</div>
+                        <div className="text-xs text-rose-500">{t('past the allowance already')}</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className={`font-bold ${m.days != null && m.days <= 3 ? 'text-amber-700' : 'text-slate-900'}`}>
+                          {t('{n} km', { n: num(m.km) })}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {m.days == null
+                            ? t('to the {max} km allowance', { max: num(p.allowed_max) })
+                            : m.days === 0
+                              ? t('today, at the current pace')
+                              : m.days === 1
+                                ? t('~1 day at the current pace')
+                                : t('~{n} days at the current pace', { n: m.days })}
+                        </div>
+                      </>
+                    )}
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
+          {/* The column states its own arithmetic — nobody should have to guess what "km left" is. */}
+          <div className="mt-3 text-xs text-slate-500">
+            <span className="font-semibold">{t('Data origin:')}</span>{' '}
+            {t('“Km left for oil” is the max allowed (oil limit + grace) minus today’s estimated odometer — the same two figures shown on each car’s card. The days are that gap at the projection’s own km/day pace. Nothing here is a new calculation.')}
+          </div>
         </div>
       )}
     </Modal>
@@ -1521,9 +1605,13 @@ export default function OilProjection() {
         return freshness === 'fresh' ? age <= 1 : age > 1;
       });
     }
-    if (!needle) return list;
-    return list.filter((r) => `${r.plate || ''} ${r.car || ''} ${r.customer || ''} ${r.contract_no || ''}`
-      .toLowerCase().includes(needle));
+    if (needle) {
+      list = list.filter((r) => `${r.plate || ''} ${r.car || ''} ${r.customer || ''} ${r.contract_no || ''}`
+        .toLowerCase().includes(needle));
+    }
+    // Worst first. A queue of twenty-six calls is worked from the top, so the top must be the car
+    // with the least room left against its allowance — not whichever contract the API listed first.
+    return [...list].sort(byUrgency);
   }, [contracts, filter, due, freshness, q]);
 
   if (error) return <ErrorState title={t('Could not load the follow-up queue')} message={error} onRetry={reload} />;

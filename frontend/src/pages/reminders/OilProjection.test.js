@@ -10,7 +10,7 @@
 // project is never given an invented number, and that saving a reading shows the recalculated verdict.
 
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import OilProjection, { reasonFor } from './OilProjection';
+import OilProjection, { reasonFor, oilMarginFor, byUrgency } from './OilProjection';
 import { I18nProvider } from '../../i18n/I18nContext';
 import { ToastProvider } from '../../components/ui/Toast';
 import api from '../../api/client';
@@ -807,12 +807,66 @@ test('the call list downloads as a CSV of every row it shows', async () => {
 
     expect(click).toHaveBeenCalled();
     const csv = blobs.at(-1);
-    expect(csv).toContain('"Car","Plate","Customer","Phone","CX number","Contract"');
-    expect(csv).toContain('"TOYOTA COROLLA","B 55510","Samir Haddad","0501234567","5121","C-9005"');
+    expect(csv).toContain('"Car","Plate","Customer","Phone","CX number","Contract","Km left before the allowance","Days left (est.)","Today (est.) km","Max allowed km"');
+    // The margin travels with the figures it was made of: 8,000 allowed − 8,200 estimated = −200.
+    expect(csv).toContain('"TOYOTA COROLLA","B 55510","Samir Haddad","0501234567","5121","C-9005","-200","-1","8200","8000"');
   } finally {
     global.Blob = RealBlob;
     click.mockRestore();
   }
+});
+
+/**
+ * HOW MUCH RUN IS LEFT. The caller works the list from the top and stops when the day runs out, so
+ * the list has to carry the one number that says which cars must not be the ones skipped.
+ */
+test('the call list says how much is left for oil on each car, and states its arithmetic', async () => {
+  recallTasks = [];
+  await load();
+  await chip(/Call customer \(1\)/);
+  fireEvent.click(await screen.findByText(/Call list \(1\)/));
+
+  const dialog = within(await screen.findByRole('dialog'));
+  expect(dialog.getByText('Km left for oil')).toBeInTheDocument();
+  // 8,000 allowed against an 8,200 estimate — this car is already past what it is allowed to run.
+  expect(dialog.getByText('200 km over')).toBeInTheDocument();
+  expect(dialog.getByText('past the allowance already')).toBeInTheDocument();
+  // No black boxes: the column names the two figures it subtracts.
+  expect(dialog.getByText(/max allowed \(oil limit \+ grace\) minus today’s estimated odometer/)).toBeInTheDocument();
+  // And the list declares its own order, so nobody assumes it is alphabetical.
+  expect(dialog.getByText(/worst first/)).toBeInTheDocument();
+});
+
+/**
+ * THE ORDER. "Max allowed" against "Today (est.)" is the pair that decides which car is in trouble,
+ * and it is the same pair the card shows — the board can never be sorted by a number it doesn't display.
+ */
+describe('oilMarginFor / byUrgency', () => {
+  const p = (allowed_max, expected, rate = 200) => ({ projection: { allowed_max, expected, rate } });
+
+  test('the margin is the allowance minus today’s estimate, in km and in days at the current pace', () => {
+    expect(oilMarginFor({ allowed_max: 51948, expected: 50886, rate: 200 })).toEqual({ km: 1062, days: 5 });
+  });
+
+  test('a car already past its allowance carries a negative margin', () => {
+    expect(oilMarginFor({ allowed_max: 8000, expected: 8200, rate: 200 })).toEqual({ km: -200, days: -1 });
+  });
+
+  test('a car that cannot be projected has no margin at all — never a zero', () => {
+    expect(oilMarginFor({ allowed_max: 8000, expected: null }).km).toBeNull();
+    expect(oilMarginFor(null).km).toBeNull();
+  });
+
+  test('the least room left comes first, and the furthest over comes before the merely late', () => {
+    const list = [p(8000, 6000), p(8000, 9000), p(8000, 7900), p(8000, 8100)];
+    expect([...list].sort(byUrgency).map((r) => r.projection.expected)).toEqual([9000, 8100, 7900, 6000]);
+  });
+
+  test('a car we cannot project sinks to the bottom — “unknown” is not “on fire”', () => {
+    const unknown = { projection: { allowed_max: null, expected: null } };
+    const list = [unknown, p(8000, 6000), p(8000, 8100)];
+    expect([...list].sort(byUrgency).map((r) => r.projection.expected)).toEqual([8100, 6000, null]);
+  });
 });
 
 /** The verdict sentence is the page's editorial contract — asserted directly, free of rendering. */
