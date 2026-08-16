@@ -148,20 +148,6 @@ const RECALCULATED = {
   return_date_known: true, expected_return: 8000, over_tolerance_km: 0, decision: null,
 };
 
-// The call a recall produced: everything the controller has to say, frozen as of the decision.
-const RECALL_TASKS = [{
-  id: 3, status: 'open', reason_code: 'oil_tolerance_exceeded_before_return',
-  contract_id: 91, contract_no: 'C-9001', customer: 'Hazem Ali',
-  vehicle_id: 5, plate: 'K 81836', car: 'JEEP CHEROKEE',
-  customer_reading: 7600, customer_reading_on: '2026-08-05',
-  oil_limit: 7500, allowed_max: 8000, expected_return_odometer: 8600,
-  over_tolerance_km: 600, remaining_days: 5,
-  created_by: 'Marwa', decided_at: '2026-08-05 11:20:00',
-  note: 'Customer is local; ask for Thursday.', outcome_note: null,
-  claimed_by: null, completed_at: null,
-}];
-
-let recallTasks = RECALL_TASKS;
 let queue = QUEUE;
 
 /**
@@ -207,11 +193,9 @@ const recalledQueue = (stage, extra = {}) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
-  recallTasks = RECALL_TASKS;
   queue = QUEUE;
   api.get.mockImplementation((url) => {
     if (url === '/OilProjection') return Promise.resolve({ data: { data: queue } });
-    if (url === '/OilRecallTasks') return Promise.resolve({ data: { data: { tasks: recallTasks, summary: { open: recallTasks.length, contacted: 0 } } } });
     if (url.includes('/oil-projection')) return Promise.resolve({ data: { data: DETAIL } });
     return Promise.resolve({ data: { data: null } });
   });
@@ -232,7 +216,6 @@ const chip = async (label) => fireEvent.click(await screen.findByText(label));
 
 /** The queue opens on the calls to make — cars still out for days on a stale number. */
 test('the queue opens on the customers to call', async () => {
-  recallTasks = [];   // this test is about the board; the recall queue lists plates too
   await load();
 
   expect(await screen.findByText('B 55510')).toBeInTheDocument();
@@ -250,7 +233,6 @@ test('the queue opens on the customers to call', async () => {
  * customer is already bringing it back. It is routed to Service on return with arrival steps.
  */
 test('a car due back today is routed to Service on return, never Call customer', async () => {
-  recallTasks = [];
   await load();
 
   // Not in the default Call customer lane…
@@ -295,7 +277,6 @@ test('a car that only busts its allowance on an estimate is a phone call, not a 
  * person about to make the call, with the numbers the call is actually made on.
  */
 test('a card that needs a decision states where it lands, what it is allowed, and how long is left', async () => {
-  recallTasks = [];   // scope the assertions to the board
   await load();
   await chip(/Action required \(1\)/);
 
@@ -363,7 +344,6 @@ test('a car with no handover reading is reported as unprojectable, not estimated
  */
 test('recalling a car confirms against the figures before it is recorded', async () => {
   api.post.mockResolvedValue({ data: { data: { decision: { id: 1 }, projection: {} } } });
-  recallTasks = [];
   await load();
   await chip(/Action required \(1\)/);
 
@@ -392,7 +372,6 @@ test('recalling a car confirms against the figures before it is recorded', async
  * return with the customer, and the card must say so and offer exactly one way forward.
  */
 test('a recalled car waits on Sales and offers the confirmation as the only action', async () => {
-  recallTasks = [];
   queue = recalledQueue('waiting_sales');
   await load();
   await chip(/Action required \(1\)/);
@@ -417,7 +396,6 @@ test('a recalled car waits on Sales and offers the confirmation as the only acti
 
 /** After Sales OK the card stops asking and starts reporting: who confirmed, and where the car is. */
 test('a confirmed recall reports the confirmation and the collection instead of the gate', async () => {
-  recallTasks = [];
   queue = recalledQueue('ready_for_driver');
   await load();
   await chip(/Action required \(1\)/);
@@ -435,7 +413,6 @@ test('a confirmed recall reports the confirmation and the collection instead of 
 
 /** The test is the only instruction on offer — and posting it never mentions the oil change. */
 test('asking for a test posts only the test flag', async () => {
-  recallTasks = [];
   queue = recalledQueue('ready_for_driver');
   api.post.mockResolvedValue({ data: { data: {} } });
   await load();
@@ -459,7 +436,6 @@ test('asking for a test posts only the test flag', async () => {
  * stops being believed, so the dialog says so and offers to add the oil change to it.
  */
 test('a recall offers to add the oil change to the test request the system already raised', async () => {
-  recallTasks = [];
   queue = {
     ...QUEUE,
     contracts: QUEUE.contracts.map((c) => (c.contract_id !== 91 ? c : {
@@ -496,7 +472,6 @@ test('a recall offers to add the oil change to the test request the system alrea
 });
 
 test('declining the test and choosing the parking routes the job to Abu Maroof', async () => {
-  recallTasks = [];
   api.post.mockResolvedValue({ data: { data: {} } });
   await load();
   await chip(/Action required \(1\)/);
@@ -526,7 +501,6 @@ test('declining the test and choosing the parking routes the job to Abu Maroof',
  * customer's there is no dash to read, and a button there would invite a number nobody observed.
  */
 test('the oil change can only be recorded once the car is actually with us', async () => {
-  recallTasks = [];
   queue = recalledQueue('ready_for_driver');   // Sales agreed, but a driver is still being arranged
   await load();
   await chip(/Action required \(1\)/);
@@ -536,7 +510,6 @@ test('the oil change can only be recorded once the car is actually with us', asy
 });
 
 test('recording the oil change posts the reading and reports the car’s new service point', async () => {
-  recallTasks = [];
   queue = recalledQueue('vehicle_collected');
   // The card carries the car's own interval, so the dialog can show what the reading will set.
   queue.contracts = queue.contracts.map((c) => (c.contract_id !== 91 ? c
@@ -585,53 +558,30 @@ test('accepting the overrun records the decision with the reason given', async (
 });
 
 /**
- * A RECALL IS A CONVERSATION, NOT A DISPATCH. The queue carries what the controller has to say on
- * the phone — the customer's own number, the two limits, where the car lands — and nothing about
- * routes, drivers or collection times, because none of that exists on this path.
+ * THE TRACK. The card's numbers drawn to scale. It is decoration only if it can drift from the
+ * figures beneath it — so what's asserted is that it states the very same ones, and that it
+ * declines to draw at all when a figure it would need is missing.
  */
-test('a recall shows up as a call to make, with the figures it is about', async () => {
+test('the card draws the oil run to scale, from the same figures it prints', async () => {
   await load();
+  await chip(/Call customer \(1\)/);
 
-  expect(await screen.findByText('Recalls to arrange (1)')).toBeInTheDocument();
-  const q = within(screen.getByText(/The oil tolerance will be exceeded/).closest('li'));
-
-  expect(q.getByText('To call')).toBeInTheDocument();
-  expect(q.getByText(/Hazem Ali · contract C-9001/)).toBeInTheDocument();
-  expect(q.getByText(/The oil tolerance will be exceeded before the rental ends/)).toBeInTheDocument();
-  expect(q.getByText(/Recalled by Marwa/)).toBeInTheDocument();
-  expect(q.getByText(/Customer is local; ask for Thursday/)).toBeInTheDocument();
-
-  // The frozen numbers the call is made on.
-  const figures = q.getByText(/Customer reported/).textContent;
-  expect(figures).toMatch(/7,600 km on/);
-  expect(figures).toMatch(/oil limit 7,500 km/);
-  expect(figures).toMatch(/allowed 8,000 km/);
-  expect(figures).toMatch(/would return on 8,600 km \(600 km over\)/);
-  expect(figures).toMatch(/5d left on the contract/);
-
-  // Nothing pretends a vehicle movement has been arranged.
-  expect(q.queryByText(/driver/i)).not.toBeInTheDocument();
-  expect(q.queryByText(/dispatch/i)).not.toBeInTheDocument();
-  expect(q.queryByText(/pick[- ]?up/i)).not.toBeInTheDocument();
+  const card = within((await screen.findByText('B 55510')).closest('[data-card]'));
+  // The picture describes itself for anyone who cannot see it — and in the page's own numbers.
+  expect(card.getByRole('img', { name: /Estimated at 8,200 km, against a 7,500 km oil limit and a 8,000 km maximum/ }))
+    .toBeInTheDocument();
+  expect(card.getByText(/6,600 km · handover/)).toBeInTheDocument();
+  expect(card.getByText(/7,500 · oil limit/)).toBeInTheDocument();
+  expect(card.getByText(/8,000 · max/)).toBeInTheDocument();
 });
 
-/** The two moves a controller makes on the call. */
-test('a controller can mark the customer contacted', async () => {
-  api.patch.mockResolvedValue({ data: { data: { task: {} } } });
+/** A car we cannot project has nothing to draw — and draws nothing, rather than a bar at zero. */
+test('the track is absent on a car that cannot be projected', async () => {
   await load();
+  await chip(/Can’t project \(1\)/);
 
-  fireEvent.click(await screen.findByText('Customer contacted'));
-
-  await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/OilRecallTasks/3', { status: 'contacted' }));
-});
-
-/** No recalls outstanding ⇒ no empty box taking up the screen. */
-test('the recall queue is absent when there is nothing to call about', async () => {
-  recallTasks = [];
-  await load();
-
-  await screen.findByText('B 55510');
-  expect(screen.queryByText(/Recalls to arrange/)).not.toBeInTheDocument();
+  const card = within((await screen.findByText('J 17096')).closest('[data-card]'));
+  expect(card.queryByRole('img')).not.toBeInTheDocument();
 });
 
 /** The four lanes are stated on the page, not left to be inferred from badge colours. */
@@ -704,7 +654,6 @@ test('a rejected reading surfaces the API’s own explanation', async () => {
  * reading, and each stat names its source.
  */
 test('the card separates the latest known odometer from the handover reading', async () => {
-  recallTasks = [];
   await load();
   await chip(/Action required \(1\)/);
 
@@ -725,7 +674,6 @@ test('a plausible mid-rental oil service is explained without alarming anyone', 
   row.projection.oil_service_state = 'mid_rental_service';
   api.get.mockImplementation((url) => {
     if (url === '/OilProjection') return Promise.resolve({ data: { data: alt } });
-    if (url === '/OilRecallTasks') return Promise.resolve({ data: { data: { tasks: [] } } });
     return Promise.resolve({ data: { data: null } });
   });
   await load();
@@ -746,7 +694,6 @@ test('a suspicious oil-service reading shows an odometer conflict warning', asyn
   row.projection.oil_service_state = 'suspicious';
   api.get.mockImplementation((url) => {
     if (url === '/OilProjection') return Promise.resolve({ data: { data: alt } });
-    if (url === '/OilRecallTasks') return Promise.resolve({ data: { data: { tasks: [] } } });
     return Promise.resolve({ data: { data: null } });
   });
   await load();
@@ -774,7 +721,6 @@ test('the page declares how every number was derived', async () => {
  * flattened, with who to ring and under which account.
  */
 test('the call list carries the car, the customer and the number to dial', async () => {
-  recallTasks = [];
   await load();
   await chip(/Call customer \(1\)/);
 
@@ -791,7 +737,6 @@ test('the call list carries the car, the customer and the number to dial', async
 
 /** The same list, written out — the caller can work off a phone or hand it to someone else. */
 test('the call list downloads as a CSV of every row it shows', async () => {
-  recallTasks = [];
   const blobs = [];
   const RealBlob = global.Blob;
   global.Blob = function (parts, opts) { blobs.push(parts.join('')); return new RealBlob(parts, opts); };
@@ -821,7 +766,6 @@ test('the call list downloads as a CSV of every row it shows', async () => {
  * the list has to carry the one number that says which cars must not be the ones skipped.
  */
 test('the call list says how much is left for oil on each car, and states its arithmetic', async () => {
-  recallTasks = [];
   await load();
   await chip(/Call customer \(1\)/);
   fireEvent.click(await screen.findByText(/Call list \(1\)/));

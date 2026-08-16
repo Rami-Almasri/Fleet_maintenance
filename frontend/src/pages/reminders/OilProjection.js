@@ -38,19 +38,6 @@ const DECISION_LABEL = {
   defer:  'Do it on return',
 };
 
-/** Why a recall was ordered. The API sends a code; the sentence is built here. */
-const RECALL_REASON = {
-  oil_tolerance_exceeded_before_return:
-    'The oil tolerance will be exceeded before the rental ends.',
-};
-
-const RECALL_STATUS = {
-  open:      { tone: 'red',   label: 'To call' },
-  contacted: { tone: 'amber', label: 'Customer contacted' },
-  done:      { tone: 'green', label: 'Done' },
-  cancelled: { tone: 'slate', label: 'Withdrawn' },
-};
-
 /**
  * The sentence builders below are plain module functions — they are called from tests and from other
  * modules where no React context exists — so the translator is a PARAMETER, defaulting to an
@@ -299,6 +286,22 @@ export const actionFor = (p, t = asIs) => {
   };
 };
 
+/** The verdict's colour, carried on a rail down the card's leading edge instead of a full border. */
+const RAIL_TONE = {
+  red:   'bg-rose-500',
+  amber: 'bg-amber-400',
+  green: 'bg-emerald-400',
+  slate: 'bg-slate-300',
+};
+
+/** The card's own edge — a red card should feel warmer than a green one without shouting. */
+const CARD_EDGE = {
+  red:   'border-rose-200 hover:ring-rose-100',
+  amber: 'border-amber-200 hover:ring-amber-100',
+  green: 'border-slate-200 hover:ring-emerald-100',
+  slate: 'border-slate-200 hover:ring-slate-100',
+};
+
 const ACTION_BOX_TONE = {
   red:   'border-rose-200 bg-rose-50 text-rose-900',
   amber: 'border-amber-200 bg-amber-50 text-amber-900',
@@ -309,13 +312,90 @@ const ACTION_BOX_TONE = {
 /** One big number with a plain-English label. Large and calm — no boxes, no abbreviations. */
 function Stat({ label, value, sub, pill, pillTone, highlight }) {
   return (
-    <div>
-      <div className="text-xs font-semibold text-slate-500">{label}</div>
+    <div className="min-w-0">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-0.5 flex flex-wrap items-baseline gap-2">
-        <span className={`text-xl font-bold tabular-nums ${highlight ? 'text-indigo-700' : 'text-slate-900'}`}>{value}</span>
+        <span className={`text-xl font-bold tabular-nums tracking-tight ${highlight ? 'text-indigo-700' : 'text-slate-900'}`}>{value}</span>
         {pill && <Badge tone={pillTone}>{pill}</Badge>}
       </div>
-      {sub && <div className="mt-0.5 text-xs text-slate-500">{sub}</div>}
+      {sub && <div className="mt-0.5 text-xs leading-snug text-slate-500">{sub}</div>}
+    </div>
+  );
+}
+
+/**
+ * THE TRACK — the entire oil question as one line you can read without arithmetic.
+ *
+ * Every number on this card answers the same question: has this car got room left? Spelled out as
+ * figures it takes a moment's subtraction to see. Drawn to scale it takes none — the run from the
+ * last oil change to the end of the allowance, coloured green while the car is inside its interval,
+ * amber across the grace, red past the point it must not pass, with a pin where the car is today
+ * and a hollow one where it is projected to come back.
+ *
+ * It invents nothing. Every position is a figure already printed underneath it, so the picture and
+ * the numbers cannot disagree; if a figure is missing the track simply doesn't draw.
+ */
+function MileageTrack({ p, lastService }) {
+  const { t } = useI18n();
+  const start = lastService ?? p.handover_odometer;
+  if (start == null || p.oil_limit == null || p.allowed_max == null || p.expected == null) return null;
+
+  // The line runs to whichever comes last — the allowance, or where the car is actually heading —
+  // so a car far past its limit still shows how far past, instead of pinning to the end.
+  const end = Math.max(p.allowed_max, p.expected, p.expected_return ?? 0);
+  const span = end - start;
+  if (span <= 0) return null;
+
+  const at = (km) => Math.min(100, Math.max(0, ((km - start) / span) * 100));
+  const limitAt = at(p.oil_limit);
+  const maxAt = at(p.allowed_max);
+  const nowAt = at(p.expected);
+  const retAt = p.expected_return != null ? at(p.expected_return) : null;
+  // Two pins on top of each other is a smudge, not information. A car due back today genuinely IS
+  // at both points, so it gets one pin and the label says so.
+  const retApart = retAt != null && Math.abs(retAt - nowAt) > 6;
+
+  return (
+    <div className="pt-1">
+      <div
+        className="relative h-2.5 w-full overflow-hidden rounded-full bg-slate-200"
+        role="img"
+        aria-label={t('Estimated at {now} km, against a {limit} km oil limit and a {max} km maximum.', {
+          now: num(p.expected), limit: num(p.oil_limit), max: num(p.allowed_max),
+        })}
+      >
+        {/* Inside the interval → across the grace → past the allowance. */}
+        <div className="absolute inset-y-0 start-0 bg-emerald-400" style={{ width: `${limitAt}%` }} />
+        <div className="absolute inset-y-0 bg-amber-400" style={{ insetInlineStart: `${limitAt}%`, width: `${Math.max(maxAt - limitAt, 0)}%` }} />
+        <div className="absolute inset-y-0 bg-rose-500" style={{ insetInlineStart: `${maxAt}%`, width: `${Math.max(100 - maxAt, 0)}%` }} />
+      </div>
+
+      {/* The pins sit in their own strip beneath the bar, so nothing ever covers the colours. */}
+      <div className="relative mt-1 h-4">
+        {retApart && (
+          <span
+            className="absolute -translate-x-1/2 text-[10px] font-semibold text-slate-500 rtl:translate-x-1/2"
+            style={{ insetInlineStart: `${retAt}%` }}
+            title={t('Return (est.) {km} km', { km: num(p.expected_return) })}
+          >
+            ▲ {t('return')}
+          </span>
+        )}
+        <span
+          className="absolute -translate-x-1/2 whitespace-nowrap text-[10px] font-bold text-indigo-700 rtl:translate-x-1/2"
+          style={{ insetInlineStart: `${nowAt}%` }}
+          title={t('Today (est.) {km} km', { km: num(p.expected) })}
+        >
+          ▲ {retApart ? t('now') : (retAt != null ? t('now / return') : t('now'))}
+        </span>
+      </div>
+
+      {/* The scale's own anchors, stated rather than positioned — no label can drift off a number. */}
+      <div className="flex justify-between text-[10px] tabular-nums text-slate-400">
+        <span>{num(start)} {t('km')}{lastService != null ? ` · ${t('last change')}` : ` · ${t('handover')}`}</span>
+        <span className="text-amber-600">{num(p.oil_limit)} · {t('oil limit')}</span>
+        <span className="text-rose-600">{num(p.allowed_max)} · {t('max')}</span>
+      </div>
     </div>
   );
 }
@@ -323,8 +403,8 @@ function Stat({ label, value, sub, pill, pillTone, highlight }) {
 /** A titled group of related numbers — the card is read group by group, never as a number soup. */
 function Group({ title, children }) {
   return (
-    <div className="rounded-lg border border-slate-100 bg-slate-50/70 p-3">
-      <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">{title}</div>
+    <div className="rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50 to-white p-3.5">
+      <div className="mb-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">{title}</div>
       <div className="flex flex-wrap items-start gap-x-6 gap-y-3">{children}</div>
     </div>
   );
@@ -620,23 +700,28 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
   return (
     <div
       data-card
-      className={`space-y-4 rounded-xl border bg-white p-5 shadow-sm ${
-        a.key === 'decide' ? 'border-rose-300' : 'border-slate-200'}`}
+      className={`group relative overflow-hidden rounded-2xl border bg-white shadow-sm ring-1 ring-transparent transition duration-200 hover:-translate-y-0.5 hover:shadow-lg ${
+        CARD_EDGE[a.tone] || CARD_EDGE.slate}`}
     >
+      {/* The verdict as a colour you see before you read anything — one rail down the leading edge
+          rather than a coloured border boxing the whole card in. */}
+      <span className={`absolute inset-y-0 start-0 w-1.5 ${RAIL_TONE[a.tone] || RAIL_TONE.slate}`} aria-hidden="true" />
+
+      <div className="space-y-4 p-5 ps-6">
       {/* Header: the car, the people, and the verdict — nothing else. */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="truncate text-lg font-bold text-slate-900">{r.car || r.plate || t('Contract {no}', { no: r.contract_id })}</div>
+          <div className="truncate text-lg font-bold tracking-tight text-slate-900">{r.car || r.plate || t('Contract {no}', { no: r.contract_id })}</div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-sm text-slate-600">
             {r.vehicle_id
-              ? <Link to={`/vehicles/${r.vehicle_id}`} className="font-semibold text-slate-800 hover:text-indigo-600">{r.plate || `#${r.vehicle_id}`}</Link>
+              ? <Link to={`/vehicles/${r.vehicle_id}`} className="font-semibold text-slate-800 underline-offset-2 transition hover:text-indigo-600 hover:underline">{r.plate || `#${r.vehicle_id}`}</Link>
               : <span className="font-semibold text-slate-800">{r.plate || '—'}</span>}
             <span>· {t('Contract {no}', { no: r.contract_no || r.contract_id })}</span>
             {r.customer && <span>· {r.customer}</span>}
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <Badge tone={a.tone}>{a.label}</Badge>
+          <Badge tone={a.tone} dot>{a.label}</Badge>
           {/* The rental clock lives in the header — it frames every other number on the card. */}
           <Badge tone={d === 0 ? 'red' : d != null && d <= 3 ? 'amber' : 'slate'}>
             {d == null ? t('No return date') : d === 0 ? t('Due back today') : d === 1 ? t('1 day left') : t('{n} days left', { n: d })}
@@ -691,6 +776,10 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
               ? t('due back today — same as today’s estimate')
               : t('back {date}', { date: fmtDate(p.return_due_on) })}
         />
+        {/* The same four numbers, drawn to scale — the one glance that needs no arithmetic. */}
+        <div className="w-full">
+          <MileageTrack p={p} lastService={r.last_service_odometer} />
+        </div>
       </Group>
 
       {/* Group 2 — the oil schedule, from the last change to the hard maximum. */}
@@ -752,7 +841,7 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
       {recall && <RecallRelay r={r} recall={recall} canRecord={canRecord} onChanged={onChanged} />}
 
       {/* Today's action — one bold line, one quiet line, and the buttons. Nothing to read twice. */}
-      <div className={`rounded-lg border p-3.5 ${ACTION_BOX_TONE[a.tone]}`}>
+      <div className={`rounded-xl border p-3.5 shadow-inner ${ACTION_BOX_TONE[a.tone]}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             {/* On a recalled car the relay panel directly above has ALREADY said the stage, who acts
@@ -800,6 +889,7 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
             )}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -1290,103 +1380,6 @@ export function DecisionDialog({ row, decision, onClose, onDecided }) {
 }
 
 /**
- * The recall call queue.
- *
- * A recall is a CONVERSATION, not a movement: phone the customer, explain that the car is about to
- * run past what its oil is good for, agree a day to bring it in. So this queue carries the figures
- * that conversation is about and nothing else — no route, no driver, no ETA. Those belong to a
- * logistics module the fleet doesn't have yet, and inventing one here would put half-specified
- * transport jobs in front of drivers.
- *
- * The numbers are FROZEN as of the decision, not live: someone halfway through a call must see the
- * figures the recall was ordered on, not figures that moved under them thirty seconds ago.
- */
-export function RecallQueue({ tasks, canRecord, onChanged }) {
-  const { t } = useI18n();
-  const toast = useToast();
-  const [busyId, setBusyId] = useState(null);
-
-  const move = async (task, status) => {
-    setBusyId(task.id);
-    try {
-      await api.patch(`/OilRecallTasks/${task.id}`, { status });
-      toast.success(status === 'contacted' ? t('Marked as contacted') : t('Recall closed'));
-      onChanged();
-    } catch (e) {
-      toast.error(e.response?.data?.message || t('Could not update the recall'));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  if (!tasks.length) return null;
-
-  return (
-    <SectionCard
-      title={t('Recalls to arrange ({n})', { n: tasks.length })}
-      subtitle={t('Call the customer and agree a day to bring the car in. The oil-change ticket is raised on its own once the car is back.')}
-    >
-      <ul className="divide-y divide-slate-100">
-        {/* NB: the row is `task`, never `t` — `t` is the translator in this scope. */}
-        {tasks.map((task) => {
-          const s = RECALL_STATUS[task.status] || RECALL_STATUS.open;
-          return (
-            <li key={task.id} className="flex flex-wrap items-start justify-between gap-3 py-3">
-              <div className="min-w-0 space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  {task.vehicle_id
-                    ? <Link to={`/vehicles/${task.vehicle_id}`} className="font-semibold text-slate-900 hover:text-indigo-600">{task.plate || `#${task.vehicle_id}`}</Link>
-                    : <span className="font-semibold text-slate-900">{task.plate || '—'}</span>}
-                  <span className="text-xs text-slate-500">{task.car}</span>
-                  <Badge tone={s.tone}>{t(s.label)}</Badge>
-                </div>
-                <div className="text-sm text-slate-700">
-                  {task.customer || t('Customer')}{task.contract_no ? ` · ${t('contract {no}', { no: task.contract_no })}` : ''}
-                </div>
-                <div className="text-sm text-slate-600">
-                  {RECALL_REASON[task.reason_code] ? t(RECALL_REASON[task.reason_code]) : t('Recall ordered.')}
-                </div>
-                {/* Everything the caller needs to say, in the order they'd say it. */}
-                <div className="text-xs text-slate-500">
-                  {task.customer_reading_on
-                    ? t('Customer reported {km} km on {date}', { km: num(task.customer_reading), date: fmtDate(task.customer_reading_on) })
-                    : t('Customer reported {km} km', { km: num(task.customer_reading) })}
-                  {' · '}{t('oil limit {km} km', { km: num(task.oil_limit) })}
-                  {' · '}{t('allowed {km} km', { km: num(task.allowed_max) })}
-                  {' · '}{task.over_tolerance_km
-                    ? t('would return on {km} km ({over} km over)', { km: num(task.expected_return_odometer), over: num(task.over_tolerance_km) })
-                    : t('would return on {km} km', { km: num(task.expected_return_odometer) })}
-                  {task.remaining_days != null ? ` · ${t('{n}d left on the contract', { n: task.remaining_days })}` : ''}
-                </div>
-                <div className="text-xs text-slate-400">
-                  {t('Recalled by {who}', { who: task.created_by || t('system') })}
-                  {task.decided_at ? ` · ${fmtDate(task.decided_at)}` : ''}
-                  {task.claimed_by ? ` · ${t('picked up by {who}', { who: task.claimed_by })}` : ''}
-                </div>
-                {task.note && <div className="text-xs italic text-slate-500">“{task.note}”</div>}
-              </div>
-
-              {canRecord && (
-                <div className="flex shrink-0 gap-1.5">
-                  {task.status === 'open' && (
-                    <Button size="sm" variant="secondary" loading={busyId === task.id} onClick={() => move(task, 'contacted')}>
-                      {t('Customer contacted')}
-                    </Button>
-                  )}
-                  <Button size="sm" variant="ghost" loading={busyId === task.id} onClick={() => move(task, 'done')}>
-                    {t('Close')}
-                  </Button>
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </SectionCard>
-  );
-}
-
-/**
  * The call list — who to phone, on which number, about which car.
  *
  * The board is one big card per car because each card carries a decision. Making twenty-six calls
@@ -1472,7 +1465,7 @@ export function CallListDialog({ rows, laneLabel, onClose }) {
                 const p = r.projection || {};
                 const m = oilMarginFor(p);
                 return (
-                <tr key={r.contract_id} className="align-top">
+                <tr key={r.contract_id} className="align-top transition-colors hover:bg-slate-50">
                   <td className="px-2 py-2 text-slate-700">
                     {r.car || '—'}
                     {r.contract_no && <div className="text-xs text-slate-400">{r.contract_no}</div>}
@@ -1552,15 +1545,11 @@ export default function OilProjection() {
   const [changing, setChanging] = useState(null);   // the car whose completed oil change is being recorded
   const [callList, setCallList] = useState(false);  // the flat "who do I phone" view of the current lane
 
-  const fetcher = useCallback(async () => {
-    // The board and the recall queue are one screen's worth of work, so they load together — a
-    // controller should never have to go looking for the calls their own decisions created.
-    const [board, recalls] = await Promise.all([
-      api.get('/OilProjection'),
-      api.get('/OilRecallTasks').catch(() => ({ data: { data: { tasks: [] } } })),
-    ]);
-    return { ...(board.data.data || {}), recallTasks: recalls.data?.data?.tasks || [] };
-  }, []);
+  // One call, one board. The separate "recalls to arrange" list used to load alongside it and
+  // restate, in a second place, what each recalled car's own panel already says — the stage, the
+  // figures, the person whose move it is. Two renderings of one recall can only ever agree by
+  // accident, so the card is now the single place a recall is read.
+  const fetcher = useCallback(async () => (await api.get('/OilProjection')).data.data || {}, []);
   // Modal open ⇒ pause polling, so the board can't reshuffle under someone mid-call.
   const { data, loading, error, reload } = useFetch(fetcher, [], {
     refreshInterval: 60000,
@@ -1634,13 +1623,6 @@ export default function OilProjection() {
           tooltip={t('No intervention needed — finishes inside its allowance; any oil change is raised automatically at the return.')} />
       </MetricGrid>
 
-      {/* The calls the decisions created, above the board that creates them. */}
-      <RecallQueue
-        tasks={data?.recallTasks || []}
-        canRecord={canRecord}
-        onChanged={() => reload({ silent: true })}
-      />
-
       <SectionCard
         title={t('Follow-up queue')}
         subtitle={data?.model
@@ -1693,7 +1675,24 @@ export default function OilProjection() {
         )}
       >
         {loading && rows.length === 0 ? (
-          <div className="py-10 text-center text-sm text-slate-400">{t('Loading the fleet position…')}</div>
+          // Skeletons in the shape of the cards that are coming, so the page doesn't jump when
+          // they land — and so an empty board is never mistaken for a slow one.
+          <div className="grid gap-4 xl:grid-cols-2" aria-busy="true" aria-label={t('Loading the fleet position…')}>
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="animate-pulse space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="flex justify-between gap-4">
+                  <div className="w-1/2 space-y-2">
+                    <div className="h-4 w-3/4 rounded bg-slate-200" />
+                    <div className="h-3 w-full rounded bg-slate-100" />
+                  </div>
+                  <div className="h-5 w-24 rounded-full bg-slate-100" />
+                </div>
+                <div className="h-20 rounded-xl bg-slate-50" />
+                <div className="h-2.5 rounded-full bg-slate-100" />
+                <div className="h-14 rounded-lg bg-slate-50" />
+              </div>
+            ))}
+          </div>
         ) : rows.length === 0 ? (
           <EmptyState
             title={t('Nothing to decide')}
