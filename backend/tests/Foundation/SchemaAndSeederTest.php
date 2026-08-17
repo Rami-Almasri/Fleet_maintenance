@@ -3,6 +3,8 @@
 namespace Tests\Foundation;
 
 use App\Models\ComponentCatalog;
+use App\Models\FaultCatalog;
+use App\Models\ServiceCatalog;
 use Database\Seeders\ComponentCatalogSeeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -111,6 +113,38 @@ class SchemaAndSeederTest extends FoundationTestCase
         $this->assertSame($configured, ComponentCatalog::count());
         $this->assertSame(0, ComponentCatalog::whereNull('name_ar')->count(), 'every part needs an Arabic name');
         $this->assertSame(0, ComponentCatalog::whereNull('aliases')->count(), 'every part needs search aliases');
+    }
+
+    /**
+     * THE INTAKE VOCABULARIES MUST BE BILINGUAL, both in config and in the database.
+     *
+     * The Send-a-car-in picker searches `name` AND `name_ar` and renders name_ar on an Arabic screen. A
+     * row missing its Arabic name therefore fails twice over, silently: it cannot be found by anyone
+     * typing Arabic, and it shows up in English in the middle of an otherwise Arabic list. Nothing throws
+     * — the fault simply appears not to exist to half the workshop.
+     *
+     * Asserted against the CONFIG count as well as the column, so adding a fault without translating it
+     * fails here rather than in front of a user.
+     */
+    public function test_the_fault_and_service_vocabularies_are_fully_bilingual(): void
+    {
+        $this->assertSame(count(config('fault_catalog')), FaultCatalog::count());
+        $this->assertSame(count(config('service_catalog')), ServiceCatalog::count());
+
+        foreach ([FaultCatalog::class, ServiceCatalog::class] as $model) {
+            $untranslated = $model::whereNull('name_ar')->orWhere('name_ar', '')->pluck('slug')->all();
+            $this->assertSame([], $untranslated, class_basename($model) . ' rows missing an Arabic name');
+        }
+
+        // Every configured row must be translated in the CONFIG too — the DB could have been patched by
+        // hand, and the config is what a fresh deploy seeds from.
+        foreach (['fault_catalog', 'service_catalog'] as $catalog) {
+            $missing = array_column(
+                array_filter(config($catalog), fn ($r) => empty($r['name_ar'])),
+                'slug'
+            );
+            $this->assertSame([], $missing, "config/{$catalog}.php rows missing name_ar");
+        }
     }
 
     /** Re-seeding must not duplicate, and must not churn rows it does not change. */

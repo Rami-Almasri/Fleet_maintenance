@@ -194,6 +194,10 @@ class MaintenanceWorkflowResource extends JsonResource
             // birth). Null on every row filed before this existed, which reads as "we only had the note".
             'request_detail_mode'   => $t->request_detail_mode,
             'reported_faults'       => $t->reported_faults,
+            // The PLANNED work they asked for, in its own field for the same reason it has its own column:
+            // a service that is due is not a claim that anything failed, and a reader that mistakes one for
+            // the other counts a working schedule as a breaking car.
+            'requested_services'    => $t->requested_services,
             'request_reason_code'   => $t->request_reason_code,
             'request_reason_label'  => Maintenance::requestReasonLabel($t->request_reason_code),
             // The Driver Observation this ticket was escalated from, so the card can link back to the

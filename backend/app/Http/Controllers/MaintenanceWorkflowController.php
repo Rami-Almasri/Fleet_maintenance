@@ -288,10 +288,19 @@ class MaintenanceWorkflowController extends Controller
      * regardless of anything the client sends. A request whose author can be typed in is a request whose
      * author cannot be trusted.
      *
-     * The fault menu is the live FaultCatalog (kind = fault), grouped by category with the labels from
+     * TWO MENUS, NOT ONE MERGED LIST. The fault menu is the live FaultCatalog (kind = fault); the service
+     * menu is the live ServiceCatalog (kind = service). Both are grouped by category with the labels from
      * config/maintenance_findings — SELECTABLE vocabulary only, per [[findings-vocabulary-contract]].
-     * Services and inspections are deliberately absent: a person reporting a problem is naming a failure,
-     * and "Oil Change" is not something that went wrong.
+     *
+     * Two LISTS, one PICKER. They are returned separately because "Oil Change" is not something that went
+     * wrong — a fault is a claim the car failed and feeds Top Faults, recurrence and the health score,
+     * while a service is planned work falling due and feeds none of them (see
+     * docs/Service-vs-Fault-Domain-Separation.md). The form then shows them in a single searchable list
+     * with the service groups badged, exactly as the Inspector's findings picker does: what keeps the two
+     * apart downstream is each row's catalog identity, not which menu it was tapped in.
+     *
+     * Both doors accept either kind, and both may be named together. `interval_km` / `interval_months`
+     * ride along because "every 10,000 km · 6 months" is the cadence the person is answering against.
      */
     public function requestOptions(Request $request)
     {
@@ -315,6 +324,29 @@ class MaintenanceWorkflowController extends Controller
                         'category_key'     => $f->category_key,
                         'default_severity' => $f->default_severity,
                         'on_site'          => (bool) $f->on_site,
+                    ])->values(),
+                ])
+                ->values();
+
+            // THE SERVICE MENU — planned/preventive work, same shape as the fault groups so the picker is
+            // one component. `interval_km` / `interval_months` ride along because "Oil Change · every
+            // 10,000 km" is the cadence the person is answering against, and it is a FACT off the catalog
+            // row rather than anything computed about this car.
+            $serviceGroups = \App\Models\ServiceCatalog::active()->ordered()
+                ->get(['id', 'slug', 'name', 'name_ar', 'category_key', 'interval_km', 'interval_months'])
+                ->groupBy('category_key')
+                ->map(fn ($rows, $key) => [
+                    'key'      => $key,
+                    'label'    => $labels[$key]['label'] ?? Str::title(str_replace('_', ' ', (string) $key)),
+                    'label_ar' => $labels[$key]['label_ar'] ?? null,
+                    'services' => $rows->map(fn ($s) => [
+                        'id'              => $s->id,
+                        'slug'            => $s->slug,
+                        'name'            => $s->name,
+                        'name_ar'         => $s->name_ar,
+                        'category_key'    => $s->category_key,
+                        'interval_km'     => $s->interval_km,
+                        'interval_months' => $s->interval_months,
                     ])->values(),
                 ])
                 ->values();
@@ -345,8 +377,10 @@ class MaintenanceWorkflowController extends Controller
             $user = $request->user();
 
             return ResponseHelper::SuccessResponse([
-                'fault_groups' => $groups,
-                'fault_causes' => $causes,
+                'fault_groups'   => $groups,
+                // Planned work, kept in its own list for the reason spelled out above.
+                'service_groups' => $serviceGroups,
+                'fault_causes'   => $causes,
                 // CODE => label. The code is the stored fact; the label is presentation and the client is
                 // free to render its own translation instead (see [[reason-code-contract]]).
                 'reasons'      => [
@@ -1283,6 +1317,12 @@ class MaintenanceWorkflowController extends Controller
                 // The cause they SUSPECT, by id. Shape only here; that the id belongs to THIS fault's own
                 // approved short-list is proved in the service, beside the fault-name provenance rule.
                 'reported_faults.*.root_cause_id'       => ['nullable', 'integer'],
+                // THE SERVICE ANSWER — planned work that is due, named from the live ServiceCatalog. May be
+                // sent alongside named faults ("it pulls left and it's due an oil change"); each service
+                // proves itself against the catalog in the workflow service, exactly as a fault does.
+                'requested_services'                      => ['nullable', 'array', 'max:6'],
+                'requested_services.*.service_catalog_id' => ['nullable', 'integer'],
+                'requested_services.*.slug'               => ['nullable', 'string', 'max:64'],
                 'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_INSPECTION))],
             ]);
 
@@ -1292,6 +1332,7 @@ class MaintenanceWorkflowController extends Controller
                 'customer_complaint'  => $data['notes'] ?? null,
                 'test_kind'           => $data['test_kind'] ?? null,
                 'reported_faults'     => $data['reported_faults'] ?? null,
+                'requested_services'  => $data['requested_services'] ?? null,
                 'request_reason_code' => $data['request_reason_code'] ?? null,
             ], $request->user());
 
@@ -1493,6 +1534,10 @@ class MaintenanceWorkflowController extends Controller
                 'reported_faults.*.repeat_of_ticket_id' => ['nullable', 'integer'],
                 // The cause they SUSPECT, by id — proved against this fault's own list in the service.
                 'reported_faults.*.root_cause_id'       => ['nullable', 'integer'],
+                // Planned work that is due, named from the live ServiceCatalog — may ride alongside faults.
+                'requested_services'                      => ['nullable', 'array', 'max:6'],
+                'requested_services.*.service_catalog_id' => ['nullable', 'integer'],
+                'requested_services.*.slug'               => ['nullable', 'string', 'max:64'],
                 'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_INSPECTION))],
                 // requested_by is NOT accepted: the filer comes from the token, never from the payload.
             ]);
@@ -1537,6 +1582,12 @@ class MaintenanceWorkflowController extends Controller
                 // On THIS door the pick is a diagnosis, not a suspicion — the service writes it onto the
                 // finding, because there is no inspector coming behind this ticket.
                 'reported_faults.*.root_cause_id'       => ['nullable', 'integer'],
+                // THE SERVICE ANSWER — planned work that is due, named from the live ServiceCatalog. May be
+                // sent alongside named faults; on THIS door both become routable work at birth. Shape only
+                // is checked here; the catalog proof and the exclusivity rule live in the service.
+                'requested_services'                    => ['nullable', 'array', 'max:6'],
+                'requested_services.*.service_catalog_id' => ['nullable', 'integer'],
+                'requested_services.*.slug'             => ['nullable', 'string', 'max:64'],
                 'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_DISPATCH))],
                 'customer_complaint'                    => ['nullable', 'string', 'max:2000'],
             ]);

@@ -35,6 +35,7 @@ last, and re-run it if you ever re-seed the fault catalog.
 DB_DATABASE=fleet_test php artisan db:seed --class=RolesAndPermissionsSeeder --force
 DB_DATABASE=fleet_test php artisan db:seed --class=ComponentCatalogSeeder    --force
 DB_DATABASE=fleet_test php artisan db:seed --class=FaultCatalogSeeder        --force
+DB_DATABASE=fleet_test php artisan db:seed --class=ServiceCatalogSeeder      --force
 DB_DATABASE=fleet_test php artisan db:seed --class=VehicleLocationSeeder     --force
 ```
 

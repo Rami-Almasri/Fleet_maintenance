@@ -2999,9 +2999,11 @@ const en = {
       },
 
       mode: {
-        fault:  'Name the fault',
-        reason: 'Pick a reason',
-        note:   'Write a note',
+        // One tab for named work — the picker under it holds faults AND services, services badged.
+        fault:   'Name the fault or service',
+        service: 'Name the service',
+        reason:  'Pick a reason',
+        note:    'Write a note',
       },
 
       history: {
@@ -3023,12 +3025,26 @@ const en = {
       },
 
       fault: {
-        search:            'Search faults…',
+        search:            'Search faults and services…',
         noMatch:           'Nothing matches that.',
         count:             '{n} of 6',
         repeatTitle:       'Reported as the same fault as ticket #{id}',
         detailLabel:       'Anything to add? (optional)',
         detailPlaceholder: 'When it happens, what it sounds like, how bad…',
+      },
+
+      // Planned work that is due. Sits in the same picker as the faults, marked as service.
+      service: {
+        badge: 'Planned service',
+        count: '{n} of 6',
+        // The cadence line: "every" + the halves the catalog row actually carries.
+        every: 'every',
+        km:    '{n} km',
+        // Resolved through tp(), so Arabic gets the right one of its six forms. English needs two.
+        months: {
+          one:   '{n} month',
+          other: '{n} months',
+        },
       },
 
       // Optional "what do you think it is?" pick under each named fault — a suspicion, not a diagnosis.
@@ -7770,7 +7786,7 @@ const ar = {
       reinspectFail: 'إرجاع {who} إلى المشرف وتسجيل فشل الكراج في {count} عطل غير مُصلَّح؟ سيعيد ذلك إدراج السيارة لرحلة كراج أخرى.',
       reinspectPass: 'اجتياز إعادة الفحص وإرجاع {who} إلى أسطول السيارات المتاحة؟',
     },
-    // «أدخِل السيارة» — بابان، وسؤال واحد («لماذا؟») وثلاث طرق للإجابة، لا تُجمع اثنتان منها.
+    // «أدخِل السيارة» — بابان، وسؤال واحد («لماذا؟») وأربع طرق للإجابة، لا تُجمع اثنتان منها.
     sendIn: {
       title:    'أدخِل هذه السيارة',
       subtitle: 'قل ما الذي تحتاجه — والطابور الصحيح يفتح من تلقائه',
@@ -7795,9 +7811,10 @@ const ar = {
       },
 
       mode: {
-        fault:  'سمِّ العطل',
-        reason: 'اختر سببًا',
-        note:   'اكتب ملاحظة',
+        fault:   'سمِّ العطل أو الخدمة',
+        service: 'سمِّ الخدمة',
+        reason:  'اختر سببًا',
+        note:    'اكتب ملاحظة',
       },
 
       history: {
@@ -7819,12 +7836,28 @@ const ar = {
       },
 
       fault: {
-        search:            'ابحث في الأعطال…',
+        search:            'ابحث في الأعطال والخدمات…',
         noMatch:           'لا شيء يطابق ذلك.',
         count:             '{n} من 6',
         repeatTitle:       'أُبلغ عنه كالعطل نفسه في التذكرة رقم {id}',
         detailLabel:       'هل تريد إضافة شيء؟ (اختياري)',
         detailPlaceholder: 'متى يحدث، كيف يبدو صوته، وما مدى سوئه…',
+      },
+
+      // العمل المجدول المستحق. يقع في القائمة نفسها مع الأعطال، لكن موسومًا كخدمة.
+      service: {
+        badge: 'خدمة مجدولة',
+        count: '{n} من 6',
+        every: 'كل',
+        km:    '{n} كم',
+        // العدد يحكم صيغة «شهر»: ٣–١٠ جمع («٦ أشهر»)، و١١ وما فوق مفرد منصوب («٢٤ شهرًا»).
+        months: {
+          one:   'شهر',
+          two:   'شهرين',
+          few:   '{n} أشهر',
+          many:  '{n} شهرًا',
+          other: '{n} شهر',
+        },
       },
 
       causes: {

@@ -13,14 +13,24 @@
 //                      Offered only to people with diagnostic/dispatch authority — committing a car to
 //                      a workshop with nobody having diagnosed it is not a driver's call.
 //
-// Both doors then ask the SAME question — "why?" — and accept exactly one of three answers, never two:
+// Both doors then ask the SAME question — "why?" — and accept exactly one KIND of answer, never two:
 //
-//   NAME THE FAULT   — from the live fault vocabulary, or (the good bit) from what THIS car was already
-//                      in the shop for. The single likeliest reason a car goes back in is the last
-//                      repair not holding, so its own history is offered first, one tap, and picking it
-//                      stamps repeat_of_ticket_id — the requester's CLAIM, recorded as theirs. Nobody
-//                      here is saying the fault recurred; only the workshop's confirmation says that.
-//   PICK A REASON    — a code from the door's own list, for when you honestly cannot name a fault.
+//   NAME THE WORK    — from the live vocabularies, in one searchable list:
+//                        · FAULTS, or (the good bit) what THIS car was already in the shop for. The single
+//                          likeliest reason a car goes back in is the last repair not holding, so its own
+//                          history is offered first, one tap, and picking it stamps repeat_of_ticket_id —
+//                          the requester's CLAIM, recorded as theirs. Nobody here is saying the fault
+//                          recurred; only the workshop's confirmation says that.
+//                        · SERVICES — oil change, tyre rotation, A/C service. Nothing is wrong with the
+//                          car; work is simply due. Until these were offered, the only way to say "it's
+//                          due an oil change" was the reason code "Booked service work", which never said
+//                          WHICH, so the supervisor got a ticket with no job on it.
+//                      The two live in one picker with the service categories BADGED, exactly as the
+//                      Inspector's own findings picker shows them. The badge is what keeps them apart, not
+//                      the menu: the row's catalog identity decides how it is stored and counted, so a tap
+//                      cannot file planned work as a failure. Both may be named together — "it pulls left
+//                      and it's due an oil change" is one answer about two jobs.
+//   PICK A REASON    — a code from the door's own list, for when you honestly cannot name the work.
 //   WRITE A NOTE     — your own words.
 //
 // WHO FILED IT IS NOT A FIELD. It comes from the session and is shown, not chosen; the server stamps
@@ -55,10 +65,13 @@ const VOICE_DROVE       = 'test_drive';
 const VOICE_OBSERVATION = 'observation';
 const VOICE_OFFICE      = 'office_call';
 
-// The three ways of answering "why?", mutually exclusive by contract (Maintenance::REPORT_MODES).
-const MODE_FAULT  = 'fault';
-const MODE_REASON = 'reason';
-const MODE_NOTE   = 'note';
+// The ways of answering "why?" (Maintenance::REPORT_MODES). `fault` and `service` are both NAMED WORK and
+// may be sent together; a reason code or a note excludes them, and they exclude it. MODE_SERVICE is not a
+// tab of its own — it labels the service half of the one picker and the payload field it fills.
+const MODE_FAULT   = 'fault';
+const MODE_SERVICE = 'service';
+const MODE_REASON  = 'reason';
+const MODE_NOTE    = 'note';
 
 // A day count → the short phrase the history chips wear. Deliberately coarse: "3 weeks ago" is the
 // resolution a person actually reasons at, and "23 days ago" pretends to a precision nobody uses.
@@ -121,26 +134,79 @@ function HistoryChip({ fault, picked, onToggle, t }) {
   );
 }
 
-/** The fault vocabulary, searchable, grouped by category. Selection is a toggle; six is the ceiling. */
-function FaultPicker({ groups, picked, onToggle, t, lang }) {
+/**
+ * Fold a search string down to what a person MEANT to type, so Arabic search behaves the way Latin
+ * search already did by accident.
+ *
+ * Typing "اطار" and never finding "إطار مستهلك" reads as a missing fault, not a missing hamza — and
+ * nobody hunting a fault mid-shift is going to guess that the alef was the problem. So the alef forms
+ * collapse to one, ta marbuta to ha, alef maqsura to ya, and the diacritics and tatweel that a keyboard
+ * may or may not produce are dropped. Applied to BOTH sides of the comparison, so it is a widening of
+ * what matches and never a narrowing.
+ */
+function foldSearch(s) {
+  return (s || '')
+    .toLowerCase()
+    .replace(/[ً-ْٰـ]/g, '')   // harakat + superscript alef + tatweel
+    .replace(/[آأإاٱ]/g, 'ا')   // آ أ إ ٱ → ا
+    .replace(/ة/g, 'ه')                  // ة → ه
+    .replace(/ى/g, 'ي')                  // ى → ي
+    .replace(/ؤ/g, 'و')                  // ؤ → و
+    .replace(/ئ/g, 'ي');                 // ئ → ي
+}
+
+/**
+ * THE WORK VOCABULARY — faults and services in ONE searchable, category-grouped list.
+ *
+ * They were briefly two tabs, and that was wrong: a person who knows the car is due an oil change should
+ * type "oil" and find it, not first work out that an oil change is filed under a different question from
+ * a brake noise. The Inspector's own findings picker (FindingsPicker) has always shown the two together
+ * with the service categories badged, and this is the same list saying the same thing.
+ *
+ * The BADGE is what keeps it honest, not the separation. A service group is marked PLANNED SERVICE at the
+ * point of selection, and the row's own catalog identity — not which list it sat in — decides how it is
+ * stored (`requested_services`, kind=service) and counted. So the tap cannot mislabel the work: only the
+ * catalog can, and it doesn't.
+ *
+ * Each group declares its `kind`; selection is a toggle and six per kind is the ceiling.
+ */
+function WorkPicker({ groups, isPicked, onToggle, t, tp, lang }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(null);   // expanded category key; null = none
 
-  const needle = q.trim().toLowerCase();
+  // Both names are always searched, whichever language the screen is in: the workshop is bilingual and a
+  // person who knows a part as "kalatch" should not have to switch the UI to find الكلتش.
+  const needle = foldSearch(q.trim());
   const shown = useMemo(() => {
     if (!needle) return groups;
     return groups
       .map((g) => ({
         ...g,
-        faults: g.faults.filter((f) =>
-          `${f.name} ${f.name_ar || ''}`.toLowerCase().includes(needle)),
+        items: g.items.filter((i) =>
+          foldSearch(`${i.name} ${i.name_ar || ''}`).includes(needle)),
       }))
-      .filter((g) => g.faults.length);
+      .filter((g) => g.items.length);
   }, [groups, needle]);
 
   // Searching is its own answer to "which category?" — collapsing the results behind an accordion
   // would hide what the person just asked for.
   const expanded = (key) => !!needle || open === key;
+
+  // "every 10,000 km · 6 months" — the cadence a service runs on, straight off the catalog row. It says
+  // nothing about how far THIS car has gone since its last one.
+  //
+  // "every" is a shared prefix carried once, so a service with both halves does not read
+  // "every … · every …". The month count goes through tp() rather than one interpolated string because
+  // Arabic needs three different words here — 6 is «6 أشهر», 24 is «24 شهرًا» — and a single form gets
+  // one of them wrong on every row. km is invariant («كم») and needs no plural.
+  const cadence = (i) => {
+    const every  = t('workflow.sendIn.service.every');
+    const km     = i.interval_km ? t('workflow.sendIn.service.km', { n: i.interval_km.toLocaleString() }) : null;
+    const months = i.interval_months ? tp('workflow.sendIn.service.months', i.interval_months) : null;
+    const parts  = [km, months].filter(Boolean);
+
+    return parts.length ? `${every} ${parts.join(' · ')}` : '';
+  };
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white">
@@ -160,49 +226,79 @@ function FaultPicker({ groups, picked, onToggle, t, lang }) {
           <p className="px-2 py-6 text-center text-sm text-slate-400">{t('workflow.sendIn.fault.noMatch')}</p>
         )}
 
-        {shown.map((g) => (
-          <div key={g.key} className="mb-1 last:mb-0">
-            <button
-              type="button"
-              onClick={() => setOpen(open === g.key ? null : g.key)}
-              className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-start text-xs font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-50"
-            >
-              <span>{(lang === 'ar' && g.label_ar) || g.label}</span>
-              <span className="flex items-center gap-1.5">
-                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">{g.faults.length}</span>
-                <Icon.ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded(g.key) ? 'rotate-180' : ''}`} />
-              </span>
-            </button>
+        {shown.map((g) => {
+          const isService = g.kind === MODE_SERVICE;
+          return (
+            <div key={`${g.kind}:${g.key}`} className="mb-1 last:mb-0">
+              <button
+                type="button"
+                onClick={() => setOpen(open === `${g.kind}:${g.key}` ? null : `${g.kind}:${g.key}`)}
+                className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-start text-xs font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-50"
+              >
+                <span className="min-w-0 truncate">{(lang === 'ar' && g.label_ar) || g.label}</span>
+                {/* PLANNED WORK, NOT A DEFECT — the same marker the Inspector's picker carries, so that
+                    "Oil Change" is never read as something found wrong with the car. */}
+                {isService && (
+                  <span className="shrink-0 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-sky-700 ring-1 ring-inset ring-sky-200">
+                    {t('workflow.sendIn.service.badge')}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1" />
+                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">{g.items.length}</span>
+                <Icon.ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded(`${g.kind}:${g.key}`) ? 'rotate-180' : ''}`} />
+              </button>
 
-            {expanded(g.key) && (
-              <div className="flex flex-wrap gap-1.5 px-2 py-2">
-                {g.faults.map((f) => {
-                  const on = picked.some((p) => p.fault_catalog_id === f.id);
-                  return (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => onToggle(f)}
-                      aria-pressed={on}
-                      className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${on
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-                    >
-                      {(lang === 'ar' && f.name_ar) || f.name}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ))}
+              {expanded(`${g.kind}:${g.key}`) && (
+                <div className={isService ? 'grid gap-1.5 px-2 py-2 sm:grid-cols-2' : 'flex flex-wrap gap-1.5 px-2 py-2'}>
+                  {g.items.map((i) => {
+                    const on    = isPicked(g.kind, i);
+                    const every = isService ? cadence(i) : '';
+                    // A service wears its cadence, so it gets a card; a fault is a bare chip as before.
+                    if (isService) {
+                      return (
+                        <button
+                          key={i.id}
+                          type="button"
+                          onClick={() => onToggle(g.kind, i)}
+                          aria-pressed={on}
+                          className={`rounded-lg border px-2.5 py-1.5 text-start transition ${on
+                            ? 'border-sky-500 bg-sky-50 ring-1 ring-sky-500'
+                            : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}
+                        >
+                          <span className="block text-xs font-semibold text-slate-800">
+                            {(lang === 'ar' && i.name_ar) || i.name}
+                          </span>
+                          {every && <span className="mt-0.5 block text-[10px] text-slate-500">{every}</span>}
+                        </button>
+                      );
+                    }
+                    return (
+                      <button
+                        key={i.id}
+                        type="button"
+                        onClick={() => onToggle(g.kind, i)}
+                        aria-pressed={on}
+                        className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${on
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                      >
+                        {(lang === 'ar' && i.name_ar) || i.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
+
 export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
-  const { t, tf, lang } = useI18n();
+  const { t, tf, tp, lang } = useI18n();
   const { user } = useAuth();
   const { can } = usePermissions();
 
@@ -218,6 +314,7 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
 
   const [vehicleId, setVehicleId] = useState('');
   const [faults, setFaults]       = useState([]);   // [{ text, slug, fault_catalog_id, category_key, repeat_of_ticket_id }]
+  const [services, setServices]   = useState([]);   // [{ text, slug, service_catalog_id }] — planned work, never faults
   const [reasonCode, setReason]   = useState('');
   const [note, setNote]           = useState('');
   const [observationRaise, setObservationRaise] = useState(false);
@@ -273,6 +370,8 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
 
   // Switching doors changes which reason list is legal, so a reason picked on the other door would be
   // refused on submit. Clear it at the moment of the switch instead of at the moment of the refusal.
+  // Named work is NOT cleared: both doors accept it, and re-picking an oil change because you changed
+  // your mind about which queue it belongs in would be the form punishing a correction.
   useEffect(() => { setReason(''); setError(null); }, [door]);
 
   // Land on a door this person can actually submit through. An inspector holds `initiate` but not
@@ -313,6 +412,34 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     });
   }, []);
 
+  // Planned work is a flat pick — no history strip, no suspected cause, no repeat claim. There is nothing
+  // to suspect about an oil change and a service repeating is the schedule doing its job, not a recurrence.
+  const toggleService = useCallback((s) => {
+    setServices((prev) => {
+      const on = prev.some((p) => p.service_catalog_id === s.id);
+      if (on) return prev.filter((p) => p.service_catalog_id !== s.id);
+      if (prev.length >= 6) return prev;
+      return [...prev, { text: s.name, slug: s.slug, service_catalog_id: s.id }];
+    });
+  }, []);
+
+  // ONE LIST for the picker: the fault categories, then the service categories carrying their kind and
+  // their cadence. Built here rather than in the picker so the two server payloads stay exactly as the
+  // server sent them and only the presentation is joined.
+  const workGroups = useMemo(() => ([
+    ...(options?.fault_groups || []).map((g) => ({ ...g, kind: MODE_FAULT,   items: g.faults })),
+    ...(options?.service_groups || []).map((g) => ({ ...g, kind: MODE_SERVICE, items: g.services })),
+  ]), [options]);
+
+  const isPicked = useCallback((kind, item) => (kind === MODE_SERVICE
+    ? services.some((p) => p.service_catalog_id === item.id)
+    : faults.some((p) => p.fault_catalog_id === item.id)), [faults, services]);
+
+  const toggleWork = useCallback((kind, item) => {
+    if (kind === MODE_SERVICE) toggleService(item);
+    else toggleCatalogFault(item);
+  }, [toggleService, toggleCatalogFault]);
+
   const historyPicked = (h) => faults.some(
     (p) => p.text.toLowerCase() === h.text.toLowerCase() && p.repeat_of_ticket_id === h.ticket_id
   );
@@ -344,10 +471,12 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
 
   // ── validity ───────────────────────────────────────────────────────────────────────────────────
   const reasonList = options?.reasons?.[door] || {};
+  // The naming tab is satisfied by EITHER kind of named work — a car going in for an oil change alone is
+  // a complete answer to "why is it going in?".
   const statementReady =
-    (mode === MODE_FAULT  && faults.length > 0)
-    || (mode === MODE_REASON && !!reasonCode && (reasonCode !== 'other' || !!note.trim()))
-    || (mode === MODE_NOTE   && !!note.trim());
+    (mode === MODE_FAULT   && (faults.length > 0 || services.length > 0))
+    || (mode === MODE_REASON  && !!reasonCode && (reasonCode !== 'other' || !!note.trim()))
+    || (mode === MODE_NOTE    && !!note.trim());
 
   // A car with a request already in flight cannot be sent straight to a garage — the server refuses that
   // door on the same fact, so the form must say so before it is filled in rather than after it is
@@ -367,8 +496,10 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   const disabled = saving || !vehicleId || blocked || !statementReady;
 
   // ── submit ─────────────────────────────────────────────────────────────────────────────────────
+  // Named work (either kind, or both) OR a reason code — never both sides, which the server also refuses.
   const statementBody = () => ({
-    reported_faults:     mode === MODE_FAULT  ? faults : undefined,
+    reported_faults:     mode === MODE_FAULT && faults.length   ? faults   : undefined,
+    requested_services:  mode === MODE_FAULT && services.length ? services : undefined,
     request_reason_code: mode === MODE_REASON ? reasonCode : undefined,
   });
 
@@ -459,6 +590,8 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     ...(canDispatch ? [{ key: DOOR_DISPATCH,   icon: '🔧', tone: 'amber'  }] : []),
   ];
 
+  // Three tabs again: naming a service is not a different QUESTION from naming a fault, it is a different
+  // answer to the same one, so it lives in the same picker rather than a tab of its own.
   const modes = [
     { key: MODE_FAULT,  icon: '🔧' },
     { key: MODE_REASON, icon: '📋' },
@@ -699,6 +832,36 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
                   </div>
                 )}
 
+                {/* The picked SERVICES, in their own tray. Same picker, but shown apart once chosen: the
+                    ticket treats them differently, so the person is told that before they submit rather
+                    than discovering it on the board. */}
+                {services.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-sky-100 bg-sky-50/50 p-2">
+                    <span className="pe-1 text-[10px] font-semibold uppercase tracking-wide text-sky-700">
+                      {t('workflow.sendIn.service.badge')}
+                    </span>
+                    {services.map((s, i) => (
+                      <span
+                        key={s.service_catalog_id}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-800 shadow-sm ring-1 ring-sky-200"
+                      >
+                        {s.text}
+                        <button
+                          type="button"
+                          onClick={() => setServices((p) => p.filter((_, j) => j !== i))}
+                          className="text-slate-400 hover:text-red-600"
+                          aria-label={t('common.remove')}
+                        >
+                          <Icon.X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                    <span className="ms-auto pe-1 text-[11px] font-medium text-sky-700">
+                      {t('workflow.sendIn.service.count', { n: services.length })}
+                    </span>
+                  </div>
+                )}
+
                 {/* ── WHAT DO YOU THINK IT IS? ─────────────────────────────────────────────────────
                     The curated short-list a mechanic works through for the fault just named — the SAME
                     list the Inspector is offered at the Diagnosis step, so the two can never quote
@@ -785,9 +948,9 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
                   </p>
                 )}
 
-                {/* ── THE VOCABULARY ────────────────────────────────────────────────────────── */}
-                {options?.fault_groups?.length
-                  ? <FaultPicker groups={options.fault_groups} picked={faults} onToggle={toggleCatalogFault} t={t} lang={lang} />
+                {/* ── THE VOCABULARY — faults and services, one list, services badged ────────── */}
+                {workGroups.length
+                  ? <WorkPicker groups={workGroups} isPicked={isPicked} onToggle={toggleWork} t={t} tp={tp} lang={lang} />
                   : <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">{t('common.loading')}</p>}
 
                 {/* A note beside named faults is DETAIL about them, not a second answer — which is why

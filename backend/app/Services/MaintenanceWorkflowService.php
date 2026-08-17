@@ -802,18 +802,29 @@ class MaintenanceWorkflowService
      * fault this car was in the shop for last month, and cannot tell a named fault from a shrug. So the
      * person answers exactly ONE way (see Maintenance::REPORT_MODES) and we keep what they picked:
      *
-     *   fault  — they named fault types. Each row must prove where it came from: a live FaultCatalog row
-     *            (the selectable vocabulary — see [[findings-vocabulary-contract]]) or a
-     *            `repeat_of_ticket_id` pointing at THIS car's own closed ticket, which is the requester
-     *            saying "it's the same thing as last time". Nothing else is accepted: a hand-typed fault
-     *            name is not vocabulary, it is a note, and there is a mode for that.
-     *   reason — a CODE from the door's own list. `other` is the one code that records nothing by itself,
-     *            so it (and only it) additionally requires the note that spells it out.
-     *   note   — their own words.
+     *   fault   — they named fault types. Each row must prove where it came from: a live FaultCatalog row
+     *             (the selectable vocabulary — see [[findings-vocabulary-contract]]) or a
+     *             `repeat_of_ticket_id` pointing at THIS car's own closed ticket, which is the requester
+     *             saying "it's the same thing as last time". Nothing else is accepted: a hand-typed fault
+     *             name is not vocabulary, it is a note, and there is a mode for that.
+     *   service — they named the PLANNED work it is due, from the live ServiceCatalog: an oil change, a
+     *             tyre rotation, the annual A/C service. Nothing is wrong with the car and nothing here is
+     *             a claim that something failed, which is why these never touch `reported_faults`.
+     *   reason  — a CODE from the door's own list. `other` is the one code that records nothing by itself,
+     *             so it (and only it) additionally requires the note that spells it out.
+     *   note    — their own words.
      *
-     * EXCLUSIVITY IS ENFORCED, not tidied up: sending faults AND a reason is refused rather than silently
-     * resolved, because picking which of the two answers to keep is picking what the car goes in for, and
-     * that is not a decision this method is entitled to make.
+     * EXCLUSIVITY IS ENFORCED, not tidied up: sending named work AND a reason code is refused rather than
+     * silently resolved, because picking which of the two answers to keep is picking what the car goes in
+     * for, and that is not a decision this method is entitled to make.
+     *
+     * FAULTS AND SERVICES ARE THE EXCEPTION, and it is not a hole in the rule — it is the rule read
+     * correctly. Both are the same KIND of answer ("here is the work, by name, from the catalogs"), so
+     * naming a noise and an overdue oil change together is one answer about two items, exactly as naming
+     * two faults is. A reason code is a different kind of answer — "I can't name the work" — and cannot
+     * coexist with having named it. `mode` records the stronger half: a fault claim if any fault was
+     * named, `service` when the visit is planned work only. The two lists stay in separate columns
+     * regardless, because that is what keeps a due service from ever being counted as a failure.
      *
      * Returns the columns to stamp plus `sentence` — the same statement rendered back into prose for
      * `customer_complaint`, so the inspector's screen, the board card, the audit log and the notification
@@ -821,29 +832,69 @@ class MaintenanceWorkflowService
      *
      * @param array  $data  raw request payload
      * @param string $door  'inspection' | 'dispatch' — which reason list is legal here
-     * @return array{mode:string, faults:?array, reason_code:?string, sentence:?string}
+     * @return array{mode:string, faults:?array, services:?array, reason_code:?string, sentence:?string}
      */
     private function requestStatement(array $data, string $door): array
     {
-        $rawFaults = array_values(array_filter((array) ($data['reported_faults'] ?? []), 'is_array'));
-        $reasonRaw = $this->clean($data['request_reason_code'] ?? null);
-        $noteRaw   = $this->clean($data['customer_complaint'] ?? null);
+        $rawFaults   = array_values(array_filter((array) ($data['reported_faults'] ?? []), 'is_array'));
+        $rawServices = array_values(array_filter((array) ($data['requested_services'] ?? []), 'is_array'));
+        $reasonRaw   = $this->clean($data['request_reason_code'] ?? null);
+        $noteRaw     = $this->clean($data['customer_complaint'] ?? null);
 
         // What they actually sent decides the mode; the explicit field is only honoured when it agrees
-        // with the payload, so a stale radio button can never mislabel a real answer.
+        // with the payload, so a stale radio button can never mislabel a real answer. Named work (faults
+        // and/or services) is ONE answer for this purpose — see the exclusivity note above.
+        $namedWork = $rawFaults || $rawServices;
         $given = array_keys(array_filter([
-            Maintenance::REPORT_MODE_FAULT  => (bool) $rawFaults,
+            'work'                          => $namedWork,
             Maintenance::REPORT_MODE_REASON => (bool) $reasonRaw,
         ]));
 
         if (count($given) > 1) {
             throw new WorkflowTransitionException(
-                'Say it one way: name the fault, or pick a reason — not both.',
+                'Say it one way: name the work, or pick a reason — not both.',
                 ['field' => 'request_detail_mode']
             );
         }
 
-        $mode = $given[0] ?? Maintenance::REPORT_MODE_NOTE;
+        // ── named work: faults, services, or both ─────────────────────────────────────────────────
+        if ($namedWork) {
+            $faults   = $rawFaults   ? $this->normalizeReportedFaults($rawFaults, (int) ($data['vehicle_id'] ?? 0)) : null;
+            $services = $rawServices ? $this->normalizeRequestedServices($rawServices) : null;
+
+            // A fault claim is the stronger statement about a car, so it names the mode when both are
+            // present: the visit is not a routine one the moment something is reported wrong.
+            $mode = $faults ? Maintenance::REPORT_MODE_FAULT : Maintenance::REPORT_MODE_SERVICE;
+
+            // "Reported: Brake noise (thinks it's worn pads) · Service due: Oil Change — pulls left too".
+            // A suspected cause reads as "thinks it's X" and never as a finding, because the sentence lands
+            // in customer_complaint — the field the inspector, the board card and the notification all
+            // quote. Whose guess it is has to survive the trip into prose.
+            $parts = [];
+            if ($faults) {
+                $parts[] = 'Reported: ' . implode(', ', array_map(
+                    fn ($f) => $f['text']
+                        . ($f['repeat_of_ticket_id'] ? ' (reported as the same fault as #' . $f['repeat_of_ticket_id'] . ')' : '')
+                        . ($f['suspected_cause'] ? ' (thinks it’s ' . $f['suspected_cause'] . ')' : ''),
+                    $faults
+                ));
+            }
+            if ($services) {
+                $parts[] = 'Service due: ' . implode(', ', array_column($services, 'text'));
+            }
+
+            return [
+                'mode'        => $mode,
+                'faults'      => $faults,
+                'services'    => $services,
+                'reason_code' => null,
+                // A note ALONGSIDE named work is detail about that work, not a second answer, so it rides
+                // along rather than competing.
+                'sentence'    => trim(implode(' · ', $parts) . ($noteRaw ? ' — ' . $noteRaw : '')),
+            ];
+        }
+
+        $mode = $reasonRaw ? Maintenance::REPORT_MODE_REASON : Maintenance::REPORT_MODE_NOTE;
 
         // ── reason ────────────────────────────────────────────────────────────────────────────────
         if ($mode === Maintenance::REPORT_MODE_REASON) {
@@ -862,46 +913,88 @@ class MaintenanceWorkflowService
             return [
                 'mode'        => $mode,
                 'faults'      => null,
+                'services'    => null,
                 'reason_code' => $reasonRaw,
                 'sentence'    => $reasonRaw === 'other' ? $noteRaw : $list[$reasonRaw],
-            ];
-        }
-
-        // ── fault ─────────────────────────────────────────────────────────────────────────────────
-        if ($mode === Maintenance::REPORT_MODE_FAULT) {
-            $faults = $this->normalizeReportedFaults($rawFaults, (int) ($data['vehicle_id'] ?? 0));
-
-            return [
-                'mode'        => $mode,
-                'faults'      => $faults,
-                'reason_code' => null,
-                // "Reported: Brake noise (same fault as #812), Overheating" — plus their own words when
-                // they added any. A note ALONGSIDE named faults is detail about those faults, not a
-                // second answer, so it rides along rather than competing.
-                //
-                // A suspected cause reads as "thinks it's X" and never as a finding, because the sentence
-                // lands in customer_complaint — the field the inspector, the board card and the
-                // notification all quote. Whose guess it is has to survive the trip into prose.
-                'sentence'    => trim(
-                    'Reported: ' . implode(', ', array_map(
-                        fn ($f) => $f['text']
-                            . ($f['repeat_of_ticket_id'] ? ' (reported as the same fault as #' . $f['repeat_of_ticket_id'] . ')' : '')
-                            . ($f['suspected_cause'] ? ' (thinks it’s ' . $f['suspected_cause'] . ')' : ''),
-                        $faults
-                    )) . ($noteRaw ? ' — ' . $noteRaw : '')
-                ),
             ];
         }
 
         // ── note ──────────────────────────────────────────────────────────────────────────────────
         if ($noteRaw === null) {
             throw new WorkflowTransitionException(
-                'Say why this car needs to go in — name the fault, pick a reason, or write it out.',
+                'Say why this car needs to go in — name the fault or service, pick a reason, or write it out.',
                 ['field' => 'customer_complaint']
             );
         }
 
-        return ['mode' => $mode, 'faults' => null, 'reason_code' => null, 'sentence' => $noteRaw];
+        return ['mode' => $mode, 'faults' => null, 'services' => null, 'reason_code' => null, 'sentence' => $noteRaw];
+    }
+
+    /**
+     * Validate the picked SERVICE rows against the one thing that legitimises one: a live ServiceCatalog
+     * row. Returns clean, storable rows; throws when a row cannot name one.
+     *
+     * There is no history escape hatch here and that asymmetry is deliberate. A fault may be claimed from
+     * this car's own repair history ("it's the same thing as last time") because a failure recurring is
+     * real information the catalog cannot supply. A service repeating is not a claim about anything — it
+     * is the schedule working — so the catalog is the whole vocabulary and free text is a note.
+     *
+     * Capped at six, same as faults: a visit naming a dozen jobs is a full service, and that is what the
+     * `general_service` row is for.
+     *
+     * @param  array<int,array> $rows
+     * @return array<int,array{text:string, slug:string, service_catalog_id:int, category_key:?string}>
+     */
+    private function normalizeRequestedServices(array $rows): array
+    {
+        if (count($rows) > 6) {
+            throw new WorkflowTransitionException('Name up to six services — pick General Service for a full one.', [
+                'field' => 'requested_services',
+            ]);
+        }
+
+        $catalogById   = \App\Models\ServiceCatalog::active()->get();
+        $catalogBySlug = $catalogById->keyBy('slug');
+        $catalogById   = $catalogById->keyBy('id');
+
+        $out  = [];
+        $seen = [];
+
+        foreach ($rows as $row) {
+            $catalog = null;
+            if (! empty($row['service_catalog_id'])) {
+                $catalog = $catalogById->get((int) $row['service_catalog_id']);
+            } elseif (! empty($row['slug'])) {
+                $catalog = $catalogBySlug->get((string) $row['slug']);
+            }
+
+            if (! $catalog) {
+                throw new WorkflowTransitionException(
+                    'Pick the service from the list.',
+                    ['field' => 'requested_services']
+                );
+            }
+
+            if (isset($seen[$catalog->id])) {
+                continue;   // the same service named twice is still one service
+            }
+            $seen[$catalog->id] = true;
+
+            $out[] = [
+                // The catalog's own name, never the client's — the words are how the row reads and the
+                // slug is what it IS, so a renamed catalog row keeps its history readable.
+                'text'               => $catalog->name,
+                'slug'               => $catalog->slug,
+                'service_catalog_id' => $catalog->id,
+                'category_key'       => $catalog->category_key,
+            ];
+        }
+
+        if (! $out) {
+            throw new WorkflowTransitionException('Name at least one service.', ['field' => 'requested_services']);
+        }
+
+        return $out;
     }
 
     /**
@@ -1169,6 +1262,10 @@ class MaintenanceWorkflowService
             // and these rows are the brief he starts from, not his conclusion.
             $ticket->request_detail_mode = $statement['mode'];
             $ticket->reported_faults     = $statement['faults'];
+            // A service named on THIS door is a request too, not a decision: nothing is promoted, and the
+            // Controller reviewing the queue is the one who says the car goes. Naming it is still worth far
+            // more than a note, because the job arrives as catalog vocabulary the workshop can be sent.
+            $ticket->requested_services  = $statement['services'];
             $ticket->request_reason_code = $statement['reason_code'];
 
             // maintenance_type is intentionally NOT set here — the Driver flagging a car for inspection
@@ -1428,8 +1525,9 @@ class MaintenanceWorkflowService
             );
         }
 
-        // Same three ways of saying why, judged against the DISPATCH reason list — the one whose entries
-        // are decisions ("parts are in") rather than suspicions ("it felt wrong").
+        // Same four ways of saying why, judged against the DISPATCH reason list — the one whose entries
+        // are decisions ("parts are in") rather than suspicions ("it felt wrong"). This is also the only
+        // door that accepts a named SERVICE: work that is due has nothing to test-drive.
         $statement = $this->requestStatement($data + ['vehicle_id' => $vehicleId], 'dispatch');
 
         return DB::transaction(function () use ($vehicle, $vehicleId, $statement, $actor, $superseded) {
@@ -1440,7 +1538,12 @@ class MaintenanceWorkflowService
             $ticket->workflow_status = Maintenance::WF_INSPECTION_PENDING;
             // A booked service is a PLANNED visit and must be tagged as one, or the foresight engine
             // reads a scheduled oil change as the car failing. Everything else here is a real problem.
-            $isPlanned = $statement['reason_code'] === 'scheduled_service';
+            // Naming the service outright says the same thing the `scheduled_service` code says, only
+            // precisely, so it must tag the visit the same way — otherwise "Oil Change" would be the one
+            // spelling of a routine visit that counted against the car. Mode `service` means services and
+            // NOTHING ELSE was named: a visit that also carries a reported fault is not a routine one.
+            $isPlanned = $statement['reason_code'] === 'scheduled_service'
+                || $statement['mode'] === Maintenance::REPORT_MODE_SERVICE;
             $ticket->trigger_reason = $isPlanned ? Maintenance::TRIGGER_PERIODIC : Maintenance::TRIGGER_TEST_DRIVE;
             $ticket->visit_context  = $isPlanned ? Maintenance::CONTEXT_ROUTINE : 'standard';
             // WHERE it came from: whoever holds this door is the workshop side of the house — the same
@@ -1450,6 +1553,7 @@ class MaintenanceWorkflowService
             $ticket->customer_complaint  = $statement['sentence'];
             $ticket->request_detail_mode = $statement['mode'];
             $ticket->reported_faults     = $statement['faults'];
+            $ticket->requested_services  = $statement['services'];
             $ticket->request_reason_code = $statement['reason_code'];
 
             // Parked ('IN'): the car isn't at the garage yet, so it must not read as an open garage event.
@@ -1463,12 +1567,18 @@ class MaintenanceWorkflowService
             // before the garage saw it" (Maintenance::FINDING_SOURCES has exactly two values), and this
             // door is held only by people with that authority. Severity is the catalog's PREFILL hint,
             // never a grade — the grade is still set by the person entitled to set it.
+            //
+            // Faults and services are APPENDED to one findings list, each carrying its own kind — the
+            // ticket may legitimately hold both ("it pulls left and it's due an oil change"), and an
+            // assignment here instead of an append would silently drop whichever came first.
+            $findings = [];
+
             if ($statement['faults']) {
                 // `kind` + `catalog_id` / `catalog_slug` are the keys EventClassificationService reads to
                 // classify a finding authoritatively (classification_source = catalog) rather than by
                 // guessing at its wording. A repeat-claim row carries no catalog id, so it falls through
                 // to the resolver exactly as a legacy symptom always has.
-                $ticket->findings = array_map(fn ($f) => [
+                $findings = array_map(fn ($f) => [
                     'text'         => $f['text'],
                     'category_key' => $f['category_key'],
                     'kind'         => \App\Models\MaintenanceTask::KIND_FAULT,
@@ -1487,10 +1597,34 @@ class MaintenanceWorkflowService
                 ], $statement['faults']);
             }
 
+            // The named services become findings on exactly the same footing, and this is the whole point
+            // of asking which service rather than accepting "booked service work": a supervisor now has a
+            // job to dispatch and the garage is told what to do in writing.
+            //
+            // `kind = service` is what keeps them honest downstream. Every one of these rows becomes a
+            // maintenance_task classified from the ServiceCatalog (classification_source = catalog), so it
+            // is counted in cost, history and profitability and excluded from Top Faults, recurrence and
+            // the health score — see docs/Service-vs-Fault-Domain-Separation.md. No severity: planned work
+            // is not graded, and a prefill hint here would be inventing one.
+            if ($statement['services']) {
+                $findings = array_merge($findings, array_map(fn ($s) => [
+                    'text'         => $s['text'],
+                    'category_key' => $s['category_key'],
+                    'kind'         => \App\Models\MaintenanceTask::KIND_SERVICE,
+                    'catalog_id'   => $s['service_catalog_id'],
+                    'catalog_slug' => $s['slug'],
+                    'severity'     => null,
+                    'source'       => Maintenance::FINDING_INSPECTOR,
+                    'at'           => Carbon::now()->toIso8601String(),
+                ], $statement['services']));
+            }
+
+            $ticket->findings = $findings ?: null;
+
             $ticket->save();
 
-            // Promote the findings into routable faults — a ticket at Needs Dispatch with no faults on it
-            // is a ticket a supervisor cannot act on. No-op when they picked a reason or wrote a note.
+            // Promote the findings into routable work — a ticket at Needs Dispatch with nothing on it is a
+            // ticket a supervisor cannot act on. No-op when they picked a reason or wrote a note.
             if ($ticket->findings) {
                 app(MaintenanceTaskService::class)->syncFromFindings($ticket, $actor);
             }
@@ -1521,6 +1655,7 @@ class MaintenanceWorkflowService
                     'request_detail_mode' => $statement['mode'],
                     'request_reason_code' => $statement['reason_code'],
                     'reported_faults'     => $statement['faults'],
+                    'requested_services'  => $statement['services'],
                     'source'              => 'direct_dispatch',
                     // Which system suggestion this decision answered, when it answered one — the link that
                     // makes "why did that card vanish?" answerable from either end.
@@ -1558,9 +1693,10 @@ class MaintenanceWorkflowService
      * queue count.
      *
      * What "adding" means, precisely:
-     *   - NAMED FAULTS are merged into the open request's `reported_faults`, deduped by name, still capped
-     *     at six. Faults are the one part of a statement that genuinely accumulates: two people naming two
-     *     different things is two things wrong with the car.
+     *   - NAMED WORK is merged into the open request — faults into `reported_faults` deduped by name,
+     *     services into `requested_services` deduped by catalog row, each still capped at six. Named work
+     *     is the part of a statement that genuinely accumulates: two people naming two different things is
+     *     two things this car needs.
      *   - THE ORIGINAL STATEMENT IS NEVER OVERWRITTEN. The new sentence is appended to
      *     `customer_complaint` attributed to whoever added it, so the card reads as a thread and the first
      *     reporter's words survive intact. `request_reason_code` likewise stays as first answered — the
@@ -1597,6 +1733,27 @@ class MaintenanceWorkflowService
                 $ticket->request_detail_mode = Maintenance::REPORT_MODE_FAULT;
             }
 
+            // Named services accumulate the same way and for the same reason — two people can each know a
+            // different job is due. Deduped by catalog row, because that is what identity means here.
+            if ($statement['services']) {
+                $existingServices = is_array($ticket->requested_services) ? $ticket->requested_services : [];
+                $seen   = [];
+                $merged = [];
+                foreach (array_merge($existingServices, $statement['services']) as $s) {
+                    $key = (string) ($s['service_catalog_id'] ?? $s['slug'] ?? '');
+                    if ($key === '' || isset($seen[$key])) {
+                        continue;
+                    }
+                    $seen[$key] = true;
+                    $merged[]   = $s;
+                }
+                $ticket->requested_services = array_slice($merged, 0, 6);
+                // Only claim the visit as planned work if nothing has ever been reported wrong with it.
+                if (! $ticket->reported_faults) {
+                    $ticket->request_detail_mode = Maintenance::REPORT_MODE_SERVICE;
+                }
+            }
+
             // The thread, not a replacement.
             $ticket->customer_complaint = trim(
                 (string) $ticket->customer_complaint
@@ -1612,6 +1769,7 @@ class MaintenanceWorkflowService
                     'request_detail_mode'   => $statement['mode'],
                     'request_reason_code'   => $statement['reason_code'],
                     'reported_faults'       => $statement['faults'],
+                    'requested_services'    => $statement['services'],
                     'workflow_status'       => $ticket->workflow_status,
                 ],
             ]);
@@ -2504,6 +2662,32 @@ class MaintenanceWorkflowService
      * there first the ticket is no longer `pending_review` and we leave it entirely alone — a human decision
      * outranks this one.
      */
+    /**
+     * Retire the inspection request an oil recall raised, because that recall is no longer having a test.
+     *
+     * The oil layer's own door into systemWithdraw(). It exists because on a recall the test answer ROUTES
+     * the car — test ⇒ the Inspector and the inspection workflow, no test ⇒ the Supervisors, who read the
+     * dial and pick the garage — so unticking the box has to take the card out of the review queue, not
+     * merely reword a driver's brief and leave a Controller looking at a request for an inspection nobody
+     * is going to do.
+     *
+     * Same discipline as every other system withdrawal: only a `pending_review` request is touched (a
+     * request a human already approved belongs to the Inspector holding it), nobody's name is put on the
+     * decision, and the card stays in the queue for a week carrying the note explaining itself.
+     *
+     * @return bool true when the request was actually withdrawn
+     */
+    public function withdrawOilFollowUpRequest(Maintenance $ticket, string $sentence, array $context = []): bool
+    {
+        return $this->systemWithdraw(
+            $ticket,
+            Maintenance::REVIEW_REJECT_OIL_TEST_NOT_WANTED,
+            $sentence,
+            ['source' => 'oil_projection'] + $context,
+            array_intersect_key($context, array_flip(['contract_id', 'contract_no', 'oil_decision_id'])),
+        );
+    }
+
     private function withdrawOneForMaintenanceContract(Maintenance $ticket, Contract $contract): bool
     {
         $openedAt = $contract->out_date ? Carbon::parse($contract->out_date) : null;

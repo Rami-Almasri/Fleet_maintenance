@@ -631,17 +631,29 @@ class Maintenance extends Model
     ];
 
     /**
-     * HOW the requester stated their case, and the three are MUTUALLY EXCLUSIVE.
+     * HOW the requester stated their case, and the four are MUTUALLY EXCLUSIVE.
      *
-     * A person sending a car in answers "why?" exactly one way: they name the fault they hit, they pick
-     * an operational reason, or they write it out. Allowing two at once produces a request that says
-     * "brake noise" in one field and "due for service" in another, and nobody downstream can tell which
-     * one the car is actually going in for. The service enforces the exclusivity; this is the contract.
+     * A person sending a car in answers "why?" exactly one way: they name the fault they hit, they name
+     * the service it is due, they pick an operational reason, or they write it out. Allowing two at once
+     * produces a request that says "brake noise" in one field and "due for service" in another, and
+     * nobody downstream can tell which one the car is actually going in for. The service enforces the
+     * exclusivity; this is the contract.
+     *
+     * FAULT AND SERVICE ARE NOT THE SAME ANSWER and never share a column. A fault is a claim that
+     * something failed; a service is planned work falling due. They are counted, scored and reported on
+     * by different machinery (see docs/Service-vs-Fault-Domain-Separation.md), which is exactly why the
+     * requester is asked to say which of the two they mean rather than being handed one merged list.
      */
-    public const REPORT_MODE_FAULT  = 'fault';   // named one or more fault types from the catalog
-    public const REPORT_MODE_REASON = 'reason';  // picked a REQUEST_REASON_CODE
-    public const REPORT_MODE_NOTE   = 'note';    // wrote it in their own words
-    public const REPORT_MODES = [self::REPORT_MODE_FAULT, self::REPORT_MODE_REASON, self::REPORT_MODE_NOTE];
+    public const REPORT_MODE_FAULT   = 'fault';    // named one or more fault types from the catalog
+    public const REPORT_MODE_SERVICE = 'service';  // named one or more service types from the catalog
+    public const REPORT_MODE_REASON  = 'reason';   // picked a REQUEST_REASON_CODE
+    public const REPORT_MODE_NOTE    = 'note';     // wrote it in their own words
+    public const REPORT_MODES = [
+        self::REPORT_MODE_FAULT,
+        self::REPORT_MODE_SERVICE,
+        self::REPORT_MODE_REASON,
+        self::REPORT_MODE_NOTE,
+    ];
 
     /**
      * WHY a car is being sent in when the requester cannot name a fault — the fixed reason list behind
@@ -772,17 +784,28 @@ class Maintenance extends Model
      *   exists for the car and is on the board, so a card asking a Controller to decide it would be
      *   backlog. The withdrawal row stays for audit; only the queue stops carrying it.
      *   See MaintenanceWorkflowService::weighInFlightRequest().
+     *
+     *   oil_test_not_wanted — the oil recall this request was raised for is no longer having a test. On a
+     *   recall the "Test / inspection" answer is the ROUTER: with a test the car goes to the Inspector and
+     *   the inspection workflow runs; without one it goes straight to the Supervisors, who read the dial and
+     *   pick the garage. So turning the test off does not just edit a driver's brief — it retires the
+     *   request, because there is no longer anybody being asked to inspect anything. Only ever applied to a
+     *   request the oil lifecycle RAISED itself; an ADOPTED request (the system's own routine check, which
+     *   the oil change merely joined) is never withdrawn by this — see ContractOilDecision::hasAdoptedRequest().
+     *   See OilChangeProjectionService::setCollectionInstructions().
      */
     public const REVIEW_REJECT_IN_MAINTENANCE_CONTRACT = 'in_maintenance_contract';
     public const REVIEW_REJECT_IN_WORKSHOP_LOG         = 'in_workshop_log';
     public const REVIEW_REJECT_CONDITION_CLEARED       = 'condition_cleared';
     public const REVIEW_REJECT_SUPERSEDED_BY_TEST      = 'superseded_by_test';
+    public const REVIEW_REJECT_OIL_TEST_NOT_WANTED     = 'oil_test_not_wanted';
 
     public const REVIEW_SYSTEM_WITHDRAWAL_REASONS = [
         self::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT => 'Already in maintenance (OfficeManager contract)',
         self::REVIEW_REJECT_IN_WORKSHOP_LOG         => 'Already in the workshop (garage log)',
         self::REVIEW_REJECT_CONDITION_CLEARED       => 'Back from maintenance — the check clock restarted',
         self::REVIEW_REJECT_SUPERSEDED_BY_TEST      => 'Someone drove the car and sent it in',
+        self::REVIEW_REJECT_OIL_TEST_NOT_WANTED     => 'The oil recall is no longer having a test',
     ];
 
     /** True when a stored rejection code was written by the system, not chosen by a reviewer. */
@@ -998,8 +1021,9 @@ class Maintenance extends Model
         'request_origin',
         'customer_complaint',
         // The requester's statement kept as data rather than only as a sentence — HOW they said it, the
-        // fault types they named, and the reason code they picked. Exclusive by contract; see REPORT_MODES.
-        'request_detail_mode', 'reported_faults', 'request_reason_code',
+        // fault types they named, the services they asked for, and the reason code they picked. Exclusive
+        // by contract; see REPORT_MODES. Faults and services stay in separate columns on purpose.
+        'request_detail_mode', 'reported_faults', 'requested_services', 'request_reason_code',
         'suggested_findings',
         'trigger_detail',
         'test_drive_report',
@@ -1086,6 +1110,7 @@ class Maintenance extends Model
         'suggested_findings'   => 'array',
         'trigger_detail'       => 'array', // snapshot of WHY the system raised a periodic request (see systemRequestInspection)
         'reported_faults'      => 'array', // the requester's named fault types — a CLAIM, never a diagnosis
+        'requested_services'   => 'array', // the requester's named service types — planned work, never a fault
         'review_auto_context'  => 'array', // the contract facts behind a SYSTEM withdrawal (see REVIEW_SYSTEM_WITHDRAWAL_REASONS)
         'follow_ups'           => 'array',
         'test_odometer'        => 'integer',
