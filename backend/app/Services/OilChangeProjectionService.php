@@ -2055,7 +2055,19 @@ class OilChangeProjectionService
         // predicted at decision time. A decision with a not-due return still settles (the
         // follow-up is resolved as "inspection only"); no decision + not due = nothing to do.
         $due = $oilLimit !== null && $finalKm !== null && $finalKm >= $oilLimit;
-        if ($decision === null && ! $due) {
+
+        // "Service on return" was a PROMISE, and a car that comes back a few hundred km short of its
+        // limit used to make that promise disappear: no decision row, not due, nothing raised, and the
+        // only record that anyone had been watching this car was a counter on /oil-projection that now
+        // reads one lower. The car is still near its oil point and is about to go back out.
+        //
+        // So a flagged car ALWAYS produces something on return. When the mileage says the change is
+        // genuinely owed, that is the service ticket below, exactly as before. When it does not, it is a
+        // card in /inspection-review saying the oil is nearly due — a human looks at the car that is in
+        // front of them instead of the projection re-deciding it alone.
+        $flagged = $decision === null && ! $due && $this->wasServiceRequiredOnReturn($contract);
+
+        if ($decision === null && ! $due && ! $flagged) {
             return null;
         }
 
@@ -2071,7 +2083,7 @@ class OilChangeProjectionService
             return null;
         }
 
-        return DB::transaction(function () use ($contract, $vehicle, $decision, $finalKm, $actor, $due, $oilLimit) {
+        return DB::transaction(function () use ($contract, $vehicle, $decision, $finalKm, $actor, $due, $oilLimit, $flagged) {
             $ticket = null;
             if ($due) {
                 try {
@@ -2141,6 +2153,15 @@ class OilChangeProjectionService
                 : 'Resolved on return — oil NOT due (actual ' . number_format((int) $finalKm)
                     . ' km, limit ' . number_format((int) $oilLimit) . ' km). Inspection only.');
 
+            // A flagged car that came back short of its limit: no service ticket is owed, so the promise
+            // is kept the other way — a card in the review queue, carrying the actual figures, for a
+            // person to look at the car now that it is physically here. Raised AFTER the resolve above,
+            // which is a no-op for these contracts (no decision ⇒ no announcing request), so the card
+            // cannot be closed by the same pass that files it.
+            if (! $ticket && $flagged) {
+                $this->announceOilNearlyDue($contract, $row, $actor, (int) $finalKm, (int) $oilLimit);
+            }
+
             // The debt is now a ticket; the standing flag has done its job.
             app(OperationsService::class)->resolveDeferredMaintenance($vehicle);
 
@@ -2164,6 +2185,131 @@ class OilChangeProjectionService
 
             return $ticket;
         });
+    }
+
+    /**
+     * Was this contract sitting in the "Service on return" lane while it was out?
+     *
+     * Asked of the projection as at the RETURN date, not today: the question is what we had promised
+     * about this rental, and a contract that closed last week must not be re-judged against a clock
+     * that has kept running. Anything the projection could not read (no anchor ⇒ `no_data`) is a no —
+     * we never promised anything about a car we could not project.
+     */
+    private function wasServiceRequiredOnReturn(Contract $contract): bool
+    {
+        try {
+            $asAt = $contract->in_date ? Carbon::parse($contract->in_date) : null;
+
+            return ($this->project($contract, $asAt)['oil_status'] ?? null) === self::OIL_SERVICE_ON_RETURN;
+        } catch (\Throwable $e) {
+            // The projection is advisory here; a car that cannot be projected simply was not promised
+            // anything, and this must never take the settlement sweep down with it.
+            Log::warning('Oil settle: could not re-read the return-lane status', [
+                'contract_id' => $contract->id,
+                'error'       => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
+     * File the review-queue card for a flagged car that came back INSIDE its limit.
+     *
+     * Not a service ticket: nothing is owed yet, and minting one would be the projection overruling the
+     * odometer — the exact inversion `settleOnReturn` exists to prevent (actual mileage wins). It is a
+     * Stage-0 request in /inspection-review, which is where "somebody should look at this car" belongs,
+     * carrying the real numbers so the reviewer can see how close it actually is rather than re-deriving
+     * it. Approving it hands the car to the Inspector through the ordinary workflow; rejecting it is a
+     * Controller saying the margin is fine, which is a decision worth having on the record either way.
+     *
+     * Best-effort, exactly like syncInspectionFollowUp: the settlement row is the authoritative write and
+     * a workflow that refuses (inactive fleet, no actor) must never undo it.
+     */
+    private function announceOilNearlyDue(
+        Contract $contract,
+        ContractOilDecision $row,
+        ?User $actor,
+        int $finalKm,
+        int $oilLimit,
+    ): ?Maintenance {
+        if (! $actor || ! $contract->vehicle_id) {
+            return null;
+        }
+
+        try {
+            $remaining = max(0, $oilLimit - $finalKm);
+
+            $ticket = app(MaintenanceWorkflowService::class)->requestInspectionByController([
+                'vehicle_id'         => (int) $contract->vehicle_id,
+                'trigger_reason'     => 'test_drive',
+                'customer_complaint' => sprintf(
+                    'Oil nearly due — back on %s km, limit %s km (%s km left, contract %s). '
+                    . 'Booked for a change on return; it came back inside the limit, so check it before it goes out again.',
+                    number_format($finalKm),
+                    number_format($oilLimit),
+                    number_format($remaining),
+                    $contract->contract_no ?? $contract->id,
+                ),
+                'test_kind'          => Maintenance::TEST_ROUTINE_CHECK,
+            ], $actor);
+
+            // Waits for a Controller rather than jumping to the Inspector — same reasoning as the
+            // decision follow-up: /inspection-review is where a car earns a look, not where it is
+            // assumed to need one.
+            $ticket->workflow_status = Maintenance::WF_PENDING_REVIEW;
+            $ticket->trigger_detail  = [
+                'source'                   => 'oil_projection',
+                'reason'                   => 'oil_nearly_due_on_return',
+                'contract_oil_decision_id' => $row->id,
+                'contract_id'              => $contract->id,
+                'contract_no'              => $contract->contract_no,
+                'actual_return_km'         => $finalKm,
+                'oil_limit'                => $oilLimit,
+                'remaining_km'             => $remaining,
+            ];
+            $ticket->save();
+
+            $row->forceFill(['inspection_ticket_id' => $ticket->id])->save();
+
+            // requestInspectionByController() pings the INSPECTOR on the way out, because its own door
+            // hands a car straight to him. This card does not — it is parked in pending_review above and
+            // is waiting on a Controller — so that ping is addressed to the wrong person and describes a
+            // stage the ticket is not in. Retire it and tell the people whose queue it actually landed in.
+            app(NotificationScanner::class)->resolveKeyForOthers('maint_wf:' . $ticket->id . ':inspection_requested');
+
+            foreach ($this->controllers() as $user) {
+                app(NotificationScanner::class)->notifyUser($user, [
+                    'type'     => 'oil_nearly_due',
+                    'category' => 'maintenance',
+                    'severity' => 'info',   // not overdue — the whole point is that it came back in time
+                    'title'    => 'Oil nearly due · ' . ($contract->vehicle?->plate_no ?: ('#' . $contract->vehicle_id)),
+                    'body'     => 'Back on ' . number_format($finalKm) . ' km against a '
+                                . number_format($oilLimit) . ' km limit — ' . number_format($remaining)
+                                . ' km left. Booked for a change on return; check it before it goes out again.',
+                    'url'      => '/inspection-review?ticket=' . $ticket->id,
+                    // Its own key: the due-on-return alert uses oil_settle:{contract}, and one rental
+                    // must never be able to fire both.
+                    'key'      => 'oil_nearly_due:' . $contract->id,
+                    'icon'     => 'wrench',
+                    'meta'     => [
+                        'contract_id' => $contract->id,
+                        'ticket_id'   => $ticket->id,
+                        'remaining_km' => $remaining,
+                    ],
+                ]);
+            }
+
+            return $ticket;
+        } catch (\Throwable $e) {
+            Log::warning('Oil settle: could not raise the nearly-due review card', [
+                'contract_id' => $contract->id,
+                'vehicle_id'  => $contract->vehicle_id,
+                'error'       => $e->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     /**
