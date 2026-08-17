@@ -32,6 +32,7 @@ import CarStatus from './pages/CarStatus';
 import CarStatusVehicle from './pages/CarStatusVehicle';
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
 import InspectionReviewQueue from './pages/InspectionReviewQueue';
+import InGarage from './pages/InGarage';
 import ComplaintsCenter from './pages/ComplaintsCenter';
 import DriverObservations from './pages/DriverObservations';
 import FleetUtilization from './pages/FleetUtilization';
@@ -242,6 +243,8 @@ export default function App() {
                   {/* "Booked in Shop" now lives inside the Fleet Health hub — redirect the old path. */}
                   <Route path="/maintenance-bookings" element={<Navigate to="/inspections/schedules?tab=bookings" replace />} />
                   <Route path="/maintenance-workflow" element={<MaintenanceWorkflow />} />
+                  {/* In the Garage — which cars are at a garage right now, and which garage each is at. */}
+                  <Route path="/in-garage" element={<InGarage />} />
                   {/* Complaints Center — management & follow-up view of every customer complaint + its timeline. */}
                   <Route path="/complaints" element={<ComplaintsCenter />} />
                   {/* Deep link from a complaint notification: opens that complaint's drawer over the Center. */}

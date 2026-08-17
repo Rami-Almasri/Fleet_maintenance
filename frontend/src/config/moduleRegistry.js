@@ -75,6 +75,7 @@ export const MODULES = [
           { name: 'On-Site Service',       key: 'on_site',                 route: '/maintenance-workflow?stage=on_site',                 tone: '#0d9488' },
         ],
       },
+      { name: 'In the Garage', route: '/in-garage', permission: 'maintenance.view', icon: Icon.Wrench, desc: 'Every car standing at a garage right now and which garage it is at — from the ticket where the workflow sent it, and recorded by hand for the cars OfficeManager sent out on a maintenance contract.' },
       { name: 'Maintenance Progress', route: '/maintenance-progress', permission: 'maintenance.view', icon: Icon.Activity, desc: 'Track in-shop progress against each car’s promised completion date, with escalating reminders.' },
       { name: 'My Queue', route: '/my-maintenance-queue', permission: 'maintenance.view', icon: Icon.Check, desc: 'Your role-scoped maintenance work in one place — what needs you, right now.' },
       { name: 'Inspection Review', route: '/inspection-review', permission: 'maintenance.manage', icon: Icon.Check, desc: 'Controllers vet inspection requests — approve to send on, or reject with a reason.' },

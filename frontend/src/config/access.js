@@ -47,6 +47,7 @@ export const ROLE_BLOCKED_PATHS = {
     '/oil-projection',          // the controllers' mid-rental oil chase
     '/complaints',              // Customer Care — the inspector's lane, not his
     '/driver-observations',     // he files these in the field; he doesn't triage
+    '/in-garage',               // the Controllers' where-is-every-car board, not the driver's
     '/completed-repairs',
     '/maintenance-history',
     '/maintenance-swap',
@@ -233,6 +234,7 @@ export const ROLE_BLOCKED_PATHS = {
     '/driver-observations',
     '/car-status',
     '/driver-dispatch',
+    '/in-garage',               // operational whereabouts, not an accounting record
     '/inspection-review',
     '/inspections/schedules',
     '/service-reminders',

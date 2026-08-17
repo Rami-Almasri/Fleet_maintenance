@@ -326,6 +326,20 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('permission:reminders.manage');
 });
 
+// IN THE GARAGE — every car at a garage right now, and which garage. Two sources: the workflow
+// ticket (the Supervisor already picked the garage) and an open OfficeManager maintenance contract
+// (OM has no garage field, so a person records it). See InGarageService.
+// The 2-segment `Contract/{contract}/garage` route is registered after the 1-segment
+// `Contract/{contract}` group above, which is safe (see the Exchange note).
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('InGarage', [\App\Http\Controllers\InGarageController::class, 'index'])
+        ->middleware('permission:maintenance.view');
+    // Writing the garage onto one open maintenance visit. `maintenance.manage` — the same people
+    // who move cars between garages are the ones who know where a car actually went.
+    Route::post('Contract/{contract}/garage', [\App\Http\Controllers\InGarageController::class, 'recordGarage'])
+        ->middleware('permission:maintenance.manage');
+});
+
 // Invoices CRUD — website-created (manual) invoices coexist with OfficeManager-synced ones.
 // Reads return both ledgers; writes only ever touch manual invoices (the controller guards
 // origin). ?contract_id= scopes the list to one contract (the Contract Detail panel).

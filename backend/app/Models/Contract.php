@@ -130,6 +130,11 @@ class Contract extends Model
         'condition_ack_note',
         'condition_ack_by',
         'condition_ack_at',
+        // Which garage the car on this maintenance visit is at — OM has no field for it, so a
+        // person records it on the In the Garage board. See InGarageService.
+        'garage_vendor_id',
+        'garage_recorded_by',
+        'garage_recorded_at',
     ];
 
     protected $casts = [
@@ -142,6 +147,7 @@ class Contract extends Model
         'synced_at'          => 'datetime',
         'exchange_linked_at' => 'datetime',
         'condition_ack_at'   => 'datetime',
+        'garage_recorded_at' => 'datetime',
     ];
 
     /**
@@ -193,6 +199,21 @@ class Contract extends Model
     public function vehicle(): BelongsTo
     {
         return $this->belongsTo(Vehicle::class);
+    }
+
+    /**
+     * The garage this maintenance visit's car is at, as recorded by a person on the In the Garage
+     * board. Only meaningful on an open type-'U' contract; OM itself never fills this.
+     */
+    public function garageVendor(): BelongsTo
+    {
+        return $this->belongsTo(Vendor::class, 'garage_vendor_id');
+    }
+
+    /** Who recorded the garage above. */
+    public function garageRecorder(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'garage_recorded_by');
     }
 
     /** Maintenance header (garage, issues, due, responsible) — only for type 'U'. */

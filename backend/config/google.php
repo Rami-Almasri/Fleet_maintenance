@@ -49,6 +49,12 @@ return [
             // maintenance type / MAIN+SUP). Maintenance is never fetched or inferred from
             // the API or anywhere else; every maintenances row has origin='sheet'.
             'log_gid'     => (int) env('GOOGLE_SHEETS_MAINTENANCE_LOG_GID', 400222171),
+            // "N-Location" tab (gid 2062861584) — two columns, Car | Garage: the Controllers'
+            // hand-kept list of which car is standing at which garage. It is the ONLY written
+            // record of the garage for a car OfficeManager sent out on a maintenance contract
+            // (OM has no garage field), so the In the Garage board reads it rather than asking
+            // anyone to type it twice. Mirrored by `import:garage-locations`.
+            'location_gid' => (int) env('GOOGLE_SHEETS_MAINTENANCE_LOCATION_GID', 2062861584),
             // "Customer Cases" tab (gid 37444190) — a customer-charge maintenance log with
             // slightly different columns (Main Issue / Main Cause / Customer Charge / Contract
             // No. / Bill Receive). Imported with origin='customer-sheet' so it stays separate

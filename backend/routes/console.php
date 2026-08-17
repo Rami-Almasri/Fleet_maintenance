@@ -26,6 +26,18 @@ Schedule::command('import:maintenance-sheet')
 
 Schedule::command('maintenance:link-reasons')->dailyAt('02:50');
 
+// "Which car is at which garage" — the N-Location tab, the Controllers' hand-kept list and the ONLY
+// written record of the garage for a car OfficeManager sent out on a maintenance contract. Every run
+// REPLACES the mirror, so a car whose row was deleted (it came back) stops being shown at a garage.
+// Hourly, not nightly: the tab is edited during the working day, and the In the Garage board is read
+// during the working day. ⚠ The scheduler is unverified on the server ([[scheduler-audit]]) — the
+// board shows its own `imported_at`, so a mirror that stopped refreshing is visible on the page
+// itself rather than quietly going stale.
+Schedule::command('import:garage-locations')
+    ->hourly()
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // OfficeManager API is the source of truth. The sync is split by dataset so each refreshes at
 // the cadence it actually changes at (idempotent updateOrCreate by external_id "OM:{serial}",
 // so every run refreshes + adds new). All use --skip-backup: routine delta syncs never dump the
