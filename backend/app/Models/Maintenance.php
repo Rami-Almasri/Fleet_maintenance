@@ -764,10 +764,10 @@ class Maintenance extends Model
      *   workshop (openDirectDispatch), the question the suggestion was asking has been answered by the
      *   only authority that could answer it, and leaving the card up would ask a Controller to approve a
      *   test drive for a car that is already on its way to a garage.
-     *   Only ever applied to a system request that is still `pending_review`, and only while the car is
-     *   OUT ON HIRE — the case the rule was written for. A person's request is never retired by this
-     *   (a person's request stands until a person answers it), and a request the Inspector already holds
-     *   is never yanked out from under him.
+     *   Only ever applied by the GARAGE door (openDirectDispatch) — a commitment, not a report. Asking
+     *   for a test never retires anything: that request JOINS whatever is already open, so the scanner's
+     *   own list of checks survives underneath the human's words. A request the Inspector already holds
+     *   is never yanked out from under him either, whichever door is used.
      *   Like `condition_cleared`, this one is EXCLUDED from the review queue entirely: a ticket already
      *   exists for the car and is on the board, so a card asking a Controller to decide it would be
      *   backlog. The withdrawal row stays for audit; only the queue stops carrying it.

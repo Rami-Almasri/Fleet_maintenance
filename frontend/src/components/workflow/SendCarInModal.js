@@ -349,21 +349,19 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     || (mode === MODE_REASON && !!reasonCode && (reasonCode !== 'other' || !!note.trim()))
     || (mode === MODE_NOTE   && !!note.trim());
 
-  // A car with a request already in flight can't be flagged again, and it can't be sent straight to a
-  // garage either — the server refuses BOTH doors on the same fact, so both must say so before the form
-  // is filled in rather than after it is submitted. An observation is a note, not a request, so that
-  // path stays open.
+  // A car with a request already in flight cannot be sent straight to a garage — the server refuses that
+  // door on the same fact, so the form must say so before it is filled in rather than after it is
+  // submitted. An observation is a note, not a request, so that path stays open.
   //
-  // ONE exception, and the server computes it (`can_supersede`) rather than the form guessing: the system
-  // SUGGESTED a test for a car that is out on hire. That suggestion was made from mileage and dates by
-  // nobody, and it is the only thing standing in the way. The person filling this form has been in the
-  // car, so BOTH doors stay open and the suggestion is stood down on submit — a guess does not outrank a
-  // statement, whichever door the statement comes through. (A person's request still blocks both doors:
-  // that is the duplicate this guard exists to stop.)
+  // ONE exception, and the server computes it (`can_supersede`) rather than the form guessing: nothing has
+  // been decided on the open request yet, so committing the car to a workshop answers it outright and it
+  // is stood down on submit. Not once the Inspector holds it — that is assigned work.
   const canSupersede = !!inFlight?.can_supersede;
   // The request door ADDS to an open request rather than opening a second one, so an open request is not
-  // a refusal there — it only changes what the button does and what happens next. The one genuine dead
-  // end left is the garage door while the Inspector already holds the car: that is assigned work.
+  // a refusal there — it only changes what the button does and what happens next. That holds for the
+  // scanner's own suggestion too, and identically whether the car is on hire or in the yard: its list of
+  // checks is kept and this report is written underneath it. The one genuine dead end left is the garage
+  // door while the Inspector already holds the car: that is assigned work.
   const isAdding = !isObservation && !!inFlight && door === DOOR_INSPECTION;
   const blocked = !isObservation && !!inFlight && !isAdding && !canSupersede;
   const disabled = saving || !vehicleId || blocked || !statementReady;
@@ -373,6 +371,19 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     reported_faults:     mode === MODE_FAULT  ? faults : undefined,
     request_reason_code: mode === MODE_REASON ? reasonCode : undefined,
   });
+
+  // WHERE THEY LAND after asking for a test. The useful next step is the request ITSELF — the one this
+  // just wrote or added to — so deep-link the exact record rather than dropping them at the top of a
+  // queue to go and find their own car: /inspection-review highlights `?ticket=<id>` and scrolls it in.
+  //
+  // Only while it is actually awaiting a decision, though. A Controller's own request goes straight past
+  // the gate to the Inspector, and sending her to a queue that by definition does not carry it would be a
+  // dead end with a "no longer awaiting review" toast at the end of it.
+  const landOnRecord = (record) => {
+    const id    = record?.id || inFlight?.ticket_id;
+    const stage = record?.workflow_status || inFlight?.state;
+    if (id && stage === 'pending_review') navigate(`/inspection-review?ticket=${id}`);
+  };
 
   async function submit() {
     if (disabled) return;
@@ -414,14 +425,12 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
           notes: note.trim() || null,
           ...statementBody(),
         });
-        // Same rule on this door: if it was added to an open request, the card is the next step.
-        if (isAdding) {
-          const id = officeResp?.data?.data?.id || inFlight?.ticket_id;
-          onDone?.(t('workflow.sendIn.success.added'));
-          if (id) navigate(`/inspection-review?ticket=${id}`);
-          return;
-        }
-        onDone?.(t('workflow.success.requestOffice', { who: '' }).trim());
+        // Same rule on this door: if it was added to an open request, that card is the next step.
+        const officeRecord = officeResp?.data?.data;
+        onDone?.(isAdding
+          ? t('workflow.sendIn.success.added')
+          : t('workflow.success.requestOffice', { who: '' }).trim());
+        landOnRecord(officeRecord);
         return;
       }
 
@@ -432,16 +441,11 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
         customer_complaint: note.trim() || null,
         ...statementBody(),
       });
-      // Added to a request that was already open: the useful next step is the card itself, so hand them
-      // straight to it (deep-link highlights it) instead of leaving them to find it in the queue. This is
-      // where a rented car is marked and where it gets approved.
-      if (isAdding) {
-        const id = resp?.data?.data?.id || inFlight?.ticket_id;
-        onDone?.(t('workflow.sendIn.success.added'));
-        if (id) navigate(`/inspection-review?ticket=${id}`);
-        return;
-      }
-      onDone?.(t('workflow.sendIn.success.request'));
+      // Whether this opened a request or was added to one already open, the card it produced is the
+      // useful next step — hand them straight to that exact record instead of leaving them to find it.
+      const record = resp?.data?.data;
+      onDone?.(t(isAdding ? 'workflow.sendIn.success.added' : 'workflow.sendIn.success.request'));
+      landOnRecord(record);
     } catch (e) {
       setError(e?.response?.data?.message || t('workflow.error.generic'));
     } finally {

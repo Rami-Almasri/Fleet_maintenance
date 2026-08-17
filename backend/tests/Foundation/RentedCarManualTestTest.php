@@ -18,10 +18,13 @@ use App\Services\MaintenanceWorkflowService;
  * come in for, and it sat in front of the only person who could answer it — the one who had just driven
  * it — as a refusal ("this car already has an inspection request in progress").
  *
- * So: when a person drives a rented car and commits it to a garage, the scanner's suggestion is stood
- * down and their ticket goes ahead. Everything else is unchanged — a person's request still blocks a
- * second one, a request the Inspector already holds is never yanked out from under him, and a car in the
- * yard is still refused exactly as before.
+ * So: when a person drives a car and COMMITS IT TO A GARAGE, the scanner's suggestion is stood down and
+ * their ticket goes ahead — on hire or in the yard, because a ticket outranks a request either way.
+ *
+ * ASKING FOR A TEST retires nothing. A request is a report, not a commitment, so it JOINS whatever is
+ * already open — the scanner's card included, keeping the checks it listed and writing the human's words
+ * underneath them. One record, one story, and identical on a rented car and an available one. A request
+ * the Inspector already holds is still never yanked out from under him.
  *
  * Nothing new was built for the "goes straight to maintenance" half: that door already existed
  * (openDirectDispatch → Needs Dispatch, contract opened, faults promoted), and closing the ticket already
@@ -152,11 +155,14 @@ class RentedCarManualTestTest extends FoundationTestCase
     // ── 3a. The same rule on the OTHER doors ──────────────────────────────────────────────────────
 
     /**
-     * The inspection door, driver voice. A person who has been in the rented car may raise their own
-     * request even though the scanner's card is parked on it: their statement replaces the guess, and
-     * exactly one live request is left behind — theirs.
+     * THE SCANNER'S LIST IS INFORMATION, NOT NOISE. "Check brakes, check suspension" was computed from
+     * this car's own mileage; a person who then drives it and reports a steering vibration is adding a
+     * third thing to look at, not correcting the first two. So the human report JOINS the suggestion —
+     * one record, both halves on it — and the guess is never retired by a request.
+     *
+     * This is the rented car. The next test is the same car in the yard, and the two must not diverge.
      */
-    public function test_a_human_request_replaces_the_suggestion_on_the_inspection_door(): void
+    public function test_a_human_request_joins_the_suggestion_on_the_inspection_door(): void
     {
         $vehicle = $this->car();
         $this->rent($vehicle);
@@ -167,48 +173,79 @@ class RentedCarManualTestTest extends FoundationTestCase
             'trigger_reason'      => 'test_drive',
             'request_reason_code' => 'feels_wrong',
         ]);
-        $res->assertCreated();
-        $mine = Maintenance::findOrFail($this->idOf($res));
+        $res->assertSuccessful();
 
+        // The SAME record came back — no second request, and the API answers with the id the UI must open.
+        $this->assertSame($suggestion->id, $this->idOf($res));
+        $this->assertSame(1, Maintenance::where('vehicle_id', $vehicle->id)->count());
+
+        $suggestion->refresh();
+        // The suggestion is alive and unmoved: nothing retired, nothing decided, still awaiting a Controller.
+        $this->assertSame(Maintenance::WF_PENDING_REVIEW, $suggestion->workflow_status);
+        $this->assertNull($suggestion->review_rejection_code);
+        // Its own words survived, with the human's written underneath them.
+        $this->assertStringContainsString('Routine service due (mileage).', (string) $suggestion->customer_complaint);
+        $this->assertStringContainsString('added', (string) $suggestion->customer_complaint);
+        // …and it is still the one live request on the car.
         $this->assertSame(
-            Maintenance::REVIEW_REJECT_SUPERSEDED_BY_TEST,
-            $suggestion->refresh()->review_rejection_code
-        );
-        // The normal lifecycle is untouched: it is still a request awaiting a Controller, faults unpromoted.
-        $this->assertSame(Maintenance::WF_PENDING_REVIEW, $mine->workflow_status);
-        // …and it is the ONLY live request on the car.
-        $this->assertSame(
-            $mine->id,
+            $suggestion->id,
             app(MaintenanceWorkflowService::class)->liveInspectionRequest($vehicle->id)?->id
         );
     }
 
     /**
+     * THE SAME CAR IN THE YARD. Whether the car is with a customer changes nothing about what a person
+     * who drove it knows, so the rented and available paths are one path. (This used to be the one place
+     * they differed: on hire the suggestion was retired and replaced, in the yard it was added to.)
+     */
+    public function test_a_human_request_joins_the_suggestion_on_an_available_car_too(): void
+    {
+        $vehicle    = $this->car();   // deliberately NOT rented
+        $suggestion = $this->suggestion($vehicle);
+        $fault      = FaultCatalog::active()->firstOrFail();
+
+        $res = $this->postJson('/api/maintenance-tickets/request', [
+            'vehicle_id'      => $vehicle->id,
+            'trigger_reason'  => 'test_drive',
+            'reported_faults' => [['fault_catalog_id' => $fault->id]],
+        ]);
+        $res->assertSuccessful();
+
+        $this->assertSame($suggestion->id, $this->idOf($res));
+        $this->assertSame(1, Maintenance::where('vehicle_id', $vehicle->id)->count());
+
+        $suggestion->refresh();
+        $this->assertSame(Maintenance::WF_PENDING_REVIEW, $suggestion->workflow_status);
+        $this->assertNull($suggestion->review_rejection_code);
+        // The named fault landed ON the system's record.
+        $this->assertContains($fault->name, array_column($suggestion->reported_faults, 'text'));
+        $this->assertStringContainsString('Routine service due (mileage).', (string) $suggestion->customer_complaint);
+    }
+
+    /**
      * The Controller's own door (`/request-inspection`) never had a duplicate guard at all — it would
      * happily have left her staring at her own request AND the scanner's generic card for one car. It
-     * retires the suggestion on the same terms.
+     * joins the suggestion on the same terms, and adding detail does not move the stage: the request
+     * stays awaiting review rather than being auto-approved into the Inspector's queue behind her.
      */
-    public function test_a_controller_request_replaces_the_suggestion_too(): void
+    public function test_a_controller_request_joins_the_suggestion_too(): void
     {
         $vehicle = $this->car();
         $this->rent($vehicle);
         $suggestion = $this->suggestion($vehicle);
 
         $res = $this->postJson('/api/maintenance-tickets/request-inspection', [
-            'vehicle_id'     => $vehicle->id,
-            'trigger_reason' => 'test_drive',
-            'notes'          => 'Drove it this morning — pulls left under braking.',
+            'vehicle_id'          => $vehicle->id,
+            'trigger_reason'      => 'test_drive',
+            'request_reason_code' => 'feels_wrong',
         ]);
-        $res->assertCreated();
-        $mine = Maintenance::findOrFail($this->idOf($res));
+        $res->assertSuccessful();
 
-        $this->assertSame(
-            Maintenance::REVIEW_REJECT_SUPERSEDED_BY_TEST,
-            $suggestion->refresh()->review_rejection_code
-        );
-        // Straight to the Inspector, as this door always has — no new stage invented.
-        $this->assertSame(Maintenance::WF_INSPECTION_REQUESTED, $mine->workflow_status);
-        $this->assertSame($mine->id, app(MaintenanceWorkflowService::class)->liveInspectionRequest($vehicle->id)?->id);
+        $this->assertSame($suggestion->id, $this->idOf($res));
+        $suggestion->refresh();
+        $this->assertSame(Maintenance::WF_PENDING_REVIEW, $suggestion->workflow_status);
+        $this->assertNull($suggestion->review_rejection_code);
+        $this->assertSame($suggestion->id, app(MaintenanceWorkflowService::class)->liveInspectionRequest($vehicle->id)?->id);
     }
 
     // ── 3b. …and only that. The duplicate protection is otherwise intact ──────────────────────────
@@ -347,9 +384,9 @@ class RentedCarManualTestTest extends FoundationTestCase
     }
 
     /**
-     * …but the REQUEST door still leaves a yard car's suggestion alone: nobody is committing the car to
-     * anything, so the guess and the new report simply merge into one request, exactly as two human
-     * reports would.
+     * …but the REQUEST door leaves the suggestion alone: nobody is committing the car to anything, so the
+     * guess and the new report simply merge into one request, exactly as two human reports would. (The
+     * rented twin of this is asserted above — the two doors differ, the two rental states do not.)
      */
     public function test_the_request_door_adds_to_a_yard_cars_suggestion(): void
     {

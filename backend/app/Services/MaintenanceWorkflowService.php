@@ -1121,9 +1121,10 @@ class MaintenanceWorkflowService
         // means. The rule the queue actually needs is that a car has one story, and a second report is the
         // next paragraph of it.
         //
-        // (The scanner's SUGGESTION is the exception, handled above: a guess from mileage and dates about
-        // a car nobody has been in is not a paragraph anyone wrote, so it is retired rather than added to.)
-        [$inFlight, $superseded] = $this->weighInFlightRequest($vehicleId);
+        // (The scanner's SUGGESTION is no exception: its list of checks is information about this car, so
+        // the human report is added underneath it rather than replacing it. Same on a rented car as on a
+        // yard car — see weighInFlightRequest.)
+        [$inFlight] = $this->weighInFlightRequest($vehicleId);
         if ($inFlight) {
             return $this->addToOpenRequest($inFlight, $data, $driver);
         }
@@ -1149,7 +1150,7 @@ class MaintenanceWorkflowService
         // words. The rendered sentence still lands in customer_complaint, so nothing downstream changes.
         $statement = $this->requestStatement($data + ['vehicle_id' => $vehicleId], 'inspection');
 
-        return DB::transaction(function () use ($vehicleId, $reason, $origin, $statement, $driver, $superseded) {
+        return DB::transaction(function () use ($vehicleId, $reason, $origin, $statement, $driver) {
             $ticket = new Maintenance();
             $ticket->origin          = Maintenance::ORIGIN_MANUAL;
             $ticket->vehicle_id      = $vehicleId;
@@ -1179,12 +1180,6 @@ class MaintenanceWorkflowService
             $ticket->requested_at = Carbon::now();
             $ticket->driver       = $driver->name;
             $ticket->save();
-
-            // A person has answered the scanner's guess — retire it, so the Controller is not left with
-            // two cards for one car (and the more informative one buried under the generic one).
-            if ($superseded) {
-                $this->supersedeSuggestionByTest($superseded, $ticket, $driver, 'request');
-            }
 
             $this->cascade($ticket->vehicle_id);
 
@@ -1259,18 +1254,18 @@ class MaintenanceWorkflowService
             ]);
         }
 
-        // The scanner's generic suggestion must not end up sitting in her own queue underneath the request
-        // she just wrote, so it is retired on the same terms as every other door.
-        [$inFlight, $superseded] = $this->weighInFlightRequest($vehicleId);
+        // Whatever is already open on this car — the scanner's suggestion included — is JOINED, not
+        // replaced, on the same terms as every other request door.
+        [$inFlight] = $this->weighInFlightRequest($vehicleId);
 
-        // A live request from a PERSON is added to instead — one car, one story, same as the driver door.
-        // This door never had a duplicate guard at all, so before this it silently opened a second live
-        // request and left two cards for one car.
+        // A live request is added to instead — one car, one story, same as the driver door. This door
+        // never had a duplicate guard at all, so before this it silently opened a second live request
+        // and left two cards for one car.
         if ($inFlight) {
             return $this->addToOpenRequest($inFlight, $data + ['customer_complaint' => $data['customer_complaint'] ?? null], $manager);
         }
 
-        return DB::transaction(function () use ($vehicle, $vehicleId, $reason, $data, $manager, $superseded) {
+        return DB::transaction(function () use ($vehicle, $vehicleId, $reason, $data, $manager) {
             $now = Carbon::now();
 
             $ticket = new Maintenance();
@@ -1321,11 +1316,6 @@ class MaintenanceWorkflowService
 
             // The car is booked in for a look → its maintenance visit gets a contract for the whole trip.
             $this->openMaintenanceContract($ticket, $manager);
-
-            // …and the scanner's suggestion for the same car is retired: this request supersedes it.
-            if ($superseded) {
-                $this->supersedeSuggestionByTest($superseded, $ticket, $manager, 'request');
-            }
 
             $this->cascade($ticket->vehicle_id);
 
@@ -1667,31 +1657,13 @@ class MaintenanceWorkflowService
     }
 
     /**
-     * May this in-flight request be stood down by a person committing the car to a garage?
-     *
-     * THREE conditions, all of them narrowing, because the default answer is no:
-     *
-     *   1. NOBODY RAISED IT. `requested_by === null` + `request_origin = system_schedule` is the scanner —
-     *      a suggestion computed from mileage and dates, about a car nobody has been in. A person's
-     *      request is never retired by another person's action: a person's request stands until a person
-     *      answers it, which is the same line withdrawRequestsWhoseConditionCleared() draws.
-     *   2. NOBODY HAS ACTED ON IT YET. Still `pending_review`. Once a Controller has approved it the
-     *      Inspector holds it, and pulling it out from under him would erase work already assigned. (This
-     *      is also what systemWithdraw() re-checks under its row lock, so a Controller clicking Approve at
-     *      this exact moment wins the race and this call becomes a no-op.)
-     *   3. THE CAR IS OUT ON HIRE. The whole rule exists for the rented car: the scanner keeps suggesting
-     *      a test the car cannot come in for, and the person who actually drove it is the one with real
-     *      information. On a car sitting in the yard the ordinary refusal still stands — a suggestion
-     *      there is answerable in the review queue like any other, and nothing needs to change.
-     */
-    /**
-     * Split what is in flight on this car into "what blocks a new request" and "what a human statement
-     * stands down". ONE reading for every door, so the driver's request, the Controller's request and the
+     * Split what is in flight on this car into "what a new request joins" and "what a ticket stands down".
+     * ONE reading for every door, so the driver's request, the Controller's request and the
      * straight-to-garage commitment can never disagree about the same car.
      *
      * @param  string $door 'inspection' — a request, which ADDS to what is open
      *                      'dispatch'   — a ticket, which SUPERSEDES what is open
-     * @return array{0: ?Maintenance, 1: ?Maintenance}  [blocking, superseded] — at most one is non-null
+     * @return array{0: ?Maintenance, 1: ?Maintenance}  [open, superseded] — at most one is non-null
      */
     private function weighInFlightRequest(int $vehicleId, string $door = 'inspection'): array
     {
@@ -1715,19 +1687,16 @@ class MaintenanceWorkflowService
             return [null, $inFlight];
         }
 
-        // On the request door only the SCANNER'S GUESS is retired — see isSupersedableSuggestion. A live
-        // request from a person is neither blocking nor superseded: the caller adds to it.
-        return $this->isSupersedableSuggestion($inFlight, $vehicleId)
-            ? [null, $inFlight]
-            : [$inFlight, null];
-    }
-
-    private function isSupersedableSuggestion(Maintenance $inFlight, int $vehicleId): bool
-    {
-        return $inFlight->requested_by === null
-            && $inFlight->request_origin === Maintenance::SOURCE_SYSTEM_SCHEDULE
-            && $inFlight->workflow_status === Maintenance::WF_PENDING_REVIEW
-            && $this->openRentalFor($vehicleId) !== null;
+        // ON THE REQUEST DOOR NOTHING IS EVER RETIRED. A request is not a commitment — it is somebody
+        // saying what they found — so it JOINS whatever is already open, whoever opened it and wherever
+        // the car is. That includes the scanner's suggestion: "check brakes, check suspension" computed
+        // from mileage is real information about this car, and replacing it with "steering vibration"
+        // would throw away half the reason the Inspector is being sent out.
+        //
+        // This used to retire the scanner's guess when (and only when) the car was out on hire, which
+        // made the same button behave differently on a rented car than on a yard car, and lost the
+        // system's own list in the process. One request per car, one story on it, both ways.
+        return [$inFlight, null];
     }
 
     /**
@@ -1739,35 +1708,33 @@ class MaintenanceWorkflowService
      * Returns false when a Controller decided the request first, which is not a failure: their decision
      * outranks this one and the new ticket stands either way.
      */
-    private function supersedeSuggestionByTest(Maintenance $suggestion, Maintenance $ticket, User $actor, string $action = 'garage'): bool
+    private function supersedeSuggestionByTest(Maintenance $suggestion, Maintenance $ticket, User $actor): bool
     {
         // The retired row may be the scanner's guess OR a person's request that a ticket has now overtaken,
         // and the sentence has to say which — "the system's suggestion was retired" written over somebody's
         // own report would be a false account of what happened to it.
         $wasSystem = $suggestion->requested_by === null;
+        $rental    = $this->openRentalFor($ticket->vehicle_id);
 
-        $sentence = $action === 'garage'
-            ? ($wasSystem
-                ? $actor->name . ' drove this car and sent it to a garage, so the system\'s suggested test '
-                    . 'is no longer the open question — the car is already on its way in.'
-                : $actor->name . ' opened a maintenance ticket for this car, so this request is answered by '
-                    . 'something bigger than an approval — the car is already on its way to a garage.')
-            : $actor->name . ' has been in this car and raised their own request for it, so the system\'s '
-                . 'suggested test is no longer the open question — theirs is, and it says more.';
+        $sentence = $wasSystem
+            ? $actor->name . ' drove this car and sent it to a garage, so the system\'s suggested test '
+                . 'is no longer the open question — the car is already on its way in.'
+            : $actor->name . ' opened a maintenance ticket for this car, so this request is answered by '
+                . 'something bigger than an approval — the car is already on its way to a garage.';
 
         return $this->systemWithdraw(
             $suggestion,
             Maintenance::REVIEW_REJECT_SUPERSEDED_BY_TEST,
             $sentence,
-            // The evidence: which ticket answered it, who decided, and that the car was on hire at the time
-            // — the three facts someone auditing the vanished card would ask for.
+            // The evidence: which ticket answered it, who decided, and whether the car was on hire at the
+            // time — the three facts someone auditing the vanished card would ask for.
             [
                 'source'        => 'manual_test',
                 'ticket_id'     => $ticket->id,
                 'decided_by'    => $actor->name,
                 'decided_by_id' => $actor->id,
-                'on_rental'     => true,
-                'rental_id'     => $this->openRentalFor($ticket->vehicle_id)?->id,
+                'on_rental'     => $rental !== null,
+                'rental_id'     => $rental?->id,
             ],
             // NOT `ticket_id` — systemWithdraw() writes this meta onto the SUGGESTION's own audit row, where
             // that key already means the suggestion. `superseded_by` names the other ticket unambiguously.

@@ -2050,40 +2050,54 @@ export default function InspectionReviewQueue() {
   const [tab, setTab] = useState('awaiting');
   const activeTab = tab;
 
-  // Deep-link focus — the Action Center links here as /inspection-review?ticket=<id> when a Controller
-  // clicks "Review Request" on a maint_review_pending alert. Scroll that exact card into view and pulse
-  // a highlight ring so they land on the right request, not the top of a long queue.
+  // Deep-link focus — /inspection-review?ticket=<id>. The Action Center links here when a Controller
+  // clicks "Review Request" on a maint_review_pending alert, and Send-a-car-in links here with the exact
+  // record it just wrote or added to. Scroll that card into view and pulse a highlight ring so they land
+  // on the right request, not the top of a long queue.
   const [searchParams, setSearchParams] = useSearchParams();
   const targetTicket = searchParams.get('ticket');
   const [highlightId, setHighlightId] = useState(null);
-  const focusedRef = useRef(false);
   const highlightTimer = useRef(null);
+  const missingTimer = useRef(null);
 
   useEffect(() => {
-    // Wait for the first load; act once. Set the guard up front so clearing the query param below
-    // (which re-runs this effect) can't re-enter and cancel the highlight timer.
-    if (!targetTicket || loading || focusedRef.current) return;
-    focusedRef.current = true;
+    // The query param IS the guard — it is dropped the moment this resolves, either way, so a manual
+    // refresh doesn't re-highlight and a second deep-link to the same card still works.
+    if (!targetTicket || loading) return undefined;
 
     const match = tickets.find((t) => String(t.id) === String(targetTicket));
     if (match) {
-      // The card may live on the other tab — a "See why" bell for a withdrawn request lands here. Switch
-      // to its tab first, or the deep-link would scroll to a card that isn't rendered.
-      if (match.review?.is_system_withdrawal) setTab('withdrawn');
+      clearTimeout(missingTimer.current);
+      clearTimeout(highlightTimer.current);
+      // The card may live on a tab that isn't showing — a "See why" bell for a withdrawn request lands
+      // here, and Send-a-car-in can fire this while the countdown tab is open. Switch to the card's own
+      // tab first, or the deep-link would scroll to something that isn't rendered.
+      setTab(match.review?.is_system_withdrawal ? 'withdrawn' : 'awaiting');
       setHighlightId(match.id);
       requestAnimationFrame(() => {
         document.getElementById(`review-card-${match.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
       highlightTimer.current = setTimeout(() => setHighlightId(null), 3500);
-    } else {
+      setSearchParams({}, { replace: true });
+      return undefined;
+    }
+
+    // NOT THERE YET is not the same as NOT THERE. A request written seconds ago in the Send-a-car-in
+    // modal lands here before the list carrying it has come back, and answering that with "already
+    // actioned" would be a lie about the card the person is looking at. Wait one refresh cycle — this
+    // effect re-runs on every new payload, so an arrival cancels the verdict — and only then say so.
+    missingTimer.current = setTimeout(() => {
       // No longer pending — already approved/rejected by someone else, or auto-resolved.
       toast.info(t('That request is no longer awaiting review — it may have already been actioned.'));
-    }
-    // Drop the query param so a manual refresh doesn't re-highlight.
-    setSearchParams({}, { replace: true });
+      setSearchParams({}, { replace: true });
+    }, 10000);
+    return () => clearTimeout(missingTimer.current);
   }, [targetTicket, loading, tickets, toast, setSearchParams, t]);
 
-  useEffect(() => () => clearTimeout(highlightTimer.current), []);
+  useEffect(() => () => {
+    clearTimeout(highlightTimer.current);
+    clearTimeout(missingTimer.current);
+  }, []);
 
   // Pickers for the New Test / New Complaint intake modals — only Ready + Rented cars.
   useEffect(() => {
