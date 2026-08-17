@@ -61,6 +61,24 @@ class GarageInvoiceController extends Controller
                     ->values(),
                 // The category menu (+ keyword lists) so the editor can auto-fill a line's category.
                 'categories' => array_values(config('maintenance_findings.categories', [])),
+                // The parts vocabulary, so the garage NAMES A PART rather than typing one. It ships
+                // with the form because this page has no login and cannot call /parts-catalog, and
+                // deliberately slim: the fields the picker searches and nothing about our usage,
+                // suppliers or history.
+                'parts' => \App\Models\ComponentCatalog::active()
+                    ->orderBy('name')
+                    ->get(['id', 'name', 'name_ar', 'aliases', 'identity_aliases', 'category_key', 'default_part_number', 'default_warranty_months'])
+                    ->map(fn ($p) => [
+                        'id'                      => $p->id,
+                        'name'                    => $p->name,
+                        'name_ar'                 => $p->name_ar,
+                        'aliases'                 => array_merge($p->aliases ?? [], $p->identity_aliases ?? []),
+                        'category_key'            => $p->category_key,
+                        'default_part_number'     => $p->default_part_number,
+                        'default_warranty_months' => $p->default_warranty_months,
+                        'is_active'               => true,
+                    ])
+                    ->values(),
                 'expires_at' => optional($link->expires_at)->toIso8601String(),
             ], 'Invoice form ready', 200);
         });
@@ -85,6 +103,9 @@ class GarageInvoiceController extends Controller
                 'line_items.*.description'  => ['required', 'string', 'max:255'],
                 'line_items.*.finding_text' => ['required', 'string', 'max:255'],
                 'line_items.*.part_number'  => ['nullable', 'string', 'max:120'],
+                // The garage may pick the part from our catalog; when it doesn't, the wording it typed
+                // is resolved server-side and the line is linked only if that resolves strictly.
+                'line_items.*.component_catalog_id' => ['nullable', 'integer', Rule::exists('component_catalog', 'id')],
                 'line_items.*.category_key' => ['nullable', 'string', 'max:40'],
                 // Every line is a real charge: qty × unit price > 0.
                 'line_items.*.quantity'     => ['required', 'numeric', 'gt:0'],
@@ -186,7 +207,7 @@ class GarageInvoiceController extends Controller
     /** Keep only the keys the line pipeline consumes, dropping anything stray a client might send. */
     private function normalizeLines(array $lines): array
     {
-        $allowed = ['kind', 'description', 'finding_text', 'part_number', 'category_key',
+        $allowed = ['kind', 'description', 'finding_text', 'part_number', 'component_catalog_id', 'category_key',
                     'quantity', 'unit_price', 'installed_on', 'warranty_months'];
 
         return array_values(array_map(function ($row) use ($allowed) {

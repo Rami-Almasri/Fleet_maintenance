@@ -55,7 +55,7 @@ class PartsCatalogController extends Controller
     public function index(Request $request)
     {
         $rows = ComponentCatalog::query()
-            ->withCount(['components', 'warranties', 'requiredParts', 'partRequests', 'partPurchases'])
+            ->withCount(['components', 'warranties', 'requiredParts', 'partRequests', 'partPurchases', 'lineItems'])
             ->when($request->filled('q'), fn ($q) => $q->search($request->string('q')))
             ->when($request->filled('category'), fn ($q) => $q->where('category_key', $request->string('category')))
             ->when($request->filled('tracking_mode'), fn ($q) => $q->where('tracking_mode', $request->string('tracking_mode')))
@@ -224,6 +224,10 @@ class PartsCatalogController extends Controller
             // what was bought, and every repeat-buy answer built on it silently changes.
             'part_requests'     => $part->partRequests()->count(),
             'purchases'         => $part->partPurchases()->count(),
+            // Billed repair lines. Same reasoning as purchases: a cost line whose part type was
+            // deleted can no longer say what was fitted, and the lifespan/spend answers resting on
+            // it change without anybody being told.
+            'billed_lines'      => $part->lineItems()->count(),
         ]);
     }
 
@@ -236,6 +240,7 @@ class PartsCatalogController extends Controller
             'required_parts'    => 'required-part line',
             'part_requests'     => 'part request',
             'purchases'         => 'recorded purchase',
+            'billed_lines'      => 'billed repair line',
         ];
         $plurals = ['warranties' => 'warranties'];
 

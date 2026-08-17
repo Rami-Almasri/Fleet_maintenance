@@ -57,12 +57,14 @@ class ComponentCatalogResource extends JsonResource
                 'required_parts'    => $this->whenCounted('requiredParts', default: 0),
                 'part_requests'     => $this->whenCounted('partRequests', default: 0),
                 'purchases'         => $this->whenCounted('partPurchases', default: 0),
+                'billed_lines'      => $this->whenCounted('lineItems', default: 0),
             ],
             'can_delete' => ($this->components_count ?? 0) === 0
                 && ($this->warranties_count ?? 0) === 0
                 && ($this->required_parts_count ?? 0) === 0
                 && ($this->part_requests_count ?? 0) === 0
-                && ($this->part_purchases_count ?? 0) === 0,
+                && ($this->part_purchases_count ?? 0) === 0
+                && ($this->line_items_count ?? 0) === 0,
 
             // Provenance, so the page can show what is still shipping-default and what a human owns.
             // A user-edited row is one the seeder will never touch again — worth saying out loud.

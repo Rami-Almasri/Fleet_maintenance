@@ -180,6 +180,7 @@ export default function GarageInvoicePortal() {
             value={lineItems}
             onChange={setLineItems}
             catalog={info.categories || []}
+            partsCatalog={info.parts || []}
             findings={info.findings || []}
             requireReceipt
             receiptTotal={receiptTotal}

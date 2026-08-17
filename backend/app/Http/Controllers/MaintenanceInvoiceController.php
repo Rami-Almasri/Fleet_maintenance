@@ -119,6 +119,8 @@ class MaintenanceInvoiceController extends Controller
             'line_items.*.description'  => ['required_with:line_items', 'string', 'max:255'],
             'line_items.*.finding_text' => ['required_with:line_items', 'string', 'max:255'],
             'line_items.*.part_number'  => ['nullable', 'string', 'max:120'],
+            // The catalog part a part line fitted — its identity, as opposed to the billed wording.
+            'line_items.*.component_catalog_id' => ['nullable', 'integer', Rule::exists('component_catalog', 'id')],
             'line_items.*.category_key' => ['nullable', 'string', 'max:64'],
             'line_items.*.quantity'     => ['nullable', 'numeric', 'min:0'],
             'line_items.*.unit_price'   => ['nullable', 'numeric', 'min:0'],

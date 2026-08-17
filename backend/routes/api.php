@@ -304,6 +304,13 @@ Route::middleware('auth:sanctum')->group(function () {
     // from the recall, never posted, so no caller can remove it.
     Route::post('Contract/{contract}/oil-recall/instructions', [\App\Http\Controllers\OilProjectionController::class, 'collectionInstructions'])
         ->middleware('permission:reminders.manage');
+    // HAND IT TO THE SUPERVISORS. A recalled car with no test has nobody expecting it: no review
+    // card, no Inspector. This opens the oil change as a real ticket in the Supervisors' dispatch
+    // queue — where they read the odometer and pick the garage. Normally the driver's "Arrived" tap
+    // does it; this is the same step by hand, for a car that landed before anyone asked for it.
+    // Reachable by the workshop side too — they are the ones standing next to the car.
+    Route::post('Contract/{contract}/oil-recall/hand-over', [\App\Http\Controllers\OilProjectionController::class, 'handOverToSupervisor'])
+        ->middleware('permission:reminders.manage|maintenance.manage|maintenance.logistics');
     // THE OIL WAS CHANGED. One number — the odometer it was changed at — and the follow-up ends:
     // the car's next service runs from that reading, the projection re-anchors on it, and the
     // recall, the collection and the announcing inspection request all stand down. Reachable by
@@ -750,6 +757,9 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // Structured Parts + Labor breakdown — read with view; record/replace is a money action
     // (maintenance.manage), works in any state so the bill can be itemised after close (deferred edit).
     Route::get('/{ticket}/line-items', 'lineItems')->middleware('permission:maintenance.view');
+    // The parts this ticket already knows about (required → requested → bought), so the invoice form
+    // offers what was actually asked for and paid for instead of an empty catalog search.
+    Route::get('/{ticket}/billable-parts', 'billableParts')->middleware('permission:maintenance.view');
     Route::put('/{ticket}/line-items', 'syncLineItems')->middleware('permission:maintenance.manage');
     // Path A (Manual Entry) — ask the garage for an itemised invoice (stamps + alerts the team).
     Route::post('/{ticket}/request-invoice', 'requestInvoice')->middleware('permission:maintenance.manage');

@@ -2682,6 +2682,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               onChange={setLineItems}
               catalog={findingsCatalog}
               findings={ticket?.findings || []}
+              ticketId={ticket?.id}
               requireReceipt
               receiptTotal={receiptTotal}
               onReceiptTotalChange={setReceiptTotal}

@@ -8,8 +8,16 @@
 
 import { render, screen, fireEvent } from '@testing-library/react';
 import InvoicesPanel from './InvoicesPanel';
+import api from '../../api/client';
 
 jest.mock('../../api/client', () => ({ get: jest.fn(), post: jest.fn(), delete: jest.fn() }));
+
+// The line editor inside this panel fetches the parts catalog on mount. CRA resets mock
+// implementations between tests, so the resolved value is re-armed here or the editor crashes on a
+// `get` that returned undefined — before any assertion in this file gets to run.
+beforeEach(() => {
+  api.get.mockResolvedValue({ data: { data: { parts: [] } } });
+});
 
 // t echoes the key (with values appended), so an assertion names the label key rather than its English.
 jest.mock('../../i18n/I18nContext', () => ({

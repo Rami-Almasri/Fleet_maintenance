@@ -97,6 +97,12 @@ class ComponentCatalog extends Model
         return $this->hasMany(PartPurchase::class, 'component_catalog_id');
     }
 
+    /** The billed repair lines that fitted this part type — what it has cost across the fleet. */
+    public function lineItems(): HasMany
+    {
+        return $this->hasMany(MaintenanceLineItem::class, 'component_catalog_id');
+    }
+
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('is_active', true);

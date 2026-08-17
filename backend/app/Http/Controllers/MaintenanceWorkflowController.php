@@ -3185,6 +3185,115 @@ class MaintenanceWorkflowController extends Controller
         });
     }
 
+    /**
+     * THE PARTS THIS TICKET ALREADY KNOWS ABOUT — what the invoice form should be offering instead of
+     * an empty search box.
+     *
+     * By the time a bill is keyed, the part has usually been named two or three times already: the
+     * inspector listed it as required, the coordinator raised a request, someone bought it at a price
+     * we recorded. Making the biller search the catalog from scratch throws all of that away — the
+     * quantity is re-typed, the price is re-typed from a receipt we already hold, and the new line
+     * joins to none of it.
+     *
+     * Three sources, deduped by IDENTITY (catalog id, else normalised wording) with the most-advanced
+     * record winning, because they are the same part at three stages, not three parts:
+     *
+     *   purchase  — money actually spent. Carries the unit price and quantity, so the line can be
+     *               filled in completely. `already_billed` when it produced a cost line at fitting;
+     *               the form shows it as accounted for rather than offering it twice.
+     *   request   — asked for, not yet bought. Name and quantity, no price.
+     *   required  — the inspector's technical list. The earliest and least certain, offered last.
+     *
+     * A non-base-currency purchase deliberately ships NO price: converting it here would invent an
+     * exchange rate, and a wrong number on an invoice is worse than a blank one.
+     */
+    public function billableParts(Maintenance $ticket)
+    {
+        return $this->run(function () use ($ticket) {
+            $base  = strtoupper((string) config('parts_intelligence.base_currency', 'AED'));
+            $items = [];
+
+            // Identity of a row for dedupe: the catalog reference when there is one, else the wording
+            // normalised the same way part identity normalises it.
+            $identity = fn (?int $catalogId, ?string $name) => $catalogId
+                ? "c:{$catalogId}"
+                : 'n:' . (app(\App\Services\PartIdentityService::class)->nameKey($name) ?? mb_strtolower(trim((string) $name)));
+
+            $take = function (string $key, array $item) use (&$items) {
+                // First writer wins — the sources are added most-advanced first.
+                if (! isset($items[$key])) {
+                    $items[$key] = $item;
+                }
+            };
+
+            foreach (\App\Models\PartPurchase::where('maintenance_id', $ticket->id)->with('task:id,symptom')->get() as $p) {
+                $isBase = strtoupper((string) $p->currency) === $base;
+
+                $take($identity($p->component_catalog_id, $p->part_name), [
+                    'source'               => 'purchase',
+                    'id'                   => $p->id,
+                    'part_name'            => $p->part_name,
+                    'part_number'          => $p->part_number,
+                    'component_catalog_id' => $p->component_catalog_id,
+                    'category_key'         => $p->category_key,
+                    'quantity'             => (float) ($p->quantity ?: 1),
+                    'unit_price'           => $isBase && $p->purchase_price !== null ? (float) $p->purchase_price : null,
+                    'currency'             => $p->currency,
+                    'finding_text'         => $p->task?->symptom,
+                    'installed_on'         => optional($p->installed_at)->toDateString(),
+                    // Fitting a purchase already writes a cost line (PartWorkflowService::installPurchase).
+                    // Offering it again would bill the same part twice.
+                    'already_billed'       => $p->maintenance_line_item_id !== null,
+                ]);
+            }
+
+            foreach (\App\Models\PartRequest::where('maintenance_id', $ticket->id)->with('task:id,symptom')->get() as $r) {
+                $take($identity($r->component_catalog_id, $r->part_name), [
+                    'source'               => 'request',
+                    'id'                   => $r->id,
+                    'part_name'            => $r->part_name,
+                    'part_number'          => $r->part_number,
+                    'component_catalog_id' => $r->component_catalog_id,
+                    'category_key'         => null,
+                    'quantity'             => (float) ($r->quantity ?: 1),
+                    'unit_price'           => null,
+                    'currency'             => null,
+                    'finding_text'         => $r->task?->symptom,
+                    'installed_on'         => null,
+                    'already_billed'       => false,
+                ]);
+            }
+
+            $required = \App\Models\MaintenanceRequiredPart::where('maintenance_id', $ticket->id)
+                ->where('status', '!=', \App\Models\MaintenanceRequiredPart::STATUS_DISMISSED)
+                ->with('task:id,symptom')
+                ->get();
+
+            foreach ($required as $rp) {
+                $take($identity($rp->component_catalog_id, $rp->part_name), [
+                    'source'               => 'required',
+                    'id'                   => $rp->id,
+                    'part_name'            => $rp->part_name,
+                    'part_number'          => null,
+                    'component_catalog_id' => $rp->component_catalog_id,
+                    'category_key'         => null,
+                    'quantity'             => (float) ($rp->quantity ?: 1),
+                    'unit_price'           => null,
+                    'currency'             => null,
+                    'finding_text'         => $rp->task?->symptom ?: $rp->finding_text,
+                    'installed_on'         => null,
+                    'already_billed'       => false,
+                ]);
+            }
+
+            return ResponseHelper::SuccessResponse(
+                ['parts' => array_values($items)],
+                'Parts on this ticket retrieved',
+                200
+            );
+        });
+    }
+
     /** The ticket's structured Parts + Labor lines (the deferred-edit read). */
     public function lineItems(Maintenance $ticket)
     {
@@ -3227,6 +3336,9 @@ class MaintenanceWorkflowController extends Controller
             'line_items.*.kind'                => ['required', Rule::in(\App\Models\MaintenanceLineItem::KINDS)],
             'line_items.*.description'         => ['required', 'string', 'max:255'],
             'line_items.*.part_number'         => ['nullable', 'string', 'max:120'],
+            // Which catalog part a part line fitted — the identity behind the billed wording. Nullable:
+            // labor lines have none, and a line may still arrive from a surface without the picker.
+            'line_items.*.component_catalog_id' => ['nullable', 'integer', 'exists:component_catalog,id'],
             // Diagnosis-First — every line MUST link to a finding on the ticket (validated against the
             // actual findings set in the service). No finding link = no cost, so no ghost spend.
             'line_items.*.finding_text'        => ['required', 'string', 'max:255'],
@@ -3240,6 +3352,11 @@ class MaintenanceWorkflowController extends Controller
             'line_items.*.installed_on'        => ['nullable', 'date'],
             'line_items.*.installed_odometer'  => ['nullable', 'integer', 'min:0'],
             'line_items.*.warranty_months'     => ['nullable', 'integer', 'min:0', 'max:600'],
+            // Tyre audit trail — captured by the editor on a tyres-category part line. Accepted here
+            // too, or the brand/DOT/tread a user typed would be dropped on this path alone.
+            'line_items.*.tire_brand'          => ['nullable', 'string', 'max:80'],
+            'line_items.*.tire_dot'            => ['nullable', 'string', 'max:40'],
+            'line_items.*.tire_tread_mm'       => ['nullable', 'numeric', 'min:0'],
             // OCR-ready provenance — defaults to 'manual' server-side when omitted.
             'line_items.*.entry_source'        => ['nullable', Rule::in(['manual', 'ocr', 'import'])],
 
@@ -3260,8 +3377,9 @@ class MaintenanceWorkflowController extends Controller
      */
     private function normalizeLineItems(array $lines): array
     {
-        $allowed = ['kind', 'description', 'part_number', 'finding_text', 'category_key',
-                    'quantity', 'uom', 'unit_price', 'installed_on', 'installed_odometer', 'warranty_months', 'entry_source'];
+        $allowed = ['kind', 'description', 'part_number', 'component_catalog_id', 'finding_text', 'category_key',
+                    'quantity', 'uom', 'unit_price', 'installed_on', 'installed_odometer', 'warranty_months', 'entry_source',
+                    'tire_brand', 'tire_dot', 'tire_tread_mm'];
 
         return array_values(array_filter(array_map(function ($row) use ($allowed) {
             return is_array($row) ? array_intersect_key($row, array_flip($allowed)) : null;

@@ -47,6 +47,9 @@ const toEditorRow = (li) => ({
   finding_text: li.finding_text || '',
   description: li.description || '',
   part_number: li.part_number || '',
+  // Which part it is. A null one is a line billed before the picker existed — the editor shows its
+  // wording and asks for a part to be chosen rather than dropping it.
+  component_catalog_id: li.component_catalog_id || null,
   category_key: li.category_key || '',
   quantity: li.quantity != null ? String(li.quantity) : '1',
   unit_price: li.unit_price != null ? String(li.unit_price) : '',
@@ -422,6 +425,7 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, presetTaskId
           onChange={setLineItems}
           catalog={findingsCatalog}
           findings={ticket.findings || []}
+          ticketId={ticket.id}
           requireReceipt
           receiptTotal={receiptTotal}
           onReceiptTotalChange={setReceiptTotal}

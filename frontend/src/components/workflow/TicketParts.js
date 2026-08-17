@@ -244,22 +244,30 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
           <ContextFact label={t('Workshop')} value={ticket?.garage} />
         </dl>
 
-        {/* Fault — from the ticket. A single-fault ticket is pre-selected; a multi-fault one must pick. */}
-        {faultOptions.length <= 1 ? (
-          <ContextFact label={t('Fault')} value={faultOptions[0]?.symptom || t('General (no specific fault)')} />
+        {/* Fault — OPTIONAL. Not every part repairs a diagnosed fault: wiper blades, a cabin filter or
+            a bulb are for the CAR, and forcing them onto whichever fault happens to be open files the
+            spend against a repair that never needed them and pollutes "what did this fault cost".
+            A single-fault ticket is still pre-selected (that is the common case) but can be set back
+            to General; a ticket with no faults at all has nothing to offer and just says so. */}
+        {faultOptions.length === 0 ? (
+          <ContextFact label={t('Fault')} value={t('General (no specific fault)')} />
         ) : (
-          <Select
-            label={t('Fault')}
-            required
-            value={form.maintenance_task_id}
-            error={errors.maintenance_task_id?.[0]}
-            onChange={(e) => set('maintenance_task_id', e.target.value)}
-          >
-            <option value="">{t('Select the related fault…')}</option>
-            {faultOptions.map((task) => (
-              <option key={task.id} value={task.id}>{task.symptom || t('Fault #{id}', { id: task.id })}</option>
-            ))}
-          </Select>
+          <div>
+            <Select
+              label={t('Fault')}
+              value={form.maintenance_task_id}
+              error={errors.maintenance_task_id?.[0]}
+              onChange={(e) => set('maintenance_task_id', e.target.value)}
+            >
+              <option value="">{t('General (no specific fault)')}</option>
+              {faultOptions.map((task) => (
+                <option key={task.id} value={task.id}>{task.symptom || t('Fault #{id}', { id: task.id })}</option>
+              ))}
+            </Select>
+            <p className="mt-1 text-xs text-slate-400">
+              {t('Leave as General when the part is for the car rather than one fault — wipers, a bulb, a cabin filter.')}
+            </p>
+          </div>
         )}
 
         {/* Duplicate-purchase intelligence — surfaced BEFORE the request is created. */}

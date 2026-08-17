@@ -23,6 +23,10 @@ class MaintenanceLineItemResource extends JsonResource
             'kind'               => $li->kind,                 // 'part' | 'labor'
             'description'        => $li->description,
             'part_number'        => $li->part_number,
+            // The part's IDENTITY. The editor re-opens on this, not on `description` — a line whose
+            // id is null is history typed before the picker and is shown as still needing a part.
+            'component_catalog_id' => $li->component_catalog_id,
+            'catalog_matched_by'   => $li->catalog_matched_by,
             // Lightweight tire tracking (only populated when the part's category is 'tyres').
             'tire_brand'         => $li->tire_brand,
             'tire_dot'           => $li->tire_dot,

@@ -286,15 +286,30 @@ class MaintenanceInvoiceService
             $price  = isset($row['unit_price']) && is_numeric($row['unit_price']) ? round((float) $row['unit_price'], 2) : 0;
             $finding = $this->clean($row['finding_text'] ?? null);
 
+            // WHICH PART was fitted — the reference, not the wording. A picked id is taken as given
+            // (a person said so); otherwise the typed wording is resolved strictly, which is how the
+            // public garage portal and OCR lines still land on a real part. Unresolvable wording stays
+            // null: visibly unidentified beats plausibly mislabelled.
+            [$catalogId, $matchedBy, $catalogPart] = $isPart
+                ? $this->resolveCatalogPart($row, $description)
+                : [null, null, null];
+
             $invoice->lineItems()->create([
                 'maintenance_id'     => $ticket->id,
                 'maintenance_task_id'=> optional($taskBySymptom->get(mb_strtolower((string) $finding)))->id,
                 'vehicle_id'         => $ticket->vehicle_id,
                 'kind'               => $kind,
                 'finding_text'       => $finding,
-                'category_key'       => $this->clean($row['category_key'] ?? null),
+                // A part states its OWN category, from the catalog entry. It used to be derived from
+                // the fault the line is attributed to, which files spend under the wrong heading
+                // whenever the part fitted for a symptom isn't the obvious one ("engine noise" repaired
+                // with a belt is not an engine part). The submitted key is the fallback for a line with
+                // no catalog reference — labor, and history typed before the picker.
+                'category_key'       => $catalogPart?->category_key ?: $this->clean($row['category_key'] ?? null),
                 'description'        => $description,
                 'part_number'        => $isPart ? $this->clean($row['part_number'] ?? null) : null,
+                'component_catalog_id' => $catalogId,
+                'catalog_matched_by' => $matchedBy,
                 'tire_brand'         => $isPart ? $this->clean($row['tire_brand'] ?? null) : null,
                 'tire_dot'           => $isPart ? $this->clean($row['tire_dot'] ?? null) : null,
                 'tire_tread_mm'      => $isPart && isset($row['tire_tread_mm']) && is_numeric($row['tire_tread_mm']) ? (float) $row['tire_tread_mm'] : null,
@@ -485,6 +500,42 @@ class MaintenanceInvoiceService
         $key  = $file->storeAs("maintenance-invoices/ticket-{$invoice->maintenance_id}", (string) Str::uuid() . '.' . $ext, $disk);
 
         return $key ? [$disk, $key] : [null, null];
+    }
+
+    /**
+     * Identify the part a submitted line bills.
+     *
+     * Two grades of evidence, kept apart on purpose. A `component_catalog_id` on the row means a
+     * person picked the part from the list, and that is recorded as 'picked' — nothing here second-
+     * guesses it. With no id, the wording goes through PartIdentityService, which is strict (exact
+     * name, Arabic name, slug, curated other-name, whole-phrase) and returns nothing rather than
+     * guessing; that is the path the public garage portal and any imported/OCR line take.
+     *
+     * @return array{0:?int, 1:?string, 2:?\App\Models\ComponentCatalog}
+     */
+    private function resolveCatalogPart(array $row, string $description): array
+    {
+        $picked = isset($row['component_catalog_id']) && is_numeric($row['component_catalog_id'])
+            ? (int) $row['component_catalog_id']
+            : null;
+
+        if ($picked) {
+            $part = \App\Models\ComponentCatalog::find($picked);
+
+            // A stale id (the type was retired away and deleted between page load and submit) is not
+            // silently kept: it would point the line at nothing. Fall through to the wording.
+            if ($part) {
+                return [$part->id, 'picked', $part];
+            }
+        }
+
+        $hit = app(PartIdentityService::class)->identityFor(null, $description);
+
+        if (! $hit['catalog_id']) {
+            return [null, null, null];
+        }
+
+        return [$hit['catalog_id'], PartIdentityService::VIA_NAME, \App\Models\ComponentCatalog::find($hit['catalog_id'])];
     }
 
     private function clean($value): ?string

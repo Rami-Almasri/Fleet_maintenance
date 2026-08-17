@@ -54,6 +54,11 @@ class MaintenanceLineItem extends Model
         'category_key',
         'description',
         'part_number',
+        // WHICH PART this is, as a reference rather than a spelling. `description` stays as the label
+        // that was billed (the garage's own wording is evidence); the id is what anything counting
+        // parts, comparing prices or measuring lifespan joins on.
+        'component_catalog_id',
+        'catalog_matched_by',
         'tire_brand',
         'tire_dot',
         'tire_tread_mm',
@@ -163,6 +168,12 @@ class MaintenanceLineItem extends Model
     public function vehicle(): BelongsTo
     {
         return $this->belongsTo(Vehicle::class);
+    }
+
+    /** The catalog part this line billed (null on a labor line, or on history typed before the picker). */
+    public function catalogPart(): BelongsTo
+    {
+        return $this->belongsTo(ComponentCatalog::class, 'component_catalog_id');
     }
 
     public function isPart(): bool
