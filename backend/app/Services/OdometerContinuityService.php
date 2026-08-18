@@ -51,7 +51,7 @@ class OdometerContinuityService
     public const STATUS_DISCREPANCY = 'discrepancy'; // ran backwards beyond tolerance — can't be right
     public const STATUS_TEST_DRIVE  = 'test_drive';  // garage OUT > IN — the garage drove it; confirm, don't block
     public const STATUS_CHECK       = 'check';       // pickup jumped a lot — probably fine, but re-read the dial
-    public const STATUS_AUTHORIZED  = 'authorized_deviation'; // strict-match stage: ANY forward drift — allowed WITH a note; beyond TOLERANCE it also goes to the odometer approval board
+    public const STATUS_AUTHORIZED  = 'authorized_deviation'; // strict-match stage: ANY forward drift — inside TOLERANCE it's accepted on the confirmation tick alone; beyond TOLERANCE it demands a note AND goes to the odometer approval board
     public const STATUS_EXACT       = 'exact_required';       // strict-match stage: a BACKWARD reading — a HARD block, not an overridable nudge
     public const STATUS_IMPLAUSIBLE = 'implausible';          // forward jump beyond MAX_JUMP_KM — a typo, not a journey. HARD block on every stage.
 
@@ -132,7 +132,8 @@ class OdometerContinuityService
      * Yes for an authorized deviation that ran further than the technical buffer at an at-our-park
      * spot-check — the car moved when our records say it was standing still, which is a real operational
      * question ("who drove it, and why wasn't it logged?") even though the reading itself is accepted. A
-     * 1..TOLERANCE_KM drift is just dial-reading noise and stays a note-only event, exactly as before.
+     * 1..TOLERANCE_KM drift is just dial-reading noise: it's recorded with the capture, asks the driver
+     * only for the confirmation tick, and neither demands a note nor reaches this board.
      *
      * At a REVIEW_NOT_BLOCK stage ("Needs Test Drive") the board is also the landing place for a BACKWARD
      * reading, because nothing refuses it any more — the approval queue is the only thing standing between

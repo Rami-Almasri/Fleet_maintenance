@@ -392,13 +392,18 @@ class MaintenanceWorkflowService
             );
         }
 
-        if ($flag['status'] === OdometerContinuityService::STATUS_AUTHORIZED && trim((string) $note) === '') {
+        // A forward drift is only asked to explain itself when it's big enough to reach a supervisor
+        // (past the tolerance buffer — needsSupervisorReview). A drift INSIDE the buffer has no reader for
+        // the sentence, so demanding one just trains drivers to type "ok" to clear the form; there the
+        // confirmation tick and the odometer photo are the record. Mirrors needsNote() in the JS twin.
+        if ($flag['status'] === OdometerContinuityService::STATUS_AUTHORIZED
+            && $this->continuity->needsSupervisorReview($flag)
+            && trim((string) $note) === '') {
             // A missing note is a form-completion nudge, NOT an unauthorised value — don't audit it as a block.
-            $tail = $this->continuity->needsSupervisorReview($flag)
-                ? ' — the car shouldn\'t have moved at this point, so write what happened. The reading is accepted and sent to the supervisor for review.'
-                : ' — add a short note explaining why before continuing.';
             throw new WorkflowTransitionException(
-                'This reading is ' . (int) $flag['delta'] . ' km above the previous stage' . $tail,
+                'This reading is ' . (int) $flag['delta'] . ' km above the previous stage'
+                . ' — the car shouldn\'t have moved at this point, so write what happened.'
+                . ' The reading is accepted and sent to the supervisor for review.',
                 ['field' => 'odometer_note']
             );
         }

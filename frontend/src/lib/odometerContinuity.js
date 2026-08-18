@@ -42,15 +42,16 @@ export const STATUS = {
   TEST_DRIVE: 'test_drive',
   CHECK: 'check',
   MUST_INCREASE: 'must_increase',            // strict-increase stage: reading is ≤ the previous one — a HARD block
-  AUTHORIZED: 'authorized_deviation',        // strict-match stage: +1..TOLERANCE km — allowed WITH a note (audited on oversight)
+  AUTHORIZED: 'authorized_deviation',        // strict-match stage: any forward drift — the tick alone inside TOLERANCE, tick + note past it (audited on oversight)
   EXACT_MATCH: 'exact_required',             // strict-match stage: backward, or > TOLERANCE over — a HARD block
   IMPLAUSIBLE: 'implausible',                // forward jump beyond MAX_JUMP_KM — a typo, not a journey. HARD block on EVERY stage.
 };
 
 // Strict-match stages — an internal spot-check at OUR OWN PARK where the car shouldn't have moved since the
 // previous reading (the inspector's test capture, and the driver collecting the car for the garage). An exact
-// match is expected; a +1..TOLERANCE_KM drift is tolerated only WITH a note; anything beyond, or any backward
-// reading, HARD-blocks submit. Mirror of STRICT_MATCH_STAGES in OdometerContinuityService.php — keep in step.
+// match is expected; a +1..TOLERANCE_KM drift goes through on the confirmation tick; a bigger forward drift
+// also demands a note and lands on the approval board; a backward reading HARD-blocks submit.
+// Mirror of STRICT_MATCH_STAGES in OdometerContinuityService.php — keep in step.
 export const STRICT_MATCH_STAGES = new Set([STAGE.TEST, STAGE.PARK_PICKUP, STAGE.REINSPECT]);
 
 /** Does `stage` require the reading to match the previous one (exact, or +TOLERANCE_KM with a note)? */
@@ -149,8 +150,8 @@ function classifyContinuity(reading, previous, stage) {
     if (delta === 0) return { status: STATUS.VERIFIED, previous: p, reading: r, delta };
     // ANY forward drift is an authorized deviation, never a wall — small in-lot moves beyond TOLERANCE_KM
     // are real and can't be fixed by re-reading the dial, so the reading goes through with a mandatory
-    // confirm + note. Past the buffer it also lands on the odometer approval board for a supervisor to
-    // audit after the fact (see needsApproval). Mirrors the PHP service's strict-match branch.
+    // confirm (plus a note past the buffer). Past the buffer it also lands on the odometer approval board
+    // for a supervisor to audit after the fact (see needsApproval). Mirrors the PHP strict-match branch.
     if (delta > 0) return { status: STATUS.AUTHORIZED, previous: p, reading: r, delta };
     return { status: STATUS.EXACT_MATCH, previous: p, reading: r, delta };
   }
@@ -198,6 +199,10 @@ export function needsConfirm(status, ignoreTolerance = false, stage = undefined)
   if (status === STATUS.MUST_INCREASE || status === STATUS.EXACT_MATCH) return false;
   // A backward reading can't be true whatever the transition — always ask, even on a garage trip.
   if (status === STATUS.DISCREPANCY) return true;
+  // A strict-match drift always wants a conscious "yes, that's what the dial says". Within the buffer the
+  // note is no longer demanded (see needsNote), so this tick is what stands in its place — without it the
+  // small-drift case would show no acknowledgment at all.
+  if (status === STATUS.AUTHORIZED) return true;
   // On a site↔garage move the forward jump (big pickup / garage test drive) IS the expected event, so
   // we don't nag for it.
   if (ignoreTolerance) return false;
@@ -219,10 +224,12 @@ export function needsNote(continuity, ignoreTolerance = false) {
   // and the number on the dial. The deviation still reaches a supervisor — via the approval board rather
   // than via a sentence typed under duress.
   if (stageReviewsInsteadOfBlocking(continuity?.stage)) return false;
-  // A strict-match "authorized deviation" (+1..TOLERANCE at a park spot-check) ALWAYS demands a note — that
-  // note is exactly what a supervisor audits on the Mileage Discrepancies board. It fires below the generic
-  // 10 km threshold, so it's checked first.
-  if (continuity?.status === STATUS.AUTHORIZED) return true;
+  // A strict-match "authorized deviation" demands a note only when the drift is big enough to reach a
+  // supervisor (past TOLERANCE_KM — see needsApproval); that note is what gets audited on the Mileage
+  // Discrepancies board. A drift INSIDE the buffer (a few metres of shunting, a mis-read last digit) has
+  // no audience for the sentence, so demanding one only teaches drivers to type "ok" to get past the form.
+  // There the tick + odometer photo carry the acknowledgment and the note stays invited, not required.
+  if (continuity?.status === STATUS.AUTHORIZED) return needsApproval(continuity);
   // Site↔garage moves accrue real distance by design — a big forward gap is the whole point of the trip,
   // so we don't demand a written explanation. (A backward reading still surfaces via needsConfirm.)
   if (ignoreTolerance) return false;
@@ -275,4 +282,7 @@ export const CONTINUITY_TONE = {
   // Not a STATUS — the badge key the hint swaps in for a backward reading at a review-not-block stage,
   // where the entry is accepted and routed to a supervisor. Amber (something to settle), never red (a wall).
   exact_required_review: 'amber',
+  // Not a STATUS either — the badge key for an authorized drift small enough to stay inside the buffer,
+  // where only the confirmation tick is asked for and the note is optional.
+  authorized_deviation_small: 'amber',
 };

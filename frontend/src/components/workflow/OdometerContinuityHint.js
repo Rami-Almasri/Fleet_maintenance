@@ -46,8 +46,13 @@ export default function OdometerContinuityHint({ previous, continuity, confirmed
     // modal reads as a refusal while the button happily goes through.
     : status === STATUS.EXACT_MATCH && stageReviewsInsteadOfBlocking(continuity?.stage)
       ? 'exact_required_review'
-      : status;
-  const statusKey = hintKey === 'exact_required_review' ? 'exact_required_review' : status;
+      // A small forward drift at a park spot-check no longer demands a written note (see needsNote), so it
+      // must stop announcing "Note required" — it reads as a refused form when the only thing asked for is
+      // the confirmation tick.
+      : status === STATUS.AUTHORIZED && !needsApproval(continuity)
+        ? 'authorized_deviation_small'
+        : status;
+  const statusKey = hintKey === 'exact_required_review' || hintKey === 'authorized_deviation_small' ? hintKey : status;
   // Keyed off statusKey, not status: a backward reading that is being ACCEPTED and sent for review must
   // not wear the red "you cannot submit this" jacket.
   const tone = statusKey ? CONTINUITY_TONE[statusKey] : null;
@@ -58,7 +63,9 @@ export default function OdometerContinuityHint({ previous, continuity, confirmed
   // At a review-not-block stage the note stops being mandatory (see needsNote) — but the box must not
   // vanish with the asterisk. A deviation that's on its way to a supervisor is exactly when the inspector
   // has something worth writing; we invite it instead of demanding it.
-  const noteInvited = !noteRequired && needsApproval(continuity);
+  // Same for a small strict-match drift: the box stays (the driver may well have something to say about
+  // why the dial moved), it just loses the asterisk.
+  const noteInvited = !noteRequired && (needsApproval(continuity) || status === STATUS.AUTHORIZED);
   return (
     <div className="mt-2 space-y-2">
       {previous != null && (
