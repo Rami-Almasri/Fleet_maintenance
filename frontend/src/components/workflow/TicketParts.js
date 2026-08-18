@@ -85,8 +85,14 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   // The escape hatch: the part genuinely is not in the catalog and has to be described in words.
   const [freeText, setFreeText] = useState(false);
 
+  // Guarded by a REF, not by the loading state: `catalogLoading` as a dependency made the effect
+  // cancel its own request — setting it ran the cleanup (alive = false) before the response landed,
+  // so the list was thrown away and the spinner never stopped.
+  const catalogFetched = useRef(false);
+
   useEffect(() => {
-    if (!open || catalog.length || catalogLoading) return undefined;
+    if (!open || catalogFetched.current) return undefined;
+    catalogFetched.current = true;
 
     let alive = true;
     setCatalogLoading(true);
@@ -98,11 +104,14 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
       })
       // A catalog that will not load must not block a request: the form falls back to free text,
       // which is worse data but still work the technician can finish.
-      .catch(() => { if (alive) setFreeText(true); })
-      .finally(() => { if (alive) setCatalogLoading(false); });
+      // A catalog that fails is worth retrying the next time the modal opens.
+      .catch(() => { catalogFetched.current = false; if (alive) setFreeText(true); })
+      // Unconditional: closing the modal mid-fetch must not leave the picker stuck on "loading"
+      // when it is opened again.
+      .finally(() => setCatalogLoading(false));
 
     return () => { alive = false; };
-  }, [open, catalog.length, catalogLoading]);
+  }, [open]);
 
   // Read at reset time without making the reset depend on the array's identity (see below).
   const faultOptionsRef = useRef(faultOptions);

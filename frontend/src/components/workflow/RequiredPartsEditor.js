@@ -15,7 +15,7 @@
 // flat array of line objects and `onChange` returns the next array — the parent owns the state and ships it
 // as `required_parts[]` on the report submit.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Icon from '../ui/Icon';
 import { useI18n } from '../../i18n/I18nContext';
 import CatalogPartPicker from '../parts/CatalogPartPicker';
@@ -48,8 +48,14 @@ export default function RequiredPartsEditor({ enabled, onToggle, value = [], onC
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState('');
 
+  // Guarded by a REF, not by the loading state: `catalogLoading` as a dependency made the effect
+  // cancel its own request — setting it ran the cleanup (alive = false) before the response landed,
+  // so the list was thrown away and the picker never stopped saying "loading".
+  const fetched = useRef(false);
+
   useEffect(() => {
-    if (!enabled || catalog.length || catalogLoading) return;
+    if (!enabled || fetched.current) return undefined;
+    fetched.current = true;
 
     let alive = true;
     setCatalogLoading(true);
@@ -59,11 +65,13 @@ export default function RequiredPartsEditor({ enabled, onToggle, value = [], onC
         // Retired parts are not offered: they are things the fleet has stopped fitting.
         setCatalog((data?.data?.parts || []).filter((p) => p.is_active));
       })
-      .catch(() => alive && setCatalogError(t('workflow.requiredParts.catalogError')))
-      .finally(() => alive && setCatalogLoading(false));
+      // A failure is worth retrying the next time the section is switched on.
+      .catch(() => { fetched.current = false; if (alive) setCatalogError(t('workflow.requiredParts.catalogError')); })
+      // Unconditional: switching the section off mid-fetch must not leave the picker stuck.
+      .finally(() => setCatalogLoading(false));
 
     return () => { alive = false; };
-  }, [enabled, catalog.length, catalogLoading, t]);
+  }, [enabled, t]);
 
   const patch = (i, next) => onChange(lines.map((l, idx) => (idx === i ? { ...l, ...next } : l)));
   const add = () => onChange([...lines, emptyLine()]);
