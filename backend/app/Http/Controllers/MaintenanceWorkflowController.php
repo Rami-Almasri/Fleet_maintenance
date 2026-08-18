@@ -3207,11 +3207,19 @@ class MaintenanceWorkflowController extends Controller
      * A non-base-currency purchase deliberately ships NO price: converting it here would invent an
      * exchange rate, and a wrong number on an invoice is worse than a blank one.
      */
-    public function billableParts(Maintenance $ticket)
+    public function billableParts(Maintenance $ticket, Request $request)
     {
-        return $this->run(function () use ($ticket) {
+        return $this->run(function () use ($ticket, $request) {
             $base  = strtoupper((string) config('parts_intelligence.base_currency', 'AED'));
             $items = [];
+
+            // WHOSE BILL IS BEING WRITTEN. A part is only billable on the bill of whoever supplied it,
+            // so the answer to "can this go on the invoice" depends on the invoice — the same part is
+            // billable here and refused next door. The form passes the garage it is currently writing
+            // for; with no vendor named nothing is ruled out, and the caller is simply browsing.
+            $billVendorId = $request->filled('vendor_id') ? (int) $request->input('vendor_id') : null;
+            $billInternal = filter_var($request->input('is_internal'), FILTER_VALIDATE_BOOL);
+            $ruling       = $request->filled('vendor_id') || $request->has('is_internal');
 
             // Identity of a row for dedupe: the catalog reference when there is one, else the wording
             // normalised the same way part identity normalises it.
@@ -3226,8 +3234,51 @@ class MaintenanceWorkflowController extends Controller
                 }
             };
 
-            foreach (\App\Models\PartPurchase::where('maintenance_id', $ticket->id)->with('task:id,symptom')->get() as $p) {
+            /**
+             * WHICH BILL A BOUGHT PART BELONGS ON.
+             *
+             * The mirror of PartInvoiceService::assertAttachable, answered before the biller can pick
+             * rather than after they save. The supplier who sold the part is the one who invoices it:
+             *
+             *   bought from a supplier  →  that supplier's parts invoice, never a garage bill
+             *   bought from garage X    →  garage X's bill, and no other garage's
+             *   already fitted          →  its cost line exists; billing it again charges it twice
+             *
+             * Returns a CODE and its parameters, never a sentence — the wording is the reader's,
+             * in the reader's language.
+             */
+            $verdict = function (\App\Models\PartPurchase $p) use ($ruling, $billVendorId, $billInternal) {
+                if ($p->maintenance_line_item_id !== null) {
+                    return ['ALREADY_BILLED', []];
+                }
+                if (! $ruling) {
+                    return [null, []];   // no bill named — nothing to rule against
+                }
+                if ($p->purchase_source === \App\Models\PartPurchase::SOURCE_SUPPLIER) {
+                    return ['SUPPLIER_SOURCED', array_filter([
+                        'supplier'        => $p->source_name ?: $p->sourceVendor?->name,
+                        'part_invoice_id' => $p->part_invoice_id,
+                    ], fn ($v) => $v !== null)];
+                }
+                // A garage buy with no garage recorded is history from before the source was captured:
+                // it cannot be shown to belong elsewhere, so it is not refused here.
+                if ($p->source_vendor_id && ($billInternal || $p->source_vendor_id !== $billVendorId)) {
+                    return ['OTHER_GARAGE', array_filter([
+                        'garage'    => $p->source_name ?: $p->sourceVendor?->name,
+                        'vendor_id' => $p->source_vendor_id,
+                    ], fn ($v) => $v !== null)];
+                }
+
+                return [null, []];
+            };
+
+            $purchases = \App\Models\PartPurchase::where('maintenance_id', $ticket->id)
+                ->with(['task:id,symptom', 'sourceVendor:id,name'])
+                ->get();
+
+            foreach ($purchases as $p) {
                 $isBase = strtoupper((string) $p->currency) === $base;
+                [$blockCode, $blockParams] = $verdict($p);
 
                 $take($identity($p->component_catalog_id, $p->part_name), [
                     'source'               => 'purchase',
@@ -3244,6 +3295,13 @@ class MaintenanceWorkflowController extends Controller
                     // Fitting a purchase already writes a cost line (PartWorkflowService::installPurchase).
                     // Offering it again would bill the same part twice.
                     'already_billed'       => $p->maintenance_line_item_id !== null,
+                    // WHERE IT CAME FROM — shown on the form, and the reason it can or cannot be billed.
+                    'purchase_source'      => $p->purchase_source,
+                    'source_vendor_id'     => $p->source_vendor_id,
+                    'source_name'          => $p->source_name ?: $p->sourceVendor?->name,
+                    'billable_here'        => $blockCode === null,
+                    'block_code'           => $blockCode,
+                    'block_params'         => $blockParams ?: null,
                 ]);
             }
 
@@ -3261,6 +3319,14 @@ class MaintenanceWorkflowController extends Controller
                     'finding_text'         => $r->task?->symptom,
                     'installed_on'         => null,
                     'already_billed'       => false,
+                    // Asked for, not yet bought: nobody has supplied it, so no supplier owns the bill
+                    // and there is nothing to refuse. The price is still missing and must be keyed.
+                    'purchase_source'      => null,
+                    'source_vendor_id'     => null,
+                    'source_name'          => null,
+                    'billable_here'        => true,
+                    'block_code'           => null,
+                    'block_params'         => null,
                 ]);
             }
 
@@ -3283,6 +3349,12 @@ class MaintenanceWorkflowController extends Controller
                     'finding_text'         => $rp->task?->symptom ?: $rp->finding_text,
                     'installed_on'         => null,
                     'already_billed'       => false,
+                    'purchase_source'      => null,
+                    'source_vendor_id'     => null,
+                    'source_name'          => null,
+                    'billable_here'        => true,
+                    'block_code'           => null,
+                    'block_params'         => null,
                 ]);
             }
 

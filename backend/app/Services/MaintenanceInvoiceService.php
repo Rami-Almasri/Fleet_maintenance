@@ -259,6 +259,28 @@ class MaintenanceInvoiceService
             $this->incorrect->assertLineNotOnIncorrectFault($finding, $incorrect, 'charged for parts or labour');
         }
 
+        // A PART ON THIS BILL MUST BE A PART THIS TICKET RECORDED, SUPPLIED BY WHOEVER IS BILLING.
+        // Checked for the whole batch before anything is written, and before the existing lines are
+        // deleted — a refused part leaves the invoice exactly as it was. {@see assertPartBillable}
+        $grandfathered = $this->partIdentityKeys($invoice->lineItems()->where('kind', MaintenanceLineItem::KIND_PART)->get());
+        foreach ($items as $row) {
+            if (! is_array($row) || ($row['kind'] ?? null) === MaintenanceLineItem::KIND_LABOR) {
+                continue;
+            }
+            if ($this->clean($row['description'] ?? null) === null) {
+                continue;
+            }
+            // ONLY WHAT WE KEY OURSELVES. A bill that arrives from OUTSIDE — the garage typing its own
+            // invoice into the public portal, an OCR'd receipt, an import — cannot name a row in our
+            // parts records, because whoever wrote it has never seen them. Demanding it would not make
+            // those bills more honest, it would make them unrecordable. Their wording is resolved
+            // strictly instead ({@see resolveCatalogPart}), which is the check that surface can pass.
+            if (($row['entry_source'] ?? 'manual') !== 'manual') {
+                continue;
+            }
+            $this->assertPartBillable($ticket, $invoice, $row, $grandfathered);
+        }
+
         // Map a finding text → the covered fault it names, so a line also feeds per-fault cost (best-effort).
         $taskBySymptom = $invoice->tasks()->get()
             ->keyBy(fn (MaintenanceTask $t) => mb_strtolower(trim((string) $t->symptom)));
@@ -310,6 +332,10 @@ class MaintenanceInvoiceService
                 'part_number'        => $isPart ? $this->clean($row['part_number'] ?? null) : null,
                 'component_catalog_id' => $catalogId,
                 'catalog_matched_by' => $matchedBy,
+                // WHERE the part came from — the purchase / request / required line it was billed from.
+                // Null only on a line kept from before the parts record existed.
+                'part_source'        => $isPart ? $this->cleanPartSource($row) : null,
+                'part_source_id'     => $isPart && $this->cleanPartSource($row) ? (int) $row['part_source_id'] : null,
                 'tire_brand'         => $isPart ? $this->clean($row['tire_brand'] ?? null) : null,
                 'tire_dot'           => $isPart ? $this->clean($row['tire_dot'] ?? null) : null,
                 'tire_tread_mm'      => $isPart && isset($row['tire_tread_mm']) && is_numeric($row['tire_tread_mm']) ? (float) $row['tire_tread_mm'] : null,
@@ -331,6 +357,144 @@ class MaintenanceInvoiceService
         // Re-derive this invoice's own total from the freshly written lines (bubbles up to the ticket).
         $invoice->load('lineItems');
         $invoice->recalcTotals();
+    }
+
+    /**
+     * WHOEVER SUPPLIED THE PART IS WHO BILLS FOR IT.
+     *
+     * The mirror of PartInvoiceService::assertAttachable, which has always refused a garage-bought part
+     * on a supplier's parts invoice. The other half was missing: nothing stopped a supplier-bought part —
+     * or one bought from a DIFFERENT garage — being keyed onto this garage's bill, which charges the
+     * ticket for it twice, once here and once on the parts invoice. Four rules:
+     *
+     *  1. NAMED. A part line must point at a part this ticket actually recorded (bought, requested, or
+     *     listed by the inspector). A price with no such record behind it is a number nobody can check.
+     *  2. THIS TICKET'S. The record must belong to this ticket, not another car's.
+     *  3. SUPPLIER PARTS BELONG TO THE SUPPLIER. A supplier-sourced purchase is billed on that supplier's
+     *     parts invoice — never here.
+     *  4. THE GARAGE THAT SUPPLIED IT. A part bought from garage X is billable on garage X's invoice and
+     *     no one else's, and an in-house bill carries no garage-supplied part at all.
+     *
+     * Plus the rule the ledger already had: a purchase that was FITTED wrote its own cost line, so
+     * billing it again would double it.
+     *
+     * A line already on this invoice is grandfathered — history keyed before parts were recorded stays
+     * editable, since refusing it would make old invoices impossible to correct.
+     *
+     * @param array<string,bool> $grandfathered identity keys of the part lines already on this invoice
+     */
+    private function assertPartBillable(Maintenance $ticket, MaintenanceInvoice $invoice, array $row, array $grandfathered): void
+    {
+        $source = $this->cleanPartSource($row);
+        $name   = $this->clean($row['description'] ?? null) ?: 'This part';
+
+        if ($source === null) {
+            // No origin given. Allowed only if the same part is already on this bill.
+            if (isset($grandfathered[$this->partIdentityKey($row['component_catalog_id'] ?? null, $row['description'] ?? null)])) {
+                return;
+            }
+
+            throw new WorkflowTransitionException(
+                "“{$name}” is not one of the parts recorded on this ticket. Add the part to the ticket first "
+                . '— buy it, request it, or list it as required — then bill it here, so the price on the '
+                . 'invoice is the price we recorded paying.',
+                ['field' => 'line_items', 'reason' => 'part_not_on_ticket'],
+            );
+        }
+
+        if ($source !== MaintenanceLineItem::PART_SOURCE_PURCHASE) {
+            // A request or a required line carries no supplier and no price — there is nothing to rule
+            // on beyond it belonging to this ticket.
+            $model = $source === MaintenanceLineItem::PART_SOURCE_REQUEST
+                ? \App\Models\PartRequest::class
+                : \App\Models\MaintenanceRequiredPart::class;
+
+            if (! $model::where('id', (int) $row['part_source_id'])->where('maintenance_id', $ticket->id)->exists()) {
+                throw new WorkflowTransitionException(
+                    "“{$name}” is not recorded on this ticket.",
+                    ['field' => 'line_items', 'reason' => 'part_not_on_ticket'],
+                );
+            }
+
+            return;
+        }
+
+        $purchase = \App\Models\PartPurchase::find((int) $row['part_source_id']);
+
+        if (! $purchase || (int) $purchase->maintenance_id !== (int) $ticket->id) {
+            throw new WorkflowTransitionException(
+                "“{$name}” is not a part bought for this ticket.",
+                ['field' => 'line_items', 'reason' => 'part_not_on_ticket'],
+            );
+        }
+
+        if ($purchase->purchase_source === \App\Models\PartPurchase::SOURCE_SUPPLIER) {
+            $supplier = $purchase->source_name ?: $purchase->sourceVendor?->name ?: 'a supplier';
+            throw new WorkflowTransitionException(
+                "“{$name}” was bought from {$supplier}, not from the garage — it belongs on that supplier's "
+                . 'parts invoice. Billing it here as well would charge the ticket for it twice.',
+                ['field' => 'line_items', 'reason' => 'supplier_sourced', 'purchase_id' => $purchase->id],
+            );
+        }
+
+        if ($purchase->source_vendor_id) {
+            if ($invoice->is_internal) {
+                $garage = $purchase->source_name ?: $purchase->sourceVendor?->name ?: 'a garage';
+                throw new WorkflowTransitionException(
+                    "“{$name}” was supplied by {$garage}, so it cannot go on an in-house bill — that garage "
+                    . 'invoices for the parts it supplied.',
+                    ['field' => 'line_items', 'reason' => 'other_garage', 'purchase_id' => $purchase->id],
+                );
+            }
+            if ((int) $purchase->source_vendor_id !== (int) $invoice->vendor_id) {
+                $garage = $purchase->source_name ?: $purchase->sourceVendor?->name ?: 'another garage';
+                throw new WorkflowTransitionException(
+                    "“{$name}” was supplied by {$garage}. It belongs on that garage's invoice, not this one.",
+                    ['field' => 'line_items', 'reason' => 'other_garage', 'purchase_id' => $purchase->id],
+                );
+            }
+        }
+
+        // Fitting the part already wrote its cost line — unless that very line is one of THIS invoice's,
+        // which is what an edit of this same bill looks like.
+        if ($purchase->maintenance_line_item_id) {
+            $ownLine = MaintenanceLineItem::where('id', $purchase->maintenance_line_item_id)
+                ->where('maintenance_invoice_id', $invoice->id)->exists();
+
+            if (! $ownLine) {
+                throw new WorkflowTransitionException(
+                    "“{$name}” was already billed when it was fitted. Billing it here would charge it twice.",
+                    ['field' => 'line_items', 'reason' => 'already_billed', 'purchase_id' => $purchase->id],
+                );
+            }
+        }
+    }
+
+    /** The submitted origin, or null when the row names none / names one we do not recognise. */
+    private function cleanPartSource(array $row): ?string
+    {
+        $source = $row['part_source'] ?? null;
+        $id     = $row['part_source_id'] ?? null;
+
+        return in_array($source, MaintenanceLineItem::PART_SOURCES, true) && is_numeric($id) && (int) $id > 0
+            ? $source : null;
+    }
+
+    /** "Same part?" for grandfathering — the catalog reference where there is one, else the wording. */
+    private function partIdentityKey($catalogId, $description): string
+    {
+        return $catalogId ? 'c:' . (int) $catalogId : 'n:' . mb_strtolower(trim((string) $description));
+    }
+
+    /** @return array<string,bool> */
+    private function partIdentityKeys($lines): array
+    {
+        $keys = [];
+        foreach ($lines as $line) {
+            $keys[$this->partIdentityKey($line->component_catalog_id, $line->description)] = true;
+        }
+
+        return $keys;
     }
 
     /**

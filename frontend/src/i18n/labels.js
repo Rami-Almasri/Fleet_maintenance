@@ -935,6 +935,23 @@ const en = {
   // One contract (/contracts/:id). `fields.*` are the label column of the Section grids — the
   // OfficeManager contract record laid out field by field.
   contractDetail: {
+    // Every bill raised against the contract — the garages' and the suppliers'.
+    repairInvoices: {
+      title: 'Repair invoices',
+      garageHeading: 'Billed by the garage',
+      supplierHeading: 'Billed by the parts supplier',
+      totals: { garage: 'Garage work', supplier: 'Parts', all: 'Billed in total' },
+      inHouse: 'In-house (no garage)',
+      unnamedGarage: 'Garage not named',
+      flagged: 'Needs review',
+      partsLabor: 'Parts {parts} · Labour {labor}',
+      sharedInvoice: 'Part of a {total} invoice covering other cars too',
+      openTicket: 'Open the ticket',
+      openInvoice: 'Open the invoice',
+      empty: 'No repair or parts invoices have been raised against this contract.',
+      error: 'Couldn’t load the invoices for this contract.',
+      origin: 'From the garage invoices recorded on this contract’s tickets, and the supplier parts invoices covering those tickets’ parts.',
+    },
     netProfit: 'Net Profit',
     reconciling: 'Reconciling against accounting…',
     reconcileFailed: 'Couldn’t reconcile:',
@@ -2298,6 +2315,18 @@ const en = {
         request: 'Ordered',
         required: 'Requested',
       },
+      // Where the part came from — the fact that decides whose bill it belongs on.
+      fromGarage: 'from {name}',
+      fromSupplier: 'from {name} (supplier)',
+      priceFromPurchase: 'recorded price',
+      // Why a part cannot go on THIS bill. Whoever supplied it is who invoices it.
+      blocked: {
+        ALREADY_BILLED: 'Already billed when fitted',
+        SUPPLIER_SOURCED: 'Goes on {name}’s parts invoice',
+        OTHER_GARAGE: 'Goes on {name}’s invoice',
+      },
+      noRecordedParts: 'No parts have been recorded for this repair yet. Record what was bought, requested or found needed on the ticket first — then it can be billed here with the price we recorded.',
+      emptyFromTicket: 'No parts on this bill yet — add them from the list above.',
       none: 'None',
       partsTotal: 'Parts',
       laborTotal: 'Labor',
@@ -4713,6 +4742,22 @@ const ar = {
   },
   // ── One contract. `fields.*` is the OfficeManager contract record, field by field.
   contractDetail: {
+    repairInvoices: {
+      title: 'فواتير الإصلاح',
+      garageHeading: 'فواتير الورشة',
+      supplierHeading: 'فواتير مورّد القطع',
+      totals: { garage: 'أعمال الورشة', supplier: 'القطع', all: 'إجمالي المُفوتر' },
+      inHouse: 'داخلي (بدون ورشة)',
+      unnamedGarage: 'الورشة غير مُسمّاة',
+      flagged: 'بحاجة إلى مراجعة',
+      partsLabor: 'قطع {parts} · عمالة {labor}',
+      sharedInvoice: 'جزء من فاتورة بقيمة {total} تشمل سيارات أخرى',
+      openTicket: 'فتح التذكرة',
+      openInvoice: 'فتح الفاتورة',
+      empty: 'لم تُسجَّل أي فواتير إصلاح أو قطع على هذا العقد.',
+      error: 'تعذّر تحميل فواتير هذا العقد.',
+      origin: 'من فواتير الورش المُسجّلة على تذاكر هذا العقد، ومن فواتير قطع المورّدين التي تغطي قطع تلك التذاكر.',
+    },
     netProfit: 'صافي الربح',
     reconciling: 'جارٍ المطابقة مع المحاسبة…',
     reconcileFailed: 'تعذّرت المطابقة:',
@@ -7167,6 +7212,16 @@ const ar = {
         request: 'مطلوبة شراءً',
         required: 'مطلوبة',
       },
+      fromGarage: 'من {name}',
+      fromSupplier: 'من {name} (مورّد)',
+      priceFromPurchase: 'السعر المُسجّل',
+      blocked: {
+        ALREADY_BILLED: 'حوسِب عليها عند التركيب',
+        SUPPLIER_SOURCED: 'تُدرج في فاتورة قطع {name}',
+        OTHER_GARAGE: 'تُدرج في فاتورة {name}',
+      },
+      noRecordedParts: 'لم تُسجَّل أي قطع لهذا الإصلاح بعد. سجّل ما اشتُري أو طُلب أو تبيّن أنه لازم على التذكرة أولاً — عندها يمكن إدراجه هنا بالسعر الذي سجّلناه.',
+      emptyFromTicket: 'لا قطع على هذه الفاتورة بعد — أضِفها من القائمة أعلاه.',
       none: 'لا شيء',
       partsTotal: 'القطع',
       laborTotal: 'العمالة',

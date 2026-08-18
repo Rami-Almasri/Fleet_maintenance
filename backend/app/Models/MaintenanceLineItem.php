@@ -44,6 +44,16 @@ class MaintenanceLineItem extends Model
      */
     public const WORK_KINDS = [self::KIND_PART, self::KIND_LABOR];
 
+    /**
+     * The three records a billed part can come from, most certain first — a purchase carries a price
+     * that was actually paid, a request carries only what was asked for, and a required line is the
+     * inspector's technical call. {@see part_source} names which one; part_source_id points at the row.
+     */
+    public const PART_SOURCE_PURCHASE = 'purchase';
+    public const PART_SOURCE_REQUEST  = 'request';
+    public const PART_SOURCE_REQUIRED = 'required';
+    public const PART_SOURCES = [self::PART_SOURCE_PURCHASE, self::PART_SOURCE_REQUEST, self::PART_SOURCE_REQUIRED];
+
     protected $fillable = [
         'maintenance_id',
         'maintenance_invoice_id',
@@ -59,6 +69,11 @@ class MaintenanceLineItem extends Model
         // parts, comparing prices or measuring lifespan joins on.
         'component_catalog_id',
         'catalog_matched_by',
+        // WHERE the billed part came from — the purchase paid for, the request raised, or the
+        // inspector's required-part line. See PART_SOURCES: this is what the price on the line was
+        // filled from, and what proves the part belongs on THIS bill rather than a supplier's.
+        'part_source',
+        'part_source_id',
         'tire_brand',
         'tire_dot',
         'tire_tread_mm',

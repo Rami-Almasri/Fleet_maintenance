@@ -8,6 +8,7 @@ use App\Models\Maintenance;
 use App\Http\Requests\StoreContractRequest;
 use App\Http\Requests\UpdateContractRequest;
 use App\Http\Resources\ContractResource;
+use App\Services\ContractRepairInvoiceService;
 use App\Services\ContractService;
 use App\Services\MaintenanceVisitJourneyService;
 use Illuminate\Http\Request;
@@ -131,6 +132,29 @@ class ContractController extends Controller
             return ResponseHelper::SuccessResponse(
                 $journey->forContract($contract),
                 'Contract journey retrieved successfully',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * EVERY BILL RAISED AGAINST THIS CONTRACT — the garage's, and the supplier's.
+     *
+     * The contract page could show what the visit cost but not the paper behind it: the repair invoices
+     * lived on their tickets and the parts invoices on the supplier, so answering "what were we billed
+     * for this contract?" meant opening each ticket and adding up by hand. This returns both kinds,
+     * each openable, with the share of a shared supplier bill that is actually this contract's.
+     *
+     * Read-only. A rental contract with no repairs comes back empty, which is the honest answer.
+     */
+    public function repairInvoices(Contract $contract, ContractRepairInvoiceService $invoices)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                $invoices->forContract($contract),
+                'Contract repair invoices retrieved successfully',
                 200
             );
         } catch (\Exception $e) {

@@ -27,6 +27,10 @@ class MaintenanceLineItemResource extends JsonResource
             // id is null is history typed before the picker and is shown as still needing a part.
             'component_catalog_id' => $li->component_catalog_id,
             'catalog_matched_by'   => $li->catalog_matched_by,
+            // WHERE the part came from. The editor sends these back unchanged on an edit, so a saved
+            // line keeps its origin instead of re-entering as an unbacked price.
+            'part_source'        => $li->part_source,
+            'part_source_id'     => $li->part_source_id,
             // Lightweight tire tracking (only populated when the part's category is 'tyres').
             'tire_brand'         => $li->tire_brand,
             'tire_dot'           => $li->tire_dot,

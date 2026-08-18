@@ -65,6 +65,11 @@ export default function LineItemsEditor({
   // required, requested, bought — and offers them for one-tap billing. Omitted by the public portal,
   // which has no ticket context and no login.
   ticketId = null,
+  // WHOSE BILL this is. A part is billable only on the bill of whoever supplied it, so the ticket's
+  // parts are ruled against the garage being billed: a supplier-bought part, or one bought from a
+  // different garage, is shown with the reason it belongs elsewhere instead of an Add button.
+  vendorId = null,
+  isInternal = false,
   // Invoice-validation mode — when true, the editor also collects the garage's printed "Receipt total"
   // and reconciles it against the itemised sum (mandatory variance note on any mismatch). Off by default
   // so the plain garage "mark ready" step keeps the light editor.
@@ -135,11 +140,16 @@ export default function LineItemsEditor({
     if (!ticketId) return undefined;
 
     let alive = true;
-    api.get(`/maintenance-tickets/${ticketId}/billable-parts`)
+    // The garage being billed travels with the request: the same part is billable on its own
+    // supplier's bill and refused on anyone else's, so the verdict cannot be computed without it.
+    const params = { is_internal: isInternal ? 1 : 0 };
+    if (!isInternal && vendorId) params.vendor_id = vendorId;
+
+    api.get(`/maintenance-tickets/${ticketId}/billable-parts`, { params })
       .then(({ data }) => alive && setTicketParts(data?.data?.parts || []))
-      .catch(() => {});   // a missing suggestion list must never block keying the invoice by hand
+      .catch(() => {});   // a missing list must never wedge the form — the save is still guarded server-side
     return () => { alive = false; };
-  }, [ticketId]);
+  }, [ticketId, vendorId, isInternal]);
 
   const partById = useMemo(() => {
     const map = {};
@@ -206,6 +216,16 @@ export default function LineItemsEditor({
   // No category is guessed at add time — the part that is about to be picked will say what it is.
   const addPart = () => hasFindings && set([...rows, { ...emptyPart(), finding_text: defaultFinding }]);
 
+  // A PART IS BILLED FROM THE RECORD OF IT, NOT TYPED FROM MEMORY.
+  //
+  // Where there is a ticket, its parts ARE the vocabulary: what was bought, requested, or listed by
+  // the inspector. Typing a part straight onto the bill let a price be invoiced that no purchase
+  // backs, which is exactly how the invoice and the parts ledger drift apart — and it let a part the
+  // supplier already billed be charged a second time by the garage. So the blank Add is offered only
+  // where there is no ticket to draw from: the public garage portal, which has no login and no
+  // ticket context, and must still be able to key its own bill.
+  const manualPartsAllowed = !ticketId;
+
   // Is this ticket part already on the form? Matched on the catalog reference where both sides have
   // one, else on wording — the same two-step the rest of the app uses to answer "same part?".
   const alreadyOnForm = (item) => parts.some((r) => (
@@ -230,6 +250,17 @@ export default function LineItemsEditor({
       quantity: item.quantity ? String(item.quantity) : '1',
       unit_price: item.unit_price != null ? String(item.unit_price) : '',
       installed_on: item.installed_on || '',
+      // The record this line is billed FROM — sent with the line, and what the server checks the
+      // part against. It is also what makes the price on the row a recorded fact rather than typing.
+      part_source: item.source,
+      part_source_id: item.id,
+      // Shown on the row so the bill can be read back to its origin without opening the parts page.
+      _origin: item.source === 'purchase'
+        ? { kind: item.purchase_source, name: item.source_name }
+        : { kind: item.source, name: null },
+      // A purchase carries the price that was actually paid — the row shows it rather than asking
+      // for it again. A request or a required line has no price yet, so that one is still keyed.
+      _priceLocked: item.source === 'purchase' && item.unit_price != null,
     }]);
   };
   const addLabor = () => hasFindings && set([...rows, { ...emptyLabor(), finding_text: defaultFinding }]);
@@ -299,9 +330,11 @@ export default function LineItemsEditor({
               <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-indigo-600">{parts.length}</span>
             )}
           </span>
-          <button type="button" onClick={addPart} disabled={!hasFindings} className="rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent">
-            {t('workflow.lineItem.addPart')}
-          </button>
+          {manualPartsAllowed && (
+            <button type="button" onClick={addPart} disabled={!hasFindings} className="rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent">
+              {t('workflow.lineItem.addPart')}
+            </button>
+          )}
         </div>
 
         <div className="p-3">
@@ -333,8 +366,20 @@ export default function LineItemsEditor({
                     {item.unit_price != null && (
                       <span className="text-xs font-semibold tabular-nums text-slate-600">{money(item.unit_price)}</span>
                     )}
-                    {item.already_billed ? (
-                      <span className="text-[11px] font-medium text-emerald-600">{t('workflow.lineItem.alreadyBilled')}</span>
+                    {/* WHO SUPPLIED IT — the fact that decides whose bill it belongs on. */}
+                    {item.source_name && (
+                      <span className="text-[11px] text-slate-400">
+                        {t(item.purchase_source === 'supplier' ? 'workflow.lineItem.fromSupplier' : 'workflow.lineItem.fromGarage', { name: item.source_name })}
+                      </span>
+                    )}
+                    {item.block_code ? (
+                      // Refused here, with the reason — a part that belongs on someone else's bill is
+                      // not hidden, because the biller looking for it needs to know where it went.
+                      <span className={`text-[11px] font-medium ${item.block_code === 'ALREADY_BILLED' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {t(`workflow.lineItem.blocked.${item.block_code}`, {
+                          name: item.block_params?.supplier || item.block_params?.garage || '',
+                        })}
+                      </span>
                     ) : used ? (
                       <span className="text-[11px] font-medium text-slate-400">{t('workflow.lineItem.partAdded')}</span>
                     ) : (
@@ -355,8 +400,18 @@ export default function LineItemsEditor({
           </div>
         )}
 
+        {/* Nothing recorded on the ticket AND nothing billable by hand: say so plainly, and say what
+            to do about it, rather than leaving an empty box that looks broken. */}
+        {!manualPartsAllowed && ticketParts.length === 0 && (
+          <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-700">
+            {t('workflow.lineItem.noRecordedParts')}
+          </p>
+        )}
+
         {parts.length === 0 ? (
-          <p className="px-1 py-2 text-xs text-slate-400">{t('workflow.lineItem.empty')}</p>
+          <p className="px-1 py-2 text-xs text-slate-400">
+            {t(manualPartsAllowed ? 'workflow.lineItem.empty' : 'workflow.lineItem.emptyFromTicket')}
+          </p>
         ) : (
           <ul className="space-y-3">
             {parts.map((r) => (
@@ -373,13 +428,30 @@ export default function LineItemsEditor({
                 <div className="grid grid-cols-12 gap-2">
                   <div className="col-span-12 sm:col-span-8">
                     <label className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.lineItem.partName')}</label>
-                    <CatalogPartPicker
-                      catalog={partsCatalog}
-                      loading={partsLoading}
-                      legacyText={!r.component_catalog_id ? r.description : ''}
-                      value={r.component_catalog_id ? { component_catalog_id: r.component_catalog_id, part_name: r.description, part_number: r.part_number } : null}
-                      onChange={(picked) => pickPart(r, picked)}
-                    />
+                    {r.part_source ? (
+                      // Billed FROM a record. The part is settled — re-picking it here would break the
+                      // link to the purchase whose price this line is charging, so it is shown as the
+                      // fact it is, with where it came from beside it. Remove the row to undo.
+                      <div className="rounded-lg border border-slate-200 bg-slate-100/70 px-2.5 py-2">
+                        <div className="flex items-center gap-1.5 text-sm text-slate-700">
+                          <Icon.Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                          <span className="min-w-0 truncate" dir="auto">{r.description}</span>
+                        </div>
+                        <p className="mt-0.5 ps-5 text-[11px] text-slate-500">
+                          {r._origin?.name
+                            ? t(r._origin.kind === 'supplier' ? 'workflow.lineItem.fromSupplier' : 'workflow.lineItem.fromGarage', { name: r._origin.name })
+                            : t(`workflow.lineItem.partSource.${r.part_source}`)}
+                        </p>
+                      </div>
+                    ) : (
+                      <CatalogPartPicker
+                        catalog={partsCatalog}
+                        loading={partsLoading}
+                        legacyText={!r.component_catalog_id ? r.description : ''}
+                        value={r.component_catalog_id ? { component_catalog_id: r.component_catalog_id, part_name: r.description, part_number: r.part_number } : null}
+                        onChange={(picked) => pickPart(r, picked)}
+                      />
+                    )}
                   </div>
                   <div className="col-span-12 sm:col-span-4">
                     <Input label={t('workflow.lineItem.partNumber')} value={r.part_number} onChange={(e) => update(r._k, { part_number: e.target.value })} placeholder="OEM / SKU" />
@@ -393,10 +465,24 @@ export default function LineItemsEditor({
                   </div>
                   <span className="pb-2 text-sm text-slate-300">×</span>
                   <div className="w-28">
-                    <Input label={t('workflow.lineItem.unitPrice')} type="number" min="0" step="0.01" value={r.unit_price} onChange={(e) => update(r._k, { unit_price: e.target.value })} placeholder="0.00" />
+                    {r._priceLocked ? (
+                      // THE PRICE WE RECORDED PAYING. Re-typing it is how the bill and the parts
+                      // ledger end up disagreeing about the same part, so the recorded figure stands.
+                      <>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.lineItem.unitPrice')}</label>
+                        <div className="rounded-lg border border-slate-200 bg-slate-100/70 px-2.5 py-2 text-sm tabular-nums text-slate-700">
+                          {Number(r.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </>
+                    ) : (
+                      <Input label={t('workflow.lineItem.unitPrice')} type="number" min="0" step="0.01" value={r.unit_price} onChange={(e) => update(r._k, { unit_price: e.target.value })} placeholder="0.00" />
+                    )}
                   </div>
                   <span className="pb-2 text-sm text-slate-300">=</span>
                   <span className="pb-2 text-sm font-semibold tabular-nums text-slate-700">{money(lineAmount(r))}</span>
+                  {r._priceLocked && (
+                    <span className="pb-2 text-[10px] uppercase tracking-wide text-slate-400">{t('workflow.lineItem.priceFromPurchase')}</span>
+                  )}
                 </div>
 
                 {/* Details — durability + Odoo grouping, boxed to match the pricing strip above. */}
@@ -607,6 +693,13 @@ export function serializeLineItems(rows = []) {
         // The part's identity. Sent even though the server can re-resolve the wording, because a
         // human's pick is a stronger claim than a text match and is recorded as such.
         if (r.component_catalog_id) base.component_catalog_id = r.component_catalog_id;
+        // WHERE the part came from — the ticket record it was billed from. The server checks this
+        // belongs to the ticket and to the garage being billed, so a part bought elsewhere cannot
+        // land on this bill. A legacy line carries none and is judged on its own history.
+        if (r.part_source && r.part_source_id) {
+          base.part_source = r.part_source;
+          base.part_source_id = Number(r.part_source_id);
+        }
         if (r.part_number) base.part_number = r.part_number.trim();
         if (r.category_key) base.category_key = r.category_key;
         if (r.installed_on) base.installed_on = r.installed_on;

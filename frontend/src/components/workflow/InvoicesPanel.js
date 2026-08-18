@@ -419,13 +419,16 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, presetTaskId
           )}
         </div>
 
-        {/* Parts + labor lines, reconciled against this invoice's receipt total */}
+        {/* Parts + labor lines, reconciled against this invoice's receipt total. The garage is passed
+            down because only the parts THIS garage supplied may be billed on its invoice. */}
         <LineItemsEditor
           value={lineItems}
           onChange={setLineItems}
           catalog={findingsCatalog}
           findings={ticket.findings || []}
           ticketId={ticket.id}
+          vendorId={isInternal ? null : vendorId}
+          isInternal={isInternal}
           requireReceipt
           receiptTotal={receiptTotal}
           onReceiptTotalChange={setReceiptTotal}

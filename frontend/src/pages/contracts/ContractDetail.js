@@ -10,6 +10,7 @@ import ExchangeChainPanel from '../../components/ExchangeChainPanel';
 import VisitJourneyPanel from '../../components/contracts/VisitJourneyPanel';
 import WorkshopEvents from '../../components/WorkshopEvents';
 import ContractInvoices from '../../components/ContractInvoices';
+import ContractRepairInvoices from '../../components/contracts/ContractRepairInvoices';
 import ContractPayments from '../../components/ContractPayments';
 import BillingReconciliation from '../../components/BillingReconciliation';
 import ReadinessPanel from '../../components/readiness/ReadinessPanel';
@@ -517,6 +518,11 @@ export default function ContractDetail() {
             expectedReturn={c.expected_return_date}
           />
         )}
+
+        {/* Every bill raised against this contract — the garages' repair invoices and the suppliers'
+            parts invoices. Shown on ANY contract, not just maintenance ones: a repair billed during a
+            rental belongs to that rental too, and that is exactly the case nobody could see before. */}
+        {SHOW_FINANCIALS && <ContractRepairInvoices contractId={c.id} />}
 
         {/* Service Records (always — the money-free technical log) + payments (financials only). */}
         <div className={`grid grid-cols-1 gap-6 ${SHOW_FINANCIALS ? 'xl:grid-cols-2' : ''}`}>

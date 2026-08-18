@@ -13,6 +13,7 @@
 // garage's own invoice, and keying them here too would charge the ticket twice; the backend refuses it.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import { useToast } from '../components/ui/Toast';
 import { usePermissions } from '../hooks/usePermissions';
@@ -351,6 +352,17 @@ export default function PartInvoices() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Arriving from a link that names an invoice (the contract page lists the bills raised against a
+  // contract and links each one here) — open that invoice rather than dropping the reader on a list
+  // and making them find it again. Runs once the rows are in; an id that isn't here is ignored.
+  const [params] = useSearchParams();
+  const wanted = params.get('invoice');
+  useEffect(() => {
+    if (!wanted || !rows.length) return;
+    const row = rows.find((r) => String(r.id) === String(wanted));
+    if (row) setEditing(row);
+  }, [wanted, rows]);
 
   useEffect(() => {
     api.get('/Vendor', { params: { per_page: 200 } })

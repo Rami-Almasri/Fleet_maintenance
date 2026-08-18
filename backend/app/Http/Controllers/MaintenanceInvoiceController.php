@@ -122,6 +122,11 @@ class MaintenanceInvoiceController extends Controller
             // The catalog part a part line fitted — its identity, as opposed to the billed wording.
             'line_items.*.component_catalog_id' => ['nullable', 'integer', Rule::exists('component_catalog', 'id')],
             'line_items.*.category_key' => ['nullable', 'string', 'max:64'],
+            // WHERE a billed part came from: the purchase / request / required-part row it was billed
+            // from. The service checks the pair actually belongs to this ticket and to this garage —
+            // the shape is all that is checked here.
+            'line_items.*.part_source'    => ['nullable', Rule::in(MaintenanceLineItem::PART_SOURCES)],
+            'line_items.*.part_source_id' => ['nullable', 'integer', 'min:1'],
             'line_items.*.quantity'     => ['nullable', 'numeric', 'min:0'],
             'line_items.*.unit_price'   => ['nullable', 'numeric', 'min:0'],
             'line_items.*.installed_on' => ['nullable', 'date'],
@@ -139,9 +144,25 @@ class MaintenanceInvoiceController extends Controller
         ];
     }
 
-    /** Narrow the validated request to the service payload (drops the file — passed separately). */
+    /**
+     * Narrow the validated request to the service payload (drops the file — passed separately).
+     *
+     * THIS ENDPOINT IS THE MANUAL SURFACE, and says so rather than taking the client's word for it.
+     * A line's `entry_source` decides whether it must name a part recorded on the ticket: lines keyed
+     * here must, while a bill arriving from the public garage portal or an OCR'd receipt cannot and is
+     * exempt. Because `line_items` validates as a whole array, an unvalidated `entry_source` would ride
+     * along inside it — and a client that sent 'ocr' would exempt itself from the check. So it is
+     * stripped here and the service applies its own default.
+     */
     private function payload(array $data): array
     {
+        if (isset($data['line_items']) && is_array($data['line_items'])) {
+            $data['line_items'] = array_map(
+                fn ($line) => is_array($line) ? collect($line)->except('entry_source')->all() : $line,
+                $data['line_items'],
+            );
+        }
+
         return collect($data)->except('receipt_photo')->all();
     }
 

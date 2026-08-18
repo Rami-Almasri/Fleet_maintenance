@@ -275,6 +275,10 @@ Route::middleware('auth:sanctum')->prefix('Contract')->controller(ContractContro
     // Readable by maintenance viewers too: the people who lived the visit shouldn't need contract rights
     // to read it back.
     Route::get('/{contract}/journey', 'journey')->middleware('permission:contracts.view|maintenance.view');
+    // Every bill raised against the contract — the garages' repair invoices and the suppliers' parts
+    // invoices, which until now could only be found one ticket at a time. Same readership as the
+    // journey: the people who worked the visit can read back what it was billed at.
+    Route::get('/{contract}/repair-invoices', 'repairInvoices')->middleware('permission:contracts.view|maintenance.view');
     Route::post('/', 'store')->middleware('permission:contracts.manage');
     Route::post('/{contract}', 'update')->middleware('permission:contracts.manage');
     Route::delete('/{contract}', 'destroy')->middleware('permission:contracts.manage');
