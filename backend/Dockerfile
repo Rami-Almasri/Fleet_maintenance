@@ -31,6 +31,13 @@ RUN install-php-extensions \
         zip \
         intl
 
+# mysqldump, for `db:backup` and the pre-flight backup that `fleet:refresh --wipe`
+# refuses to run without. The PHP image carries a driver, not a client, so that gate
+# failed closed on the server with "mysqldump not found" — correct behaviour, but it
+# makes the one command whose whole purpose is to be recoverable the one command that
+# cannot run. mariadb-client provides the mysqldump entrypoint on Alpine.
+RUN apk add --no-cache mariadb-client
+
 WORKDIR /var/www/html
 
 # Production PHP config: OPcache tuning + upload limits (large repair videos)
