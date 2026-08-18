@@ -59,6 +59,17 @@ class DatabaseSeeder extends Seeder
         // stamps onto the fault/damage catalogs. Runs AFTER them: stampPolicy() reads their rows.
         $this->call(VehicleLocationSeeder::class);
 
+        // Plate-code dictionary (OM PlateColorNo → plate letter), from the version-controlled CSV.
+        // Both of these seeders existed and were simply never called here, so a from-zero rebuild
+        // came up with an empty plate dictionary and an empty source registry while every other
+        // catalogue was present — the kind of gap that only shows once the rebuild is the only copy.
+        $this->call(PlateCodeSeeder::class);
+
+        // Knowledge-source registry — which bodies of documentation exist and how each may lawfully
+        // be used. The retriever reads `access` off these rows, so an empty table is not a smaller
+        // knowledge base, it is a retriever with nothing to cite.
+        $this->call(KnowledgeSourceSeeder::class);
+
         // A bootstrap super-admin so there's always one account that can do
         // everything (and promote others). Credentials come from the environment,
         // NOT a hardcoded default, and re-seeding NEVER resets the password of an
