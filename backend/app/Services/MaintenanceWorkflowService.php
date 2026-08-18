@@ -4333,7 +4333,7 @@ class MaintenanceWorkflowService
             $this->assertNoDecrease($ticket, $actor, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, $reportNote, 'report_odometer', 'start-of-drive reading');
         }
 
-        return DB::transaction(function () use ($ticket, $payload, $target, $requiresMaintenance, $actor, $faultSeverity, $causeChoices, $repairLocation, $deferrableForRental, $reportOdo, $reportNote, $reportConfirmed) {
+        return DB::transaction(function () use ($ticket, $payload, $target, $requiresMaintenance, $actor, $faultSeverity, $causeChoices, $detailChoices, $repairLocation, $deferrableForRental, $reportOdo, $reportNote, $reportConfirmed) {
             $ticket->test_drive_report = $payload;
 
             // The inspector's symptoms become first-class FINDINGS, source-stamped so they persist and
