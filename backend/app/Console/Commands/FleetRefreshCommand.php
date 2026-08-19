@@ -107,10 +107,20 @@ class FleetRefreshCommand extends Command
             $this->setPhase($run, 'Invoices (API)');
             $result['invoices'] = $this->guard('invoices', fn () => $om->importInvoices(null, [], $this->progress($run)), $errors);
 
-            // Long, one-call-per-customer phase; the progress callback keeps the run row's
-            // heartbeat alive so the orphan guard never flags a slow-but-healthy job as dead.
+            // Customer names, in ONE request. This phase used to call enrichCustomers(), which
+            // fires a request per nameless stub — and enrichCustomersBulk() exists precisely
+            // because that behaves like a self-inflicted DDoS against OfficeManager's
+            // intermittent 503s. On the 2026-08-18 rebuild the per-customer path ran for two
+            // hours and reported "+0 named, 15438 not found": every single lookup failed, and
+            // because a phase that fails on every row still counts as a phase that ran, the
+            // summary printed [ OK ] over 15k customers left as nameless stubs. The bulk list
+            // endpoint filled all 15,442 immediately afterwards.
+            //
+            // It also sat in front of the maintenance-log import, so those two wasted hours were
+            // hours with an empty maintenance board. Cheap phase first, and the expensive one
+            // can no longer hold the sheet imports hostage.
             $this->setPhase($run, 'Customer names (API)');
-            $result['customers'] = $this->guard('customers', fn () => $om->enrichCustomers(null, true, $this->progress($run)), $errors);
+            $result['customers'] = $this->guard('customers', fn () => $om->enrichCustomersBulk($this->progress($run)), $errors);
 
             // Maintenance log (sheet): each car's repair status / garage / issues / maintenance
             // type. OfficeManager carries none of this, so the /maintenance board reads it from
@@ -254,7 +264,11 @@ class FleetRefreshCommand extends Command
             'vehicles'      => "{$c('updated')} enriched" . ($c('unmatched') ? ", {$c('unmatched')} unmatched" : ''),
             'contracts'     => "+{$c('created')} new / {$c('updated')} updated" . ($c('foreign_skipped') ? ", {$c('foreign_skipped')} other-company skipped" : ''),
             'invoices'      => "+{$c('created')} new / {$c('updated')} updated",
-            'customers'     => "+{$c('updated')} named" . ($c('failed') ? ", {$c('failed')} not found" : ''),
+            // enrichCustomersBulk returns updated/masked/missing/target — NOT the old 'failed'.
+            // Reading a key the phase never returns is how "+0 named" once printed as [ OK ].
+            'customers'     => "+{$c('updated')} named of {$c('target')}"
+                . ($c('masked') ? ", {$c('masked')} masked at source" : '')
+                . ($c('missing') ? ", {$c('missing')} not in the list" : ''),
             'maintenance'   => "+{$c('imported')} new / {$c('updated')} updated" . ($c('unmatched_cars') ? ", {$c('unmatched_cars')} unmatched" : ''),
             'customer_cases' => "+{$c('imported')} new / {$c('updated')} updated" . ($c('unmatched_cars') ? ", {$c('unmatched_cars')} unmatched" : ''),
             'oil_change'    => "{$c('updated')} updated" . ($c('unmatched') ? ", {$c('unmatched')} unmatched" : ''),
