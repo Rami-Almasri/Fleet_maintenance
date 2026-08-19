@@ -108,7 +108,10 @@ function flowOf(r, t) {
 
 const STATUS_OPTIONS = ['accepted', 'pending', 'reviewed', 'rejected'];
 
-export default function MileageDiscrepancies() {
+// `embedded` renders this as a tab of /mileage — the Fuel & Mileage hub supplies the page title and
+// the tab strip, so the standalone header and breadcrumb are dropped. Same convention as the other
+// three odometer tools on that page.
+export default function MileageDiscrepancies({ embedded = false }) {
   const { t, lang } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -184,16 +187,18 @@ export default function MileageDiscrepancies() {
   };
 
   return (
-    <div className="py-8">
+    <div className={embedded ? '' : 'py-8'}>
       <div className="mx-auto max-w-[1280px] space-y-6 px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div>
-          <Link to="/apps/reports" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
-            <Icon.ArrowRight className="h-3 w-3 rotate-180 rtl:-scale-x-100" /> {t('Reports')}
-          </Link>
-          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">{t('oversight.mileage.centerTitle')}</h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-500">{t('oversight.mileage.subtitle')}</p>
-        </div>
+        {/* Header — omitted when embedded as a tab; the hub already named the page. */}
+        {!embedded && (
+          <div>
+            <Link to="/apps/reports" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
+              <Icon.ArrowRight className="h-3 w-3 rotate-180 rtl:-scale-x-100" /> {t('Reports')}
+            </Link>
+            <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">{t('oversight.mileage.centerTitle')}</h1>
+            <p className="mt-1 max-w-3xl text-sm text-slate-500">{t('oversight.mileage.subtitle')}</p>
+          </div>
+        )}
 
         {loading ? (
           <>

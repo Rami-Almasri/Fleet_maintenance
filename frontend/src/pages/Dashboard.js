@@ -602,7 +602,7 @@ function MostFrequentFaults() {
         </span>
       }
       subtitle={t('dash.faults.subtitle')}
-      actions={<Link to="/maintenance-history" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">{t('dash.faults.history')} →</Link>}
+      actions={<Link to="/repair-records?tab=per-car" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">{t('dash.faults.history')} →</Link>}
     >
       {loading ? (
         <ul className="space-y-3">
@@ -908,7 +908,7 @@ function MostMaintainedCars() {
       }
       subtitle={t('dash.maintained.subtitle')}
       actions={
-        <Link to="/maintenance-history" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">{t('dash.maintained.allCars')} →</Link>
+        <Link to="/repair-records?tab=per-car" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">{t('dash.maintained.allCars')} →</Link>
       }
     >
       {loading ? (

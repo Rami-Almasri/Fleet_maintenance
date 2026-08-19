@@ -48,7 +48,7 @@ export default function FaultGarageFinder() {
       title={g('finder.title')}
       subtitle={g('finder.subtitle')}
       actions={
-        <Link to="/garage-finder" className="text-xs font-medium text-indigo-600 hover:text-indigo-700">
+        <Link to="/garages?tab=finder" className="text-xs font-medium text-indigo-600 hover:text-indigo-700">
           {g('finder.full')} {isRTL ? '←' : '→'}
         </Link>
       }

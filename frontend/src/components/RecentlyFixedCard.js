@@ -107,7 +107,7 @@ export default function RecentlyFixedCard({ limit = 6 }) {
               </button>
             ))}
           </div>
-          <Link to="/completed-repairs" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+          <Link to="/repair-records?tab=signed-off" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
             {t('All fixed repairs')} <span className="inline-block rtl:-scale-x-100" aria-hidden>→</span>
           </Link>
         </div>

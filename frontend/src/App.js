@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ThemeProvider } from './theme/ThemeContext';
 import { I18nProvider } from './i18n/I18nContext';
 import { AuthProvider } from './auth/AuthContext';
@@ -22,8 +22,6 @@ import Drivers from './pages/Drivers';
 import Contracts from './pages/Contracts';
 import ContractDetail from './pages/contracts/ContractDetail';
 import ContractForm from './pages/contracts/ContractForm';
-import Vendors from './pages/Vendors';
-import MaintenanceHistory from './pages/MaintenanceHistory';
 import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
 import MaintenanceCheckpoints from './pages/MaintenanceCheckpoints';
 import CarStatus from './pages/CarStatus';
@@ -32,52 +30,52 @@ import CarStatus from './pages/CarStatus';
 import CarStatusVehicle from './pages/CarStatusVehicle';
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
 import InspectionReviewQueue from './pages/InspectionReviewQueue';
-import InGarage from './pages/InGarage';
 import ComplaintsCenter from './pages/ComplaintsCenter';
-import DriverObservations from './pages/DriverObservations';
 import FleetUtilization from './pages/FleetUtilization';
 import MaintenanceSwap from './pages/MaintenanceSwap';
 import LogisticsDispatch from './pages/LogisticsDispatch';
 import QuickCostInput from './pages/QuickCostInput';
-import Garages from './pages/Garages';
 import GarageProfile from './pages/intelligence/GarageProfile';
 import GarageCompare from './pages/intelligence/GarageCompare';
 import Executive from './pages/intelligence/Executive';
 import FindingKeywords from './pages/FindingKeywords';
 import VehicleLocations from './pages/VehicleLocations';
-import Parts from './pages/Parts';
-import PartsCatalog from './pages/PartsCatalog';
-import Warranties from './pages/Warranties';
-import PartInvoices from './pages/PartInvoices';
-import Procurement from './pages/Procurement';
+import PartsHub from './pages/PartsHub';
+import SuppliersHub from './pages/SuppliersHub';
+import GaragesHub from './pages/GaragesHub';
+import FieldReportsHub from './pages/FieldReportsHub';
+import RepairRecordsHub from './pages/RepairRecordsHub';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
 import CostIntelligence from './pages/CostIntelligence';
 import RecommendationIntelligence from './pages/RecommendationIntelligence';
 import OilProjection from './pages/reminders/OilProjection';
-import GarageFinder from './pages/GarageFinder';
 import EventClassificationReview from './pages/EventClassificationReview';
 import ConceptBridgeReview from './pages/ConceptBridgeReview';
 import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
 import IntelligenceCenter from './pages/IntelligenceCenter';
-import SyncAudit from './pages/SyncAudit';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
 import SimulationPanel from './pages/SimulationPanel';
 import Users from './pages/Users';
 import NotFound from './pages/NotFound';
 import GarageInvoicePortal from './pages/GarageInvoicePortal';
-import CompletedRepairs from './pages/CompletedRepairs';
 import InvoiceMatching from './pages/InvoiceMatching';
-import MileageDiscrepancies from './pages/oversight/MileageDiscrepancies';
-import GarageInvoiceQueue from './pages/oversight/GarageInvoiceQueue';
-import SeverityReview from './pages/oversight/SeverityReview';
-import Misdiagnoses from './pages/oversight/Misdiagnoses';
-import ResolvedTransfers from './pages/oversight/ResolvedTransfers';
-import CheckpointCompliance from './pages/oversight/CheckpointCompliance';
+import OversightHub from './pages/oversight/OversightHub';
 import CleaningCapture from './pages/cleaning/CleaningCapture';
 import FleetHealth from './pages/inspections/FleetHealth';
+
+// Pages that became a tab on a hub keep their old URL working through this. The incoming query is
+// carried over — /part-invoices?invoice=8 has to arrive as /parts?tab=invoices&invoice=8 or the
+// deep link from the contract page would open the ledger without selecting the invoice. A plain
+// <Navigate to="/parts?tab=invoices"> would silently drop it.
+function RedirectToTab({ to, tab }) {
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  params.set('tab', tab);
+  return <Navigate to={`${to}?${params}`} replace />;
+}
 
 // Index route ("/"). Normally the Workspace command center, but roles blocked
 // from the dashboard (the driver / supervisor) keep their existing dedicated
@@ -208,8 +206,10 @@ export default function App() {
                   <Route path="/registrations" element={<Navigate to="/inspections/schedules?tab=registrations" replace />} />
                 </Route>
 
+                {/* The supplier register is the second tab of /suppliers now. The redirect keeps its
+                    own vendors.view gate, so a direct /vendors link still fails the same way it did. */}
                 <Route element={<RequirePermission permission="vendors.view" />}>
-                  <Route path="/vendors" element={<Vendors />} />
+                  <Route path="/vendors" element={<RedirectToTab to="/suppliers" tab="register" />} />
                 </Route>
 
                 {/* Component Intelligence — the fleet-wide asset layer: warranty exposure, expected
@@ -223,13 +223,16 @@ export default function App() {
                 </Route>
 
                 <Route element={<RequirePermission permission="maintenance.view" />}>
-                  {/* Procurement — payables aging, supplier performance and payments made. Reading is a
-                      maintenance.view question ("what do we owe?"); recording a payment is gated to
-                      maintenance.manage on the API, so a viewer sees the reports without the actions. */}
-                  <Route path="/procurement" element={<Procurement />} />
+                  {/* Suppliers — who we buy from and what we owe them, in two tabs. Procurement is the
+                      "what do we owe?" ledger: reading it is a maintenance.view question, recording a
+                      payment is gated to maintenance.manage on the API, so a viewer sees the reports
+                      without the actions. The supplier register tab carries its own vendors.view check
+                      inside the hub. Both old URLs redirect into their tab. */}
+                  <Route path="/suppliers" element={<SuppliersHub />} />
+                  <Route path="/procurement" element={<RedirectToTab to="/suppliers" tab="owed" />} />
                   {/* Garage Finder — "this car has this fault; who is best at it?", asked BEFORE a ticket
                       exists. Same engine as the assign step, read-only: it answers, it does not dispatch. */}
-                  <Route path="/garage-finder" element={<GarageFinder />} />
+                  <Route path="/garage-finder" element={<RedirectToTab to="/garages" tab="finder" />} />
                   {/* Car Status — the live stage board: every car in the maintenance workflow by the stage
                       it's in and who's responsible for it there; opens into the per-vehicle operational profile. */}
                   <Route path="/car-status" element={<CarStatus />} />
@@ -243,14 +246,17 @@ export default function App() {
                   {/* "Booked in Shop" now lives inside the Fleet Health hub — redirect the old path. */}
                   <Route path="/maintenance-bookings" element={<Navigate to="/inspections/schedules?tab=bookings" replace />} />
                   <Route path="/maintenance-workflow" element={<MaintenanceWorkflow />} />
-                  {/* In the Garage — which cars are at a garage right now, and which garage each is at. */}
-                  <Route path="/in-garage" element={<InGarage />} />
-                  {/* Complaints Center — management & follow-up view of every customer complaint + its timeline. */}
-                  <Route path="/complaints" element={<ComplaintsCenter />} />
-                  {/* Deep link from a complaint notification: opens that complaint's drawer over the Center. */}
+                  {/* In the Garage — which cars are at a garage right now, and which garage each is at.
+                      A tab of /garages now. */}
+                  <Route path="/in-garage" element={<RedirectToTab to="/garages" tab="now" />} />
+                  {/* What people report — complaints and driver observations, two tabs. */}
+                  <Route path="/field-reports" element={<FieldReportsHub />} />
+                  <Route path="/complaints" element={<RedirectToTab to="/field-reports" tab="complaints" />} />
+                  {/* Deep link from a complaint notification: opens that complaint's drawer over the
+                      Center. Stays a route of its own — the drawer needs the id in the path. */}
                   <Route path="/complaints/:id" element={<ComplaintsCenter />} />
                   {/* Driver Observations — lightweight handover notes; may raise an inspection request. */}
-                  <Route path="/driver-observations" element={<DriverObservations />} />
+                  <Route path="/driver-observations" element={<RedirectToTab to="/field-reports" tab="observations" />} />
                   {/* Deep link from notifications: focuses one ticket on the board */}
                   <Route path="/maintenance-workflow/:id" element={<MaintenanceWorkflow />} />
                   {/* Pre-maintenance Recommendation queue — Supervisor triage before the active board */}
@@ -258,15 +264,19 @@ export default function App() {
                   {/* Maintenance Progress — the supervisors' checkpoint queue; notifications deep-link here
                       (?ticket=<id>) to open a car's progress form directly. */}
                   <Route path="/maintenance-progress" element={<MaintenanceCheckpoints />} />
+                  {/* Repair records — the signed-off ledger and each car's workshop history, two tabs. */}
+                  <Route path="/repair-records" element={<RepairRecordsHub />} />
                   {/* Fixed & Completed Repairs ledger — every closed ticket with its full story */}
-                  <Route path="/completed-repairs" element={<CompletedRepairs />} />
+                  <Route path="/completed-repairs" element={<RedirectToTab to="/repair-records" tab="signed-off" />} />
                   {/* Invoice Matching — the car is back: key each garage's bill beside the work it covers */}
                   <Route path="/invoice-matching" element={<InvoiceMatching />} />
                   {/* /maintenance-foresight is retired — its "keeps breaking down" evidence now
                       lives on each car's own profile (Overview → Repeat faults). Old links land
                       on the fleet list rather than a dead route. */}
                   <Route path="/maintenance-foresight" element={<Navigate to="/vehicles" replace />} />
-                  <Route path="/garages" element={<Garages />} />
+                  {/* Garages — scorecard, "which garage for this car", and who is in a workshop now. */}
+                  <Route path="/garages" element={<GaragesHub />} />
+                  <Route path="/garage-scorecard" element={<RedirectToTab to="/garages" tab="scorecard" />} />
                   <Route path="/executive" element={<Executive />} />
                   <Route path="/intelligence/garages/compare" element={<GarageCompare />} />
                   <Route path="/intelligence/garages/:id" element={<GarageProfile />} />
@@ -275,26 +285,29 @@ export default function App() {
                   {/* Maintenance Analytics is marked "Coming Soon" in the module registry —
                       redirect the old URL so the unfinished page isn't reachable directly. */}
                   <Route path="/maintenance-analytics" element={<Navigate to="/apps/fleet-intelligence" replace />} />
-                  <Route path="/maintenance-history" element={<MaintenanceHistory />} />
+                  <Route path="/maintenance-history" element={<RedirectToTab to="/repair-records" tab="per-car" />} />
                   <Route path="/damage-accidents" element={<DamageAccidents />} />
                 </Route>
 
                 {/* Parts Purchase + Repair Intelligence — its own permission group so a parts-only role
                     (e.g. finance with parts.view) sees the board without needing maintenance.view. */}
                 <Route element={<RequirePermission permission="parts.view" />}>
-                  <Route path="/parts" element={<Parts />} />
+                  {/* One Parts page, three tabs: the purchase board, the supplier invoices behind
+                      what a part cost, and the catalog of part names. The two retired routes below
+                      redirect into their tab, so old links and bookmarks still land correctly. */}
+                  <Route path="/parts" element={<PartsHub />} />
                   {/* The parts VOCABULARY (names, Arabic terms, search aliases, warranty defaults).
                       Viewing sits with parts.view like the board above; editing is gated inside the
                       page on components.manage, which already means "curate the catalog". */}
-                  <Route path="/parts-catalog" element={<PartsCatalog />} />
+                  <Route path="/parts-catalog" element={<RedirectToTab to="/parts" tab="catalog" />} />
                   {/* The warranty register. Reading rides with parts.view — the people chasing a
                       warranty are the people who bought the part; recording and adjudicating are
-                      gated per-action on the API. */}
-                  <Route path="/warranties" element={<Warranties />} />
+                      gated per-action on the API. It is the fourth tab on /parts now. */}
+                  <Route path="/warranties" element={<RedirectToTab to="/parts" tab="warranties" />} />
                   {/* Supplier parts invoices — the paper behind what a part cost. Reading sits with
                       parts.view like the board; keying an invoice is a money action and is gated on the
                       API with parts.purchase, so a viewer sees the ledger without the write buttons. */}
-                  <Route path="/part-invoices" element={<PartInvoices />} />
+                  <Route path="/part-invoices" element={<RedirectToTab to="/parts" tab="invoices" />} />
                 </Route>
                 {/* Recurring Fault Reviews — management inbox for confirmed faults that came back after a fix. */}
                 <Route element={<RequirePermission permission="maintenance.recurring.view" />}>
@@ -321,6 +334,8 @@ export default function App() {
                   <Route path="/fuel-mileage" element={<Navigate to="/mileage" replace />} />
                   <Route path="/mileage-reconciliation" element={<Navigate to="/mileage?tab=recon" replace />} />
                   <Route path="/mileage-chain-audit" element={<Navigate to="/mileage?tab=chain" replace />} />
+                  {/* Mileage Discrepancies left the oversight group for the odometer hub. */}
+                  <Route path="/oversight/mileage" element={<RedirectToTab to="/mileage" tab="discrepancies" />} />
                   <Route path="/fleet-utilization" element={<FleetUtilization />} />
                   <Route path="/maintenance-swap" element={<MaintenanceSwap />} />
                   {/* Data Health absorbed Status Mismatch as its second tab — keep the old path alive. */}
@@ -328,17 +343,22 @@ export default function App() {
                   {/* The platform's own operating state — previously reachable only via artisan. */}
                   <Route path="/intelligence-center" element={<IntelligenceCenter />} />
                   <Route path="/status-mismatch" element={<Navigate to="/data-health?tab=status" replace />} />
-                  {/* Workflow Oversight — accountability & data-integrity suite over the maintenance workflow. */}
-                  <Route path="/oversight/mileage" element={<MileageDiscrepancies />} />
-                  <Route path="/oversight/left-garage" element={<GarageInvoiceQueue />} />
-                  <Route path="/oversight/severity" element={<SeverityReview />} />
-                  <Route path="/oversight/misdiagnoses" element={<Misdiagnoses />} />
-                  <Route path="/oversight/resolved-transfers" element={<ResolvedTransfers />} />
-                  <Route path="/oversight/checkpoint-compliance" element={<CheckpointCompliance />} />
+                  {/* Workflow Oversight — accountability & data-integrity suite over the maintenance
+                      workflow, one page of five tabs. Each report kept its old URL as a redirect.
+                      Mileage Discrepancies left this group for /mileage, where the rest of the
+                      odometer tooling already lives. */}
+                  <Route path="/oversight" element={<OversightHub />} />
+                  <Route path="/oversight/left-garage" element={<RedirectToTab to="/oversight" tab="left-garage" />} />
+                  <Route path="/oversight/severity" element={<RedirectToTab to="/oversight" tab="severity" />} />
+                  <Route path="/oversight/misdiagnoses" element={<RedirectToTab to="/oversight" tab="misdiagnoses" />} />
+                  <Route path="/oversight/resolved-transfers" element={<RedirectToTab to="/oversight" tab="resolved-transfers" />} />
+                  <Route path="/oversight/checkpoint-compliance" element={<RedirectToTab to="/oversight" tab="checkpoint-compliance" />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="sync.run" />}>
-                  <Route path="/sync-audit" element={<SyncAudit />} />
+                  {/* Sync Audit is the last tab of Data Health — where the data came from is the same
+                      question as whether the data is sound. Keeps its own sync.run gate here. */}
+                  <Route path="/sync-audit" element={<RedirectToTab to="/data-health" tab="sync" />} />
                 </Route>
 
                 {/* Authenticated unknown path -> friendly 404 inside the app shell */}

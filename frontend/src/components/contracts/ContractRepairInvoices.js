@@ -136,7 +136,7 @@ export default function ContractRepairInvoices({ contractId }) {
                     <span>{t('contractDetail.repairInvoices.sharedInvoice', { total: aed2(inv.total_amount) })}</span>
                   )}
                   {inv.invoice_date && <span>{fmtDate(inv.invoice_date)}</span>}
-                  <Link to={`/part-invoices?invoice=${inv.id}`} className="font-medium" style={{ color: 'var(--accent)' }}>
+                  <Link to={`/parts?tab=invoices&invoice=${inv.id}`} className="font-medium" style={{ color: 'var(--accent)' }}>
                     {t('contractDetail.repairInvoices.openInvoice')}
                   </Link>
                 </div>

@@ -58,6 +58,13 @@ export const ROLE_BLOCKED_PATHS = {
     // a role denied the parts board must be denied the supplier invoices explicitly.
     '/part-invoices',
     '/procurement',
+    // Consolidated pages: the hub path has to be denied too, or the deny rule below it
+    // stops applying the moment the page moves into a tab.
+    '/suppliers',
+    '/field-reports',
+    '/repair-records',
+    '/warranties',
+    '/garage-finder',
     // The fleet asset board — warranty exposure, installed value, replacement
     // churn. Every role holding `components.view` reaches it by permission, so
     // it has to be denied here for the same roles that lose the other
@@ -93,6 +100,7 @@ export const ROLE_BLOCKED_PATHS = {
     // on the ticket it produces, not on the complaint itself.
     '/complaints',
     '/driver-observations',
+    '/field-reports',      // both intake surfaces are tabs of this one page now
     '/damage-accidents',
     '/customers',
     '/contracts',
@@ -144,6 +152,10 @@ export const ROLE_BLOCKED_PATHS = {
     // a role denied the parts board must be denied the supplier invoices explicitly.
     '/part-invoices',
     '/procurement',
+    '/suppliers',          // procurement + the supplier register, one page
+    '/warranties',         // a tab of /parts, which he is denied above
+    '/garage-finder',      // a tab of /garages, denied below
+    '/in-garage',          // ditto — the Controllers' whereabouts board
     '/components',
     '/car-status',
     '/driver-dispatch',         // the supervisor assigns; the inspector doesn't
@@ -232,6 +244,9 @@ export const ROLE_BLOCKED_PATHS = {
     '/my-maintenance-queue',
     '/complaints',              // operational follow-up, not an accounting record
     '/driver-observations',
+    '/field-reports',      // complaints + driver notes, one page
+    '/warranties',         // a tab of /parts, which is denied below
+    '/garage-finder',      // a tab of /garages, denied below
     '/car-status',
     '/driver-dispatch',
     '/in-garage',               // operational whereabouts, not an accounting record

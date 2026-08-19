@@ -103,8 +103,6 @@ const NAV_SECTIONS = [
       { name: 'Maintenance Cycle', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
       { name: 'My Queue', to: '/my-maintenance-queue', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 9 2 2 4-4', desc: 'Your role-scoped maintenance work in one place: Abu Maroof (Inspector) sees pending inspections and final re-inspections; a Supervisor (Dispatcher) sees tickets awaiting a garage + driver assignment; a Driver sees active trips/dispatches and cars waiting on a follow-up.' },
       { name: 'Inspection Review', to: '/inspection-review', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Controllers (Lin & Marwa) review inspection requests before they reach Abu Maroof — approve to send it on, or reject with a reason.' },
-      { name: 'In the Garage', to: '/in-garage', icon: 'M3 21h18M5 21V9l7-5 7 5v12M9 21v-6h6v6', desc: 'Every car standing at a garage right now, one line each: the car, and the garage it is at. A car dispatched through the workflow carries the garage the Supervisor picked; a car OfficeManager sent out on a maintenance contract has no garage on record, so the row asks for it and stores who answered. Nothing is inferred from an old workshop trip.' },
-      { name: 'Garage Finder', to: '/garage-finder', icon: 'M21 21l-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z', desc: 'Pick a car and the faults it has, and get the same fault-by-fault garage report the assign step shows — before any ticket exists. Each fault names its strongest garage, the best alternative, and the trade-off between them, with the repair history behind every figure. Read-only: it answers the question, it does not dispatch the car.' },
       { name: 'Oil Mileage Follow-up', to: '/oil-projection', icon: 'M12 3v4m0 10v4m9-9h-4M7 12H3m2.6-6.4 2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8', desc: 'Cars that are OUT on rental and heading for their oil limit. Service Reminders reads the odometer we hold, which stops being true the moment a car drives off; this page projects forward from the mileage recorded at handover at 200 km/day and lists the cars that have probably passed the limit. Controllers (Lin & Marwa) call the customer, enter the odometer they report, and the projection re-anchors on that real number — a customer-reported reading is stored against the contract and never changes the car’s odometer.' },
     ],
   },
@@ -116,16 +114,19 @@ const NAV_SECTIONS = [
   {
     title: 'Customer Care',
     items: [
-      { name: 'Complaints', to: '/complaints', icon: 'M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8zM7.5 7.5h.01', desc: 'Every customer complaint and its follow-up timeline in one management view. Ops logs the complaint here; Abu Maroof triages it from the detail drawer — talk to the customer, resolve it on-site, or send the car in as a maintenance ticket.' },
-      { name: 'Driver Observations', to: '/driver-observations', icon: 'M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12zM12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z', desc: 'Internal handover notes from drivers — something they noticed on the car that is not (yet) a customer complaint. Review each note and escalate it into an inspection request when it deserves one.' },
+      // Both intake surfaces are tabs of one page now: what the customer said, and what the driver
+      // noticed. The description names them both so a search for either still lands here.
+      { name: 'What people report', to: '/field-reports', icon: 'M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8zM7.5 7.5h.01', desc: 'Complaints: every customer complaint and its follow-up timeline. Ops logs the complaint; Abu Maroof triages it from the detail drawer — talk to the customer, resolve it on-site, or send the car in as a maintenance ticket. Driver Observations: internal handover notes from drivers — something noticed on the car that is not (yet) a customer complaint, escalated into an inspection request when it deserves one.' },
     ],
   },
   {
     title: 'Maintenance Control',
     items: [
-      { name: 'Completed Repairs', to: '/completed-repairs', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost. Expand any row for the full custody chain, the resolved faults and the odometer readings.' },
+      // The signed-off ledger and each car's visit history are two readings of the same finished
+      // work — one page, two tabs.
+      { name: 'Repair Records', to: '/repair-records', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Completed Repairs: the ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost, with the full custody chain behind each row. History: every car that saw the workshop over the chosen window, how often it went in and how long it stayed, opening onto each individual trip.' },
       { name: 'Invoice Matching', to: '/invoice-matching', icon: 'M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM14 2v6h6M9 13h3M9 17h6M13 12l2 2 4-4', desc: 'The car is back from the garage — key each garage\'s bill next to the work that was actually done to the car, and see at a glance whether they agree. A car worked in two garages comes back with two bills, and each one covers only the faults its garage fixed. Every fault shows whether it is on a bill yet; hovering a bill lights up the faults it covers; and any bill whose printed receipt disagrees with its keyed lines is flagged until someone explains the gap.' },
-      { name: 'Maintenance History', to: '/maintenance-history', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every car that saw the workshop over the chosen window — how often it went in (visits) and how long it spent there (total days in the shop), sortable and searchable. Open a car\'s visit list to see each individual trip: date, garage, what was done and the cost.' },
+      { name: 'Workflow Oversight', to: '/oversight', icon: 'M9 12l2 2 4-4m5 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Did the process hold? Five checks in one page: cars that left the garage while the maintenance contract stayed open, the severity QC gate, faults later marked incorrect, transfers where every fault was fixed, and supervisors who never answered the "car is due back" reminder.' },
     ],
   },
   {
@@ -140,13 +141,12 @@ const NAV_SECTIONS = [
   {
     title: 'Parts & Suppliers',
     items: [
-      { name: 'Parts Purchase', to: '/parts', icon: 'M20 7h-9M14 17H5M17 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The Parts Purchase + Repair Intelligence board: request a part (customer or garage), approve, buy (garage or supplier) and install it — with duplicate-purchase detection and repair history.' },
-      { name: 'Parts Catalog', to: '/parts-catalog', icon: 'M4 6h16M4 12h16M4 18h10M18 15v6m3-3h-6', desc: 'The list of part names the whole app selects from, in English and Arabic. Each part also carries the other names and the problem wording people use for it, so a technician who types "battery not charging" still finds the alternator. Set the default supplier warranty for each part (months and kilometres) here.' },
-      { name: 'Warranties', to: '/warranties', icon: 'M12 3l7 4v5c0 4.4-3 8.2-7 9-4-0.8-7-4.6-7-9V7l7-4z M9.5 12l1.8 1.8L15 10', desc: 'Every promise a supplier or a garage made about a car, and whether it still holds today. Cover runs out on months OR kilometres, whichever comes first, so each row shows the answer computed from the car\u2019s current odometer rather than a date that can look healthy long after the distance ran out. File claims here and record what the supplier actually said.' },
-      { name: 'Procurement', to: '/procurement', icon: 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.3 2.3A1 1 0 0 0 5.4 17H17M9 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm8 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2z', desc: 'What we owe suppliers and garages, aged by how long it has been outstanding; who we buy from and how well they perform; and every payment that has left the account. Each figure is grouped by the document that proves it.' },
-      { name: 'Part Invoices', to: '/part-invoices', icon: 'M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM14 2v6h6M9 13h6M9 17h6', desc: "What a supplier charged for a part, with the invoice number, date and a photo of the paper. Parts the garage supplied are billed on that garage's own invoice instead, so nothing is counted twice." },
-      { name: 'Garages', to: '/garages', icon: 'M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z', desc: 'Garage ratings by repair area — who is strong at what, who has a problem, and what is in each workshop now.' },
-      { name: 'Vendors', to: '/vendors', icon: 'M3 9l1-5h16l1 5M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M3 9h18M9 20v-6h6v6', desc: 'Suppliers and service vendors referenced by maintenance and contracts.' },
+      // One destination each for parts, suppliers and garages. The pages that used to be separate
+      // rows are tabs now, so each description names them — a search for "invoice", "catalog",
+      // "warranty" or "vendor" still lands on the page that holds it.
+      { name: 'Parts', to: '/parts', icon: 'M20 7h-9M14 17H5M17 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'Everything about a part, in four tabs. Requests & Purchases: request a part (customer or garage), approve, buy (garage or supplier) and install it, with duplicate-purchase detection and repair history. Supplier Invoices: what the supplier charged, with the invoice number, date and a photo of the paper. Part Names: the catalog every part picker in the app selects from, in English and Arabic. Warranties: every promise a supplier or garage made, and whether it still holds today — cover runs out on months OR kilometres, whichever comes first, computed from the car’s current odometer.' },
+      { name: 'Suppliers', to: '/suppliers', icon: 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.3 2.3A1 1 0 0 0 5.4 17H17M9 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm8 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2z', desc: 'Who we buy from and what we owe them. What we owe: outstanding balances aged by how long they have been open, how each supplier performs, and every payment that has left the account — each figure grouped by the document that proves it. Suppliers: the vendor register the rest of the app references.' },
+      { name: 'Garages', to: '/garages', icon: 'M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z', desc: 'Everything about a workshop, in three tabs. Scorecard: garage ratings by repair area — who is strong at what, and where each one has a problem. Find a garage: pick a car and the faults it has and get the same fault-by-fault report the assign step shows, before any ticket exists — read-only, it answers the question without dispatching the car. In the Garage: every car standing at a workshop right now, and which one it is at.' },
     ],
   },
   {
@@ -193,9 +193,8 @@ const NAV_SECTIONS = [
       { name: 'Fleet Utilization', to: '/fleet-utilization', hideWhenIntel: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5M8 21V9m4 12V5m4 16v-7', desc: 'Per-car split of owned time into rented, in-maintenance, and idle days — utilization and downtime % against how long you have owned each car, with rent lost to downtime. Filter by period (e.g. last month) and sort to find the cars stuck in the workshop.' },
       { name: 'Fuel & Mileage', to: '/mileage', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'One home for every odometer/fuel tool, in three tabs: Fuel & Mileage (real travel vs. contract km, off-contract leakage, fuel debits), Reconciliation (stored odometer vs. the scanner baseline, adopt with one click) and Chain Audit (contract-to-contract odometer handoffs with a non-destructive Quick Fix).' },
       { name: 'Maintenance Swap', to: '/maintenance-swap', icon: 'M4 5h16M4 12h16M4 19h16M9 5v14', desc: 'Live triage of the fleet in three columns — Action Required / In Workshop / Available Pool — with a Swap & Renew engine that keeps a customer on the road while their car is repaired.' },
-      { name: 'Data Health', to: '/data-health', icon: 'M3 12h4l2 5 4-12 2 7h6', desc: 'Overall data quality in two tabs: Data Quality (incomplete/broken records — missing VINs, mileage, unlinked contracts) and Status Mismatches (cars whose status disagrees with their contracts).' },
+      { name: 'Data Health', to: '/data-health', icon: 'M3 12h4l2 5 4-12 2 7h6', desc: 'Is the data sound, and where did it come from? Data Quality (incomplete or broken records — missing VINs, mileage, unlinked contracts), Status Mismatches (cars whose status disagrees with their contracts), and Sync Audit (the read-only history of CMD sync runs: what each execution scanned, updated and auto-corrected).' },
       { name: 'Intelligence Center', to: '/intelligence-center', icon: 'M12 3a4 4 0 0 1 4 4v1a4 4 0 0 1 0 8v1a4 4 0 0 1-8 0v-1a4 4 0 0 1 0-8V7a4 4 0 0 1 4-4z', desc: 'What the platform actually knows and how sure it is: evidence readiness and health for every intelligence capability, QC verdict throughput, promotion decisions with full provenance, feature-flag status, background-job health, and the data-quality problems blocking each capability.' },
-      { name: 'Sync Audit', to: '/sync-audit', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4', desc: 'Read-only history of CMD sync runs: how many contracts each execution scanned, updated, and auto-corrected (e.g. stale dates cleared).' },
       { name: 'Simulation', to: '/simulation', demoOnly: true, icon: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z', desc: 'Admin-only demo console (only shown in Demo Mode): force a real "Service Due" oil alert or a fault-discovery ticket on a real car, watch the system react end-to-end, then roll it all back with one click.' },
     ],
   },
@@ -228,6 +227,10 @@ const NAV_PERMISSIONS = {
   '/dashboard': 'dashboard.view',
   '/notifications': null,
   '/settings': null,
+  // The hubs, then the routes they absorbed (kept because those paths still resolve as redirects).
+  '/repair-records': 'maintenance.view',
+  '/field-reports': 'maintenance.view',
+  '/suppliers': 'maintenance.view',
   '/completed-repairs': 'maintenance.view',
   '/complaints': 'maintenance.view',
   '/driver-observations': 'maintenance.view',
@@ -272,11 +275,7 @@ const NAV_PERMISSIONS = {
   '/maintenance-swap': 'insights.view',
   '/data-health': 'insights.view',
   '/intelligence-center': 'insights.view',
-  '/oversight/mileage': 'insights.view',
-  '/oversight/left-garage': 'insights.view',
-  '/oversight/severity': 'insights.view',
-  '/oversight/misdiagnoses': 'insights.view',
-  '/oversight/checkpoint-compliance': 'insights.view',
+  '/oversight': 'insights.view',
   '/sync-audit': 'sync.run',
   '/simulation': 'users.manage',
   '/users': 'users.manage',

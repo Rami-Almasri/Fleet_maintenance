@@ -220,7 +220,9 @@ function RunFeed({ runId }) {
   );
 }
 
-export default function SyncAudit() {
+// `embedded` renders this as the Sync Audit tab of /data-health — the hub supplies the page title
+// and the tab strip, so the standalone header and outer padding are dropped.
+export default function SyncAudit({ embedded = false }) {
   const { t, lang } = useI18n();
   const fetcher = useCallback(async () => (await api.get('/Sync/audit')).data.data, []);
   const { data, loading, error } = useFetch(fetcher);
@@ -258,12 +260,14 @@ export default function SyncAudit() {
   if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
 
   return (
-    <div className="py-8">
-      <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader
-          title={t('Sync Audit')}
-          subtitle={t('Your data-change news feed: what each CMD sync brought in (new contracts) and exactly what it changed (field-by-field). Run the sync, then refresh.')}
-        />
+    <div className={embedded ? '' : 'py-8'}>
+      <div className={`mx-auto ${embedded ? '' : 'max-w-7xl px-4 sm:px-6 lg:px-8'} space-y-6`}>
+        {!embedded && (
+          <PageHeader
+            title={t('Sync Audit')}
+            subtitle={t('Your data-change news feed: what each CMD sync brought in (new contracts) and exactly what it changed (field-by-field). Run the sync, then refresh.')}
+          />
+        )}
 
         {error && (
           <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>

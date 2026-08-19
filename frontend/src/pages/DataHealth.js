@@ -9,6 +9,8 @@ import IssueGroupsAnalytics from '../components/analytics/IssueGroupsAnalytics';
 import { num } from '../lib/format';
 import { useI18n } from '../i18n/I18nContext';
 import StatusMismatch from './StatusMismatch';
+import SyncAudit from './SyncAudit';
+import { usePermissions } from '../hooks/usePermissions';
 
 // Severity presentation. Built per-render because the label is translated — the
 // tones/keys are unchanged machinery.
@@ -184,17 +186,21 @@ function DataHealthPanel({ data, loading, error, only = null }) {
 }
 
 // Status Mismatch was folded in here as a tab (2026-07-11); VIN / mileage promoted to tabs the same day.
+// Sync Audit joined as a tab (the data you have and where it came from are the same question), but
+// it carries its own `sync.run` permission — hence `permission` on that entry only.
 const buildTabs = (t) => [
   { key: 'health', label: t('Data Quality'), subtitle: t('Incomplete or broken records to clean up — unlinked contracts, duplicate VINs, nameless customers and more. Fix these to keep the fleet data reliable.') },
   ...promotedTabs(t),
   { key: 'status', label: t('Status Mismatches'), subtitle: t("Cars whose status doesn't match their contracts — out on a contract but not flagged busy, or flagged busy with no open contract.") },
+  { key: 'sync', label: t('Sync Audit'), permission: 'sync.run', subtitle: t('Your data-change news feed: what each CMD sync brought in (new contracts) and exactly what it changed (field-by-field). Run the sync, then refresh.') },
 ];
 
 export default function DataHealth() {
   const { t } = useI18n();
+  const { can } = usePermissions();
   const [params, setParams] = useSearchParams();
   const requested = params.get('tab');
-  const tabs = buildTabs(t);
+  const tabs = buildTabs(t).filter((tab) => can(tab.permission ?? null));
   const active = tabs.find((tab) => tab.key === requested) || tabs[0];
   const setTab = (key) => setParams(key === 'health' ? {} : { tab: key }, { replace: true });
 
@@ -239,9 +245,11 @@ export default function DataHealth() {
           })}
         </div>
 
-        {active.key === 'status'
-          ? <StatusMismatch embedded />
-          : <DataHealthPanel data={data} loading={loading} error={error} only={PROMOTED_KEYS.includes(active.key) ? active.key : null} />}
+        {active.key === 'status' && <StatusMismatch embedded />}
+        {active.key === 'sync' && <SyncAudit embedded />}
+        {active.key !== 'status' && active.key !== 'sync' && (
+          <DataHealthPanel data={data} loading={loading} error={error} only={PROMOTED_KEYS.includes(active.key) ? active.key : null} />
+        )}
       </div>
     </div>
   );
