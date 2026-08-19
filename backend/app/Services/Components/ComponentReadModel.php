@@ -546,7 +546,7 @@ class ComponentReadModel
             'age_days'     => $ageDays,
             'distance_km'  => $distanceKm,
             'warranty'     => $this->warranty($c),
-            'service_life' => $this->serviceLife($catalog, $ageDays, $distanceKm),
+            'service_life' => $this->serviceLife($catalog, $ageDays, $distanceKm, $c),
             'cost_per_km'  => ComponentLifecycle::costPerKm(
                 $c->purchase_cost === null ? null : (float) $c->purchase_cost,
                 $distanceKm
@@ -567,14 +567,32 @@ class ComponentReadModel
         return ComponentLifecycle::warranty($c->warranty_until, $c->warranty_months);
     }
 
-    /** How much of the catalog's expected life this part has used — see {@see ComponentLifecycle}. */
-    private function serviceLife(?ComponentCatalog $catalog, ?int $ageDays, ?int $distanceKm): array
+    /**
+     * How much of its expected life this part has used — see {@see ComponentLifecycle}.
+     *
+     * The limit is taken from the SNAPSHOT frozen onto the row at install, falling back to the
+     * catalog only for rows written before those columns existed. That is what keeps the Replaced
+     * view honest: a part removed last year is judged against the limit it was fitted under, not
+     * against whatever the type says today.
+     *
+     * `$c` may be null for the consumables bridge, which has no component row behind it — a service
+     * record is refreshed against the type's current interval, and 'catalog' is the truthful source.
+     */
+    private function serviceLife(?ComponentCatalog $catalog, ?int $ageDays, ?int $distanceKm, ?VehicleComponent $c = null): array
     {
-        return ComponentLifecycle::serviceLife(
+        $limit = ComponentLifecycle::limitInForce(
+            $c?->expected_life_km,
+            $c?->expected_life_months,
             $catalog?->expected_life_km,
             $catalog?->expected_life_months,
+        );
+
+        return ComponentLifecycle::serviceLife(
+            $limit['km'],
+            $limit['months'],
             $ageDays,
-            $distanceKm
+            $distanceKm,
+            $limit['source'],
         );
     }
 

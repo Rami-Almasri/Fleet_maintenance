@@ -165,6 +165,10 @@ class VehicleComponent extends Model
         'installed_at', 'installed_odometer', 'installed_by', 'installed_by_name',
         'technician_name', 'installer_vendor_id', 'supplier_vendor_id',
         'purchase_cost', 'currency', 'warranty_months',
+        // The replacement limit in force at install — snapshotted from the catalog by
+        // ComponentService::makeComponent, overridable per fitting. See the migration
+        // 2026_08_19_130000 for why this is copied rather than read live.
+        'expected_life_km', 'expected_life_months',
         'source_part_purchase_id', 'source_line_item_id', 'source_maintenance_task_id', 'source',
         'evidence_channel', 'acquisition',
     ];
@@ -176,6 +180,8 @@ class VehicleComponent extends Model
         'purchase_cost'      => 'decimal:2',
         'warranty_months'    => 'integer',
         'warranty_until'     => 'date',
+        'expected_life_km'     => 'integer',
+        'expected_life_months' => 'integer',
         'removed_at'         => 'datetime',
         'removed_odometer'   => 'integer',
         'validated_at'       => 'datetime',

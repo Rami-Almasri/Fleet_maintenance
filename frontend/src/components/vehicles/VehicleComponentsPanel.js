@@ -60,6 +60,38 @@ const EVENT_LABEL = {
 const km = (v) => (v === null || v === undefined ? '—' : `${num(v)} km`);
 
 /**
+ * The replacement limit this part is judged against, written the way the workshop says it out loud:
+ * "12 months or 20,000 km". Whichever clock runs out FIRST is what makes the part due, which is why
+ * the two are joined by "or" and never by a comma.
+ *
+ * Returns null when no expectation is stated — the caller decides how to say "we never set one",
+ * because a blank and a zero mean very different things and neither may be guessed.
+ */
+function limitText(life, t) {
+  if (!life) return null;
+  const months = life.expected_life_months;
+  const distance = life.expected_life_km;
+
+  // Whole phrases rather than a translated " or " glue string: Arabic joins these differently and
+  // a bare separator gives the translator no sentence to work with.
+  if (months && distance) return t('{n} months or {distance}', { n: months, distance: km(distance) });
+  if (months) return t('{n} months', { n: months });
+  if (distance) return km(distance);
+  return null;
+}
+
+/**
+ * WHERE that limit came from. 'recorded' is the limit frozen onto this part when it was fitted —
+ * the honest answer to "what was it back then". 'catalog' means this row predates the snapshot and
+ * we are showing the part type's CURRENT expectation standing in for it, which is a weaker claim
+ * and is labelled rather than quietly presented as history.
+ */
+const LIMIT_SOURCE_NOTE = {
+  recorded: 'Set when this part was fitted',
+  catalog: "Today's catalogue figure — this part predates limit recording",
+};
+
+/**
  * "2 y 3 mo" / "8 mo" / "12 d" — an age a human reads at a glance instead of counting days.
  * The translator is a parameter because this lives outside a component; every caller passes its
  * own `t` from useI18n().
@@ -302,6 +334,36 @@ export default function VehicleComponentsPanel({ vehicleId }) {
           </div>
         ),
       },
+      // What it was SUPPOSED to last, as the limit stood when this part was fitted — sat directly
+      // beside what it actually managed, because the only useful reading of "lasted 9 months" is
+      // against the 12 it was bought for. `limit_source` is what stops an old row (no snapshot,
+      // catalogue value standing in) from being read as a recorded historical fact.
+      {
+        key: 'limit',
+        header: t('Limit at fitting'),
+        render: (r) => {
+          const limit = limitText(r.service_life, t);
+          if (!limit) return <span className="text-xs text-slate-400">{t('No expectation set')}</span>;
+
+          const note = LIMIT_SOURCE_NOTE[r.service_life?.limit_source];
+          const pct = r.service_life?.life_used_pct;
+
+          return (
+            <div title={note ? t(note) : undefined}>
+              <div className={r.service_life?.limit_source === 'catalog' ? 'text-slate-400 italic' : undefined}>
+                {limit}
+              </div>
+              {pct !== null && pct !== undefined && (
+                <div className="mt-0.5 text-xs text-slate-400">
+                  {pct >= 100
+                    ? t('reached {pct}% of it', { pct })
+                    : t('used {pct}% of it', { pct })}
+                </div>
+              )}
+            </div>
+          );
+        },
+      },
       {
         key: 'cost',
         header: t('Cost'),
@@ -448,12 +510,36 @@ export default function VehicleComponentsPanel({ vehicleId }) {
   );
 }
 
-/** A compact proportion bar for "how much of its expected life this part has used". */
+/**
+ * A compact proportion bar for "how much of its expected life this part has used", with the LIMIT
+ * that produced the percentage printed underneath.
+ *
+ * The limit is shown even when the bar cannot be drawn. A percentage with no stated limit is an
+ * unreadable number — "78% used" only means something once you can see it is 78% of 20,000 km.
+ */
 function LifeBar({ life }) {
   const { t } = useI18n();
+  const limit = limitText(life, t);
+  const note = LIMIT_SOURCE_NOTE[life?.limit_source];
+
+  const caption = limit && (
+    <div
+      className={`mt-1 text-xs ${life?.limit_source === 'catalog' ? 'text-slate-400 italic' : 'text-slate-500'}`}
+      title={note ? t(note) : undefined}
+    >
+      {t('Limit: {limit}', { limit })}
+    </div>
+  );
+
   if (!life || life.status === 'unknown') {
-    return <span className="text-xs text-slate-400">{t('No expectation set')}</span>;
+    return (
+      <div className="min-w-[110px]">
+        <span className="text-xs text-slate-400">{t('No expectation set')}</span>
+        {caption}
+      </div>
+    );
   }
+
   const pct = Math.min(100, life.life_used_pct ?? 0);
   const bar = life.status === 'overdue' ? 'bg-rose-500' : life.status === 'due_soon' ? 'bg-amber-500' : 'bg-emerald-500';
 
@@ -467,6 +553,7 @@ function LifeBar({ life }) {
           ? t('{pct}% used · by distance', { pct: life.life_used_pct })
           : t('{pct}% used · by age', { pct: life.life_used_pct })}
       </div>
+      {caption}
     </div>
   );
 }
@@ -528,6 +615,18 @@ function ComponentDossierDrawer({ componentId, onClose }) {
             <Row label={t('Position')} value={c.position ? (POSITION_LABEL[c.position] ? t(POSITION_LABEL[c.position]) : c.position) : '—'} />
             <Row label={t('Installed')} value={`${fmtDate(c.installed_at)} · ${km(c.installed_odometer)}`} />
             <Row label={t('Age')} value={t('{age} · {distance} driven', { age: humanAge(c.age_days, t), distance: km(c.distance_km) })} />
+            {/* The limit as it stood when this part was fitted, sat directly under the age and
+                distance it has actually run — the two numbers only mean anything together. */}
+            <Row
+              label={t('Service limit')}
+              value={
+                limitText(c.service_life, t)
+                  ? c.service_life.limit_source === 'catalog'
+                    ? t('{limit} (current catalogue figure — not recorded at fitting)', { limit: limitText(c.service_life, t) })
+                    : t('{limit} — set when this part was fitted', { limit: limitText(c.service_life, t) })
+                  : t('No expectation set')
+              }
+            />
             <Row label={t('Fitted by')} value={c.installed_by_name || c.technician_name || '—'} />
             <Row label={t('Workshop')} value={c.installer?.name} />
           </DossierSection>

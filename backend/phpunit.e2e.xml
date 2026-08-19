@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    End-to-end tests that need the REAL MySQL schema.
+
+    WHY A SEPARATE CONFIG. The default suite runs on sqlite :memory:, and the full migration set
+    cannot be replayed there — 2026_06_11_140001_add_api_to_origin_enums.php issues a raw
+    `ALTER TABLE ... MODIFY COLUMN ... ENUM(...)`, which is MySQL-only syntax. Anything that has to
+    exercise a real workflow service against real tables therefore needs MySQL.
+
+    THE SCRATCH DATABASE IS NOT THE LIVE ONE. `fleet_e2e_scratch` is built by cloning the STRUCTURE
+    of `laravel` (a no-data mysqldump) — never its rows, and never migrated from empty. To rebuild
+    it, see scripts/rebuild_e2e_scratch.sh.
+
+    Run:  php vendor/bin/phpunit -c phpunit.e2e.xml
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+>
+    <testsuites>
+        <testsuite name="E2E">
+            <file>tests/Feature/ComponentLimitSnapshotTest.php</file>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
+        <env name="BCRYPT_ROUNDS" value="4"/>
+        <env name="BROADCAST_CONNECTION" value="null"/>
+        <env name="CACHE_STORE" value="array"/>
+        <env name="DB_CONNECTION" value="mysql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_PORT" value="3306"/>
+        <env name="DB_DATABASE" value="fleet_e2e_scratch"/>
+        <env name="DB_USERNAME" value="root"/>
+        <env name="DB_PASSWORD" value=""/>
+        <env name="DB_URL" value=""/>
+        <env name="MAIL_MAILER" value="array"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="SESSION_DRIVER" value="array"/>
+        <env name="ASSET_LAYER_MODE" value="enforced"/>
+        <env name="PULSE_ENABLED" value="false"/>
+        <env name="TELESCOPE_ENABLED" value="false"/>
+        <env name="NIGHTWATCH_ENABLED" value="false"/>
+    </php>
+</phpunit>

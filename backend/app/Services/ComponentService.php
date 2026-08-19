@@ -823,7 +823,16 @@ class ComponentService
         $this->guardSerial($catalog, $attrs['serial_no'] ?? null, $allowMissingSerial);
         $this->guardProvenance($attrs);
 
-        $component = new VehicleComponent(array_merge($attrs, ['component_catalog_id' => $catalog->id]));
+        // Freeze the replacement limit ("12 months or 20,000 km") as it stands RIGHT NOW, the same
+        // way purchase_cost is copied from the purchase instead of being looked up later. The
+        // catalog is editable in the app, so reading it live means every past part is re-judged
+        // whenever somebody corrects a type — and the Replaced view then shows a limit that was
+        // never in force while that part was fitted. An explicit value in $attrs wins: a fitting may
+        // legitimately carry its own limit (a heavy-duty variant, a supplier's stated interval).
+        $component = new VehicleComponent(array_merge([
+            'expected_life_km'     => $catalog->expected_life_km,
+            'expected_life_months' => $catalog->expected_life_months,
+        ], $attrs, ['component_catalog_id' => $catalog->id]));
         $component->vehicle_id = $vehicleId;
         $component->status     = $status;
         $component->location   = $location;

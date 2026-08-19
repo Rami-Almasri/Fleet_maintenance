@@ -119,6 +119,69 @@ class ComponentLifecycleTest extends TestCase
         $this->assertSame('age', $life['basis']);
     }
 
+    // ───────────────────────── which limit judges the part ─────────────────────────
+
+    /**
+     * The whole point of the snapshot: a part removed long ago must keep being judged against the
+     * limit it was FITTED under, even after somebody edits the catalog on /parts-catalog.
+     */
+    public function test_the_limit_recorded_at_fitting_beats_the_catalog(): void
+    {
+        // Row says 12 mo / 20,000 km; the catalog has since been corrected down to 6 mo / 10,000.
+        $limit = ComponentLifecycle::limitInForce(20000, 12, 10000, 6);
+
+        $this->assertSame(20000, $limit['km']);
+        $this->assertSame(12, $limit['months']);
+        $this->assertSame('recorded', $limit['source']);
+    }
+
+    /**
+     * The snapshot wins WHOLE, never field-by-field. A row that recorded a distance and no time
+     * limit meant exactly that — inheriting the catalog's months would invent a clock nobody set
+     * at fitting, and could flip the part to 'overdue' on it.
+     */
+    public function test_a_partial_snapshot_does_not_inherit_the_missing_half(): void
+    {
+        $limit = ComponentLifecycle::limitInForce(20000, null, 10000, 6);
+
+        $this->assertSame(20000, $limit['km']);
+        $this->assertNull($limit['months']);
+        $this->assertSame('recorded', $limit['source']);
+
+        // And the verdict must not be driven by a months clock that was never in force.
+        $life = ComponentLifecycle::serviceLife($limit['km'], $limit['months'], 900, 1000, $limit['source']);
+        $this->assertSame('within', $life['status']);
+        $this->assertSame('distance', $life['basis']);
+    }
+
+    /** Rows written before the snapshot columns existed fall back — and SAY that they fell back. */
+    public function test_rows_with_no_snapshot_fall_back_to_the_catalog_and_are_labelled(): void
+    {
+        $limit = ComponentLifecycle::limitInForce(null, null, 10000, 6);
+
+        $this->assertSame(10000, $limit['km']);
+        $this->assertSame(6, $limit['months']);
+        $this->assertSame('catalog', $limit['source']);
+
+        $life = ComponentLifecycle::serviceLife($limit['km'], $limit['months'], 30, 1000, $limit['source']);
+        $this->assertSame('catalog', $life['limit_source']);
+    }
+
+    /** No expectation anywhere is 'none' — never a zero, which would read as "due immediately". */
+    public function test_no_expectation_anywhere_is_none(): void
+    {
+        $limit = ComponentLifecycle::limitInForce(null, null, null, null);
+
+        $this->assertNull($limit['km']);
+        $this->assertNull($limit['months']);
+        $this->assertSame('none', $limit['source']);
+
+        // And it must still resolve to 'unknown' rather than a guessed verdict.
+        $life = ComponentLifecycle::serviceLife($limit['km'], $limit['months'], 900, 80000, $limit['source']);
+        $this->assertSame('unknown', $life['status']);
+        $this->assertSame('none', $life['limit_source']);
+    }
+
     // ───────────────────────── cost per km ─────────────────────────
 
     public function test_cost_per_km_is_null_for_a_part_that_has_not_moved(): void

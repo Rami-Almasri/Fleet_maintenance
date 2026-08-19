@@ -53,14 +53,43 @@ final class ComponentLifecycle
     }
 
     /**
-     * How much of the catalog's expected life a part has used.
+     * WHICH limit judges this part: the one frozen onto the row at install, or the type's current
+     * expectation from the catalog.
+     *
+     * The snapshot wins WHOLE, never field-by-field. A row that recorded "20,000 km" and said
+     * nothing about months meant exactly that — merging today's catalog months into it would invent
+     * a time limit nobody stated at install and could flip a part to 'overdue' on a clock that was
+     * never set. So: any snapshot value present => the row's pair is the answer, source 'recorded'.
+     * Nothing recorded (every row written before the snapshot columns existed) => fall back to the
+     * catalog, source 'catalog', and let the UI say so rather than passing it off as history.
+     *
+     * @return array{km: ?int, months: ?int, source: string} source: recorded | catalog | none
+     */
+    public static function limitInForce(?int $rowKm, ?int $rowMonths, ?int $catalogKm, ?int $catalogMonths): array
+    {
+        if ($rowKm !== null || $rowMonths !== null) {
+            return ['km' => $rowKm, 'months' => $rowMonths, 'source' => 'recorded'];
+        }
+
+        if ($catalogKm !== null || $catalogMonths !== null) {
+            return ['km' => $catalogKm, 'months' => $catalogMonths, 'source' => 'catalog'];
+        }
+
+        return ['km' => null, 'months' => null, 'source' => 'none'];
+    }
+
+    /**
+     * How much of the expected life a part has used.
      *
      * Distance and time are BOTH measured and the HARSHER one wins: a taxi burns through kilometres
-     * while a parked car ages its rubber, and a part is due when either clock runs out. When the
-     * catalog states no expectation the answer is 'unknown' — deliberately not a guess, because an
+     * while a parked car ages its rubber, and a part is due when either clock runs out. When no
+     * expectation is stated the answer is 'unknown' — deliberately not a guess, because an
      * invented service interval would drive real replacement spend.
+     *
+     * `$limitSource` is carried through untouched so the UI can distinguish the limit this part was
+     * actually fitted under from the type's present-day expectation standing in for it.
      */
-    public static function serviceLife(?int $expectedKm, ?int $expectedMonths, ?int $ageDays, ?int $distanceKm): array
+    public static function serviceLife(?int $expectedKm, ?int $expectedMonths, ?int $ageDays, ?int $distanceKm, string $limitSource = 'catalog'): array
     {
         $byKm     = ($expectedKm && $distanceKm !== null) ? $distanceKm / $expectedKm * 100 : null;
         $byMonths = ($expectedMonths && $ageDays !== null) ? $ageDays / ($expectedMonths * self::DAYS_PER_MONTH) * 100 : null;
@@ -72,6 +101,7 @@ final class ComponentLifecycle
                 'basis'                => null,
                 'expected_life_km'     => $expectedKm,
                 'expected_life_months' => $expectedMonths,
+                'limit_source'         => $limitSource,
             ];
         }
 
@@ -88,6 +118,7 @@ final class ComponentLifecycle
             'basis'                => ($byKm !== null && $byKm >= ($byMonths ?? -INF)) ? 'distance' : 'age',
             'expected_life_km'     => $expectedKm,
             'expected_life_months' => $expectedMonths,
+            'limit_source'         => $limitSource,
         ];
     }
 
