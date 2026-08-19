@@ -19,8 +19,9 @@ PRUNE_DAYS="${PRUNE_DAYS:-14}"
 TARGET="${1:-all}"
 case "$TARGET" in
   all)           ARTISAN_CMD="fleet:refresh" ;;
-  cars)          ARTISAN_CMD="om:sync --vehicles --skip-backup" ;;
-  carinfo)       ARTISAN_CMD="sync:vehicles" ;;
+  cars)          ARTISAN_CMD="om:sync --vehicles --skip-backup" ;;   # refresh only — adds no car
+  fleet|carinfo) ARTISAN_CMD="sync:vehicles" ;;                      # the "Faster" register: WHICH cars exist
+  fleet-audit)   ARTISAN_CMD="fleet:register-audit" ;;               # read-only gap report
   registrations) ARTISAN_CMD="sync:registrations" ;;
   insurance)     ARTISAN_CMD="sync:insurance" ;;
   contracts)     ARTISAN_CMD="om:sync --contracts --months=6 --skip-backup" ;;
@@ -29,7 +30,7 @@ case "$TARGET" in
   customers)     ARTISAN_CMD="om:sync --customers-bulk --skip-backup" ;;
   maintenance)   ARTISAN_CMD="import:maintenance-sheet" ;;
   garages)       ARTISAN_CMD="garages:sync" ;;
-  *) echo "Unknown target '$TARGET'. Valid: all cars carinfo registrations insurance contracts contracts-all invoices customers maintenance garages"; exit 2 ;;
+  *) echo "Unknown target '$TARGET'. Valid: all fleet cars carinfo fleet-audit registrations insurance contracts contracts-all invoices customers maintenance garages"; exit 2 ;;
 esac
 
 LOG_DIR="$ARTISAN_DIR/storage/logs/sync"

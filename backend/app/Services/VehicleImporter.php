@@ -13,12 +13,20 @@ class VehicleImporter
     }
 
     /**
-     * ENRICH our API-sourced cars from the "Faster" master tab (make/model/color/category +
-     * FASTER Asset prices), matched by VIN. The API is the SOLE source of which cars exist —
-     * the sheet NEVER creates a vehicle. A sheet row whose VIN isn't in our API fleet is
-     * skipped and reported as "unmatched" (so a junk/typo VIN can't become a phantom car).
+     * Import the fleet from the "Faster" master tab: this sheet is the SOLE source of WHICH cars
+     * exist. A row is matched to a car by VIN (then by plate, for the API cars that carry no VIN);
+     * a row that matches nothing is CREATED as a new vehicle with origin='sheet'.
      *
-     * @return array{created:int, updated:int, skipped:int, unmatched:int, problems:array<int,string>}
+     * Reversed on 2026-08-19 at the owner's instruction — the OfficeManager API used to decide
+     * membership, but OM lists hundreds of long-sold historical cars under our owner number and a
+     * car the team actually takes on appears in this sheet first. OfficeManagerSync::importFleetVehicles()
+     * is now enrich-only and can no longer create a car, so the fleet is exactly what this tab lists.
+     *
+     * The sheet still only OWNS make/model/colour + the FASTER Asset price; the API keeps writing
+     * the identity/operational fields (plate, year, odometer, status, car_serial) it holds, because
+     * it runs after this phase and this phase preserves any value already on the row.
+     *
+     * @return array{created:int, updated:int, skipped:int, problems:array<int,string>}
      */
     public function import(bool $overwriteEnrichment = false, array $overwriteVins = []): array
     {
@@ -51,51 +59,61 @@ class VehicleImporter
         // otherwise every null-VIN car would be orphaned as "unmatched" and never enriched.
         $nullVinByPlate = $this->nullVinApiCarsByPlate();
 
-        $created = 0; // the sheet never creates a car now — kept at 0 for the run summary
+        $created = 0;            // sheet rows that matched no car and became one
         $updated = 0;
         $skipped = 0;
         $protected = 0;
         $preserved = 0;
         $backfilled = 0;         // null-VIN API cars matched by plate and given their VIN
-        $unmatched = 0;          // sheet rows whose VIN isn't in our API fleet (NOT created)
-        $unmatchedSamples = [];
+        $duplicates = 0;         // the same VIN listed twice in the tab — only the first row counts
+        $restored = 0;           // retired cars the register lists again, brought back with their history
+        $createdSamples = [];
         $problems = [];
+        $seenVins = [];
 
         foreach (array_slice($rows, $headerRow) as $i => $row) {
             $rowNo = $headerRow + $i + 1;
 
-            $vin = trim($this->cell($row, $map['chassis'] ?? null));
+            $vin = strtoupper(trim($this->cell($row, $map['chassis'] ?? null)));
             if ($vin === '') {
                 $skipped++;
                 continue;
             }
 
+            // The tab is the fleet register now, so a VIN typed twice would otherwise create the
+            // car twice. First row wins; the rest are reported, not written.
+            if (isset($seenVins[$vin])) {
+                $duplicates++;
+                continue;
+            }
+            $seenVins[$vin] = true;
+
             [$make, $model] = $this->splitName($this->cell($row, $map['name'] ?? null));
 
             $plateNo = trim(trim($this->cell($row, $map['code'] ?? null)) . ' ' . trim($this->cell($row, $map['plate'] ?? null)));
 
-            // Cars come from the API ONLY. The sheet just ENRICHES a car the API already
-            // created — it must NEVER create one. Match by VIN first; if that misses (the API
-            // car has no VIN), fall back to matching a null-VIN API car by plate and backfill
-            // its VIN. A sheet row that matches nothing is skipped (recorded as "unmatched"),
-            // never turned into a phantom vehicle.
+            // The sheet decides which cars exist. Match by VIN first; if that misses (the API car
+            // has no VIN), fall back to matching a null-VIN API car by plate and backfill its VIN.
+            // A row that matches nothing is a car we do not have yet — so we CREATE it.
             $matchedByPlate = false;
             $existing = Vehicle::withTrashed()->where('vin', $vin)->first();
             if (! $existing) {
-                $existing = $this->matchNullVinByPlate($plateNo, $make, $nullVinByPlate);
+                $existing = $this->matchNullVinByPlate($plateNo, $make, $nullVinByPlate)
+                    ?? $this->matchVinTypedAsPlate($vin, $nullVinByPlate);
                 $matchedByPlate = (bool) $existing;
             }
-            if (! $existing) {
-                $unmatched++;
-                if (count($unmatchedSamples) < 50) {
-                    $unmatchedSamples[] = $vin . ' — ' . trim($this->cell($row, $map['name'] ?? null)) . ($plateNo !== '' ? " (plate {$plateNo})" : '');
-                }
-                continue;
-            }
             // Never overwrite a car someone created manually on the website.
-            if ($existing->origin === 'web') {
+            if ($existing && $existing->origin === 'web') {
                 $protected++;
                 continue;
+            }
+
+            // A retired car that is back on the register. The register is the answer to "which cars
+            // do we have", so listing one again is how a car returns to the fleet — with its
+            // contracts, tickets and mileage history still attached to the same row.
+            if ($existing && $existing->trashed()) {
+                $existing->restore();
+                $restored++;
             }
 
             $data = [
@@ -126,11 +144,36 @@ class VehicleImporter
                 $data['status'] = $status;
             }
 
-            // The OM API runs FIRST and is authoritative for identity/operational data, so the
-            // sheet must not clobber it: keep any existing value for those fields and only fill
-            // them when the API left them empty. The sheet owns make/model (always overwritten
-            // above) plus color.
-            if (! ($overwriteEnrichment || in_array(strtoupper($vin), $overwriteVins, true))) {
+            // A car the sheet lists and we do not hold yet. Create it here — this is the whole
+            // point of the sheet being the register: a car the team takes on is on this tab
+            // before OfficeManager has it, and OM's own list is full of cars we sold years ago.
+            // It starts as a plain sheet car; the API phase that runs next fills in car_serial,
+            // specs and the live status if OfficeManager knows it.
+            if (! $existing) {
+                try {
+                    Vehicle::create($data + [
+                        'vin'       => $vin,
+                        'origin'    => 'sheet',
+                        'plate_key' => $plateNo !== '' ? PlateResolver::plateDigits($plateNo) : null,
+                        // The sheet's rental segment ("Premium Sedan"), kept in its own column the
+                        // way VehicleStatusImporter keeps it — `category` is OM's plate category.
+                        'sheet_category' => $this->strOrNull($this->cell($row, $map['category'] ?? null)),
+                    ]);
+                    $created++;
+                    if (count($createdSamples) < 50) {
+                        $createdSamples[] = $vin . ' — ' . trim($this->cell($row, $map['name'] ?? null)) . ($plateNo !== '' ? " (plate {$plateNo})" : '');
+                    }
+                } catch (Throwable $e) {
+                    $problems[] = "Row {$rowNo} (VIN {$vin}): could not create — " . $e->getMessage();
+                }
+                continue;
+            }
+
+            // The OM API phase runs AFTER this one and is authoritative for identity/operational
+            // data, so the sheet must not clobber it: keep any existing value for those fields and
+            // only fill them when the API left them empty. The sheet owns make/model (always
+            // overwritten above) plus color.
+            if (! ($overwriteEnrichment || in_array($vin, $overwriteVins, true))) {
                 foreach (['year', 'plate_no', 'odometer', 'status', 'color', 'category'] as $field) {
                     if ($existing->{$field} !== null && $existing->{$field} !== '') {
                         unset($data[$field]);
@@ -161,8 +204,8 @@ class VehicleImporter
             }
         }
 
-        return compact('created', 'updated', 'skipped', 'protected', 'preserved', 'backfilled', 'unmatched', 'problems')
-            + ['unmatched_samples' => $unmatchedSamples];
+        return compact('created', 'updated', 'skipped', 'protected', 'preserved', 'backfilled', 'duplicates', 'restored', 'problems')
+            + ['created_samples' => $createdSamples];
     }
 
     /**
@@ -212,6 +255,36 @@ class VehicleImporter
         return $car;
     }
 
+    /**
+     * Catch the car whose "plate" in OfficeManager is really the tail of its own VIN — somebody
+     * typed the chassis number into the plate field. Those rows carry no VIN and no usable plate,
+     * so neither match above can reach them, and the sheet row would create the car a SECOND time
+     * (splitting its contracts and repair history across two rows). Six digits or more standing at
+     * the end of this row's VIN is not a coincidence, it is that typo.
+     *
+     * A VIN does not always END in its digits (one reads A11446994423C), so a run of EIGHT or more
+     * digits is also accepted anywhere inside it. Eight is where a coincidence stops being credible:
+     * six digits loose in a 17-character VIN would collide by chance roughly once per full sync.
+     *
+     * Deliberately no make check: these rows are damaged, and their make is damaged with them
+     * ("DODGE CHECKER MARTHON" was filed as make "CHECKER"). The VIN digits are the harder evidence.
+     */
+    protected function matchVinTypedAsPlate(string $vin, array &$nullVinByPlate): ?Vehicle
+    {
+        foreach ($nullVinByPlate as $digits => $cars) {
+            $len = strlen($digits);
+            if (($len >= 6 && str_ends_with($vin, $digits)) || ($len >= 8 && str_contains($vin, $digits))) {
+                $car = PlateResolver::pickBest($cars);
+                if ($car) {
+                    unset($nullVinByPlate[$digits]); // claimed — don't let another sheet row reuse it
+                    return $car;
+                }
+            }
+        }
+
+        return null;
+    }
+
     /** A plate's digits with leading zeros stripped, so "K 20756" / "0020756" / "20756" all match. */
     protected function plateDigits($plate): string
     {
@@ -251,7 +324,8 @@ class VehicleImporter
 
         $out = [];
         foreach (array_slice($rows, 1) as $row) {
-            $vin = trim($this->cell($row, $vinIdx));
+            // Upper-cased so it lines up with the fleet tab's VIN, which the import normalizes.
+            $vin = strtoupper(trim($this->cell($row, $vinIdx)));
             if ($vin === '') {
                 continue;
             }

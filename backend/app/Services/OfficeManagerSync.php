@@ -139,20 +139,24 @@ class OfficeManagerSync
     }
 
     /**
-     * Create/refresh OUR vehicles straight from the OM API so a car newly added in
-     * OfficeManager under our owner number is picked up automatically — no manual sheet edit.
+     * REFRESH our vehicles from the OM API: identity/operational data (VIN, plate, year, category,
+     * status, odometer, car_serial), specs, rental defaults and the mortgage flag. make/model/color
+     * are owned by the sheet and are NOT overwritten here.
+     *
+     * It does NOT decide which cars exist. Since 2026-08-19 the "Faster" sheet tab is the fleet
+     * register (VehicleImporter), and this phase can only touch a car that is already on it — so it
+     * MUST run AFTER the sheet import. An API car under our owner number that the sheet does not
+     * list is left alone and reported as `unlisted`: OfficeManager still carries hundreds of cars
+     * we sold years ago under owner 1541, and importing them was what filled the fleet with them.
      *
      * "Ours" = a car under one of our owner numbers (officemanager.owner_nos, e.g. 1541) OR a
      * CarSerial explicitly listed in officemanager.extra_car_serials (e.g. the one GMC we run
-     * under owner 2088). MUST run BEFORE the sheet import: the API is authoritative for
-     * identity/operational data (VIN, plate, year, category, status, odometer, car_serial);
-     * make/model/color are owned by the sheet and are NOT overwritten here (we only set a
-     * provisional name from the API's CarName when first creating a row, so no car is nameless).
+     * under owner 2088).
      *
-     * Keyed by VIN when present (so the sheet's VIN-keyed import lines up), else by OM:CarSerial.
+     * Matched by VIN when present (so the sheet's VIN-keyed register lines up), else by OM:CarSerial.
      * A car someone added manually on the website (origin 'web') is never touched.
      *
-     * @return array{api_vehicles:int, created:int, updated:int}
+     * @return array{api_vehicles:int, created:int, updated:int, unlisted:int}
      */
     public function importFleetVehicles(?callable $progress = null): array
     {
@@ -164,7 +168,7 @@ class OfficeManagerSync
             $progress(0, $total);
         }
 
-        $seen = 0; $created = 0; $updated = 0;
+        $seen = 0; $created = 0; $updated = 0; $unlisted = 0; $retired = 0; $unlistedSamples = [];
         foreach ($this->api->vehicles() as $row) {
             $seen++;
             $serial = isset($row['CarSerial']) ? (string) $row['CarSerial'] : '';
@@ -192,50 +196,83 @@ class OfficeManagerSync
                     ->orWhere('car_serial', $serial)
                     ->first();
             }
-
-            if ($vehicle) {
-                if ($vehicle->origin === 'web') {
-                    continue; // never clobber a car created manually on the website
-                }
-                // Odometer only ever goes UP: OM often has the same car typed in twice with the
-                // real mileage on one row and a 0/1 placeholder on the other. Keep the highest so
-                // a stale/placeholder duplicate row can't lower a good reading. The same rule
-                // settles OM against the "Oil Change" sheet's MILAGE column (OilChangeImporter)
-                // and against a reading captured on a ticket — a car cannot un-drive kilometres,
-                // so whoever holds the higher number holds the truth, and stamps their name on it.
-                if (array_key_exists('odometer', $data)) {
-                    if ((int) ($vehicle->odometer ?? 0) >= (int) $data['odometer']) {
-                        unset($data['odometer']);   // ours is already at or ahead of OM's — leave it be
-                    } else {
-                        $data['odometer_source']    = 'om';
-                        $data['odometer_source_at'] = now();
-                    }
-                }
-                // Battery date only ever goes FORWARD, for the same reason and by the same rule. This
-                // column is no longer API-only: closing a ticket that carried a battery replacement
-                // stamps it here (Vehicle::recordServiceDone ← confirmRoutineServices). OM is a READ-ONLY
-                // replica for us — we can never push that date back to it — so every scheduled sync
-                // carried OM's older date over the change we had just recorded, resetting the car's
-                // battery age and re-raising the battery check for a battery fitted yesterday.
-                // Whoever holds the LATER date holds the truth: a battery cannot be fitted in the past.
-                if (array_key_exists('battery_last_changed', $data) && $vehicle->battery_last_changed) {
-                    $incoming = $data['battery_last_changed'];
-                    if ($incoming && $vehicle->battery_last_changed->gt(Carbon::parse($incoming))) {
-                        unset($data['battery_last_changed']);
-                    }
-                }
-                $vehicle->fill($data)->save();
-                $updated++;
-            } else {
-                // Provisional make/model from the API name so a brand-new car isn't nameless;
-                // the sheet import (running next) overwrites these with the curated values.
-                [$make, $model] = $this->splitName((string) ($row['CarName'] ?? ''));
-                $vehicle = Vehicle::create($data + array_filter([
-                    'make'  => $make,
-                    'model' => $model,
-                ], fn ($v) => $v !== null && $v !== ''));
-                $created++;
+            // Last resort, and only for an OM row that carries NO chassis number: the car whose
+            // "plate" in OfficeManager is really its own VIN, typed into the wrong field. Nothing
+            // above can reach it — it has no VIN to match on and no serial we have ever seen — so
+            // it would sit here unlinked for good while the sheet's copy of the same car never
+            // learns its CarSerial, and every contract OM writes against it would find no car.
+            // Matching on the VIN digits (not on plates) keeps this off the general plate path.
+            $matchedByVinInPlate = false;
+            if (! $vehicle && $vin === '') {
+                $vehicle = $this->matchByVinTypedAsPlate((string) ($row['CarNo'] ?? ''));
+                $matchedByVinInPlate = (bool) $vehicle;
             }
+
+            // OfficeManager not holding a chassis number is not the same as the car not having
+            // one. Writing its blank over the VIN the sheet gave us would erase the only key the
+            // two sources share — and on a car matched by the VIN-in-plate typo it would also
+            // stamp that same chassis number back on as the car's plate.
+            if ($vin === '') {
+                unset($data['vin']);
+            }
+            if ($matchedByVinInPlate) {
+                unset($data['plate_no']);
+            }
+
+            // Not on the fleet register — OfficeManager knows a car we do not run (a car sold
+            // years ago, or one that belongs to another arm of the business). Report it so the
+            // gap is visible on the Data Sync page, and leave the fleet alone.
+            if (! $vehicle) {
+                $unlisted++;
+                if (count($unlistedSamples) < 50) {
+                    $unlistedSamples[] = trim(($row['CarName'] ?? '(no name)') . ' — ' . ($row['CarNo'] ?? 'no plate')
+                        . ($vin !== '' ? " · VIN {$vin}" : '') . ($serial !== '' ? " · OM:{$serial}" : ''));
+                }
+                if ($progress && $seen % 100 === 0) {
+                    $progress($seen, $total);
+                }
+                continue;
+            }
+
+            if ($vehicle->origin === 'web') {
+                continue; // never clobber a car created manually on the website
+            }
+            // A retired car — one the register dropped. It keeps its history, but it is out of the
+            // fleet, so the nightly sync stops rewriting its status and odometer. Putting it back on
+            // the register is what brings it back (VehicleImporter restores it).
+            if ($vehicle->trashed()) {
+                $retired++;
+                continue;
+            }
+            // Odometer only ever goes UP: OM often has the same car typed in twice with the
+            // real mileage on one row and a 0/1 placeholder on the other. Keep the highest so
+            // a stale/placeholder duplicate row can't lower a good reading. The same rule
+            // settles OM against the "Oil Change" sheet's MILAGE column (OilChangeImporter)
+            // and against a reading captured on a ticket — a car cannot un-drive kilometres,
+            // so whoever holds the higher number holds the truth, and stamps their name on it.
+            if (array_key_exists('odometer', $data)) {
+                if ((int) ($vehicle->odometer ?? 0) >= (int) $data['odometer']) {
+                    unset($data['odometer']);   // ours is already at or ahead of OM's — leave it be
+                } else {
+                    $data['odometer_source']    = 'om';
+                    $data['odometer_source_at'] = now();
+                }
+            }
+            // Battery date only ever goes FORWARD, for the same reason and by the same rule. This
+            // column is no longer API-only: closing a ticket that carried a battery replacement
+            // stamps it here (Vehicle::recordServiceDone ← confirmRoutineServices). OM is a READ-ONLY
+            // replica for us — we can never push that date back to it — so every scheduled sync
+            // carried OM's older date over the change we had just recorded, resetting the car's
+            // battery age and re-raising the battery check for a battery fitted yesterday.
+            // Whoever holds the LATER date holds the truth: a battery cannot be fitted in the past.
+            if (array_key_exists('battery_last_changed', $data) && $vehicle->battery_last_changed) {
+                $incoming = $data['battery_last_changed'];
+                if ($incoming && $vehicle->battery_last_changed->gt(Carbon::parse($incoming))) {
+                    unset($data['battery_last_changed']);
+                }
+            }
+            $vehicle->fill($data)->save();
+            $updated++;
 
             // Insurance (insurer + expiry) is now sourced from the "F Insurance" sheet, NOT the
             // API (see InsuranceImporter). The API only carries the mortgage flag onto the car's
@@ -251,7 +288,41 @@ class OfficeManagerSync
             $progress($seen, $total ?: $seen);
         }
 
-        return ['api_vehicles' => $seen, 'created' => $created, 'updated' => $updated];
+        // `created` stays in the shape (always 0 now) so every caller, stored SyncRun result and
+        // report that reads it keeps working — the API simply never creates a car any more.
+        return ['api_vehicles' => $seen, 'created' => $created, 'updated' => $updated,
+            'unlisted' => $unlisted, 'retired' => $retired, 'unlisted_samples' => $unlistedSamples];
+    }
+
+    /** Our not-yet-linked cars as id => VIN, built once per run for matchByVinTypedAsPlate(). */
+    protected ?array $unlinkedVins = null;
+
+    /**
+     * Find OUR car for an OM row whose CarNo is really that car's chassis number. Only cars we
+     * have not linked yet are considered, and the evidence has to be strong: six digits or more
+     * ending our VIN, or eight or more standing anywhere inside it. VehicleImporter runs the same
+     * rule from the other side — see matchVinTypedAsPlate() there for why eight is the floor.
+     */
+    protected function matchByVinTypedAsPlate(string $carNo): ?Vehicle
+    {
+        $digits = PlateResolver::plateDigits($carNo);
+        if (strlen($digits) < 6) {
+            return null;
+        }
+
+        if ($this->unlinkedVins === null) {
+            $this->unlinkedVins = Vehicle::whereNull('car_serial')->whereNotNull('vin')
+                ->pluck('vin', 'id')->map(fn ($v) => strtoupper(trim($v)))->all();
+        }
+
+        foreach ($this->unlinkedVins as $id => $vin) {
+            if (str_ends_with($vin, $digits) || (strlen($digits) >= 8 && str_contains($vin, $digits))) {
+                unset($this->unlinkedVins[$id]); // claimed — one OM row per car
+                return Vehicle::withTrashed()->find($id);
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -312,7 +383,10 @@ class OfficeManagerSync
             'full_fuel_cost'    => $this->num($row['FullFuelCost'] ?? null) ?: null,
 
             'external_id' => $serial ? 'OM:' . $serial : null,
-            'origin'      => 'api',
+            // No 'origin' here. This phase only refreshes cars that already exist, and a car's
+            // origin records where it CAME FROM — since the register moved to the sheet, stamping
+            // 'api' on every car it touched was rewriting that answer to "the API" for the whole
+            // fleet, one night after the sheet had created it.
             'synced_at'   => now(),
         ];
 

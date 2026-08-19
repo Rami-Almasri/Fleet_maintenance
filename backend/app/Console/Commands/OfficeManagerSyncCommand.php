@@ -264,7 +264,14 @@ class OfficeManagerSyncCommand extends Command
         $this->line('---- Reconciliation' . ($dryRun ? ' (DRY RUN -- nothing written)' : '') . ' ----');
 
         if ($v = ($result['api_vehicles'] ?? null)) {
-            $this->line("Cars from API (our owners): +{$v['created']} new / {$v['updated']} updated (scanned {$v['api_vehicles']} API cars)");
+            // The API refreshes cars; it does not decide which exist — the "Faster" sheet does.
+            $this->line("Cars from API (our owners): {$v['updated']} refreshed (scanned {$v['api_vehicles']} API cars)");
+            if (($v['unlisted'] ?? 0) > 0) {
+                $this->line("  {$v['unlisted']} OM car(s) under our owner number are NOT on the fleet sheet — left alone:");
+                foreach (array_slice($v['unlisted_samples'] ?? [], 0, 10) as $s) {
+                    $this->line('    - ' . $s);
+                }
+            }
         }
 
         if ($c = ($result['contracts'] ?? null)) {

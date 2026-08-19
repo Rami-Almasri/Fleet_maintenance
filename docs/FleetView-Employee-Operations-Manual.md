@@ -17,8 +17,8 @@ Each scenario answers the same 10 questions: **(1) Role · (2) Permission · (3)
 **Legend:** ✅ works end-to-end · ⚠️ backend works but UI unwired / partial · 🔴 known gap.
 
 **Key architectural fact to understand first:** FleetView is a **read + operate** layer on top of two external systems.
-- **OfficeManager (OM) API** is the *source of truth* for which cars exist, contracts, customers, and invoices. It is **read-only** — FleetView pulls from it, never pushes.
-- **Google Sheets** *enrich* the OM data (make/model/color/price, maintenance history log, oil-change intervals) and are read-only sources.
+- **OfficeManager (OM) API** is the *source of truth* for contracts, customers, and invoices, and it refreshes each car's identity/status/odometer. It is **read-only** — FleetView pulls from it, never pushes.
+- **Google Sheets.** The **"Faster" tab is the fleet register: it decides which cars exist** (since 2026-08-19 — OM lists cars we sold years ago, and a car we take on is written here first). The other tabs *enrich* (make/model/color/price, maintenance history log, oil-change intervals). All read-only sources.
 - **FleetView's own database** adds the operational layer OM doesn't have: the maintenance workflow, inspections, logistics, condition grading, readiness, notifications.
 
 Because of this, **most of the fleet/contract/customer data arrives via nightly sync, not by employees typing it in.** Employees mostly *operate* on synced data (open maintenance tickets, inspect, grade, dispatch) rather than *create* core records.
@@ -376,8 +376,8 @@ This is the most complete part of the system. A **ticket** is a `maintenances` r
 # PART G — Integration Workflows
 
 ### OfficeManager (OM) API — the source of truth
-- **What enters:** vehicles (which cars exist), contracts (open + recently closed), customers, invoices — scoped to owner `1541` (+ extra serials).
-- **When:** nightly `om:sync --link --contracts --invoices --customers` at 03:00 (Laravel scheduler) and/or the `sync-fleet.cmd` runner via Task Scheduler. `--link` refreshes existing car statuses; new cars need a manual `--vehicles`.
+- **What enters:** vehicle details (NOT which cars exist — that is the "Faster" sheet register), contracts (open + recently closed), customers, invoices — scoped to owner `1541` (+ extra serials).
+- **When:** `sync:vehicles` (the register) at 02:50, then nightly `om:sync --vehicles --link …` at 03:00 (Laravel scheduler) and/or the `sync-fleet.cmd` runner via Task Scheduler. `--link` refreshes existing car statuses; a car new to the fleet is added by putting it on the sheet, never by the API.
 - **Direction:** **read-only** — the API is a replica (POST → 405). FleetView never writes back.
 - **If it fails:** the phase is logged failed and retried next run; every phase is idempotent (`updateOrCreate`), so re-runs never duplicate. If the host can't reach `81.85.92.150:8080`, insights/reconciliation pages that read live go blank; synced data stays as last-good.
 - ⚠️ **`om:sync` is scheduled in TWO places** (Laravel 03:00 *and* the runner) — confirm they're deduped/staggered.

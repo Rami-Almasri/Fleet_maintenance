@@ -11,11 +11,11 @@ class SyncVehicles extends Command
         {--overwrite : Force-refresh price/color/category for ALL sheet cars (default: fill only if empty)}
         {--overwrite-vins= : Comma-separated VINs to force-refresh price/color/category}';
 
-    protected $description = 'Import/sync vehicles from the Google Sheet "Faster" master tab (enriched with FASTER Asset prices).';
+    protected $description = 'Import the fleet from the Google Sheet "Faster" master tab — the register of which cars exist (enriched with FASTER Asset prices).';
 
     public function handle(VehicleImporter $importer): int
     {
-        $this->info('Reading the "Faster" master tab and importing vehicles...');
+        $this->info('Reading the "Faster" master tab — the fleet register — and importing vehicles...');
 
         $overwrite = (bool) $this->option('overwrite');
         $vins = array_values(array_filter(array_map('trim', explode(',', (string) $this->option('overwrite-vins')))));
@@ -23,14 +23,17 @@ class SyncVehicles extends Command
         $result = $importer->import($overwrite, $vins);
 
         $this->newLine();
-        $this->info("Enriched (matched an API car) : {$result['updated']}");
+        $this->info("Created (on the sheet, not in our fleet yet) : " . ($result['created'] ?? 0));
+        foreach (array_slice($result['created_samples'] ?? [], 0, 20) as $s) {
+            $this->line('  + ' . $s);
+        }
+        $this->info("Enriched (already had the car) : {$result['updated']}");
         $this->info("  of which matched by PLATE + VIN backfilled : " . ($result['backfilled'] ?? 0));
         $this->info("Skipped (no VIN) : {$result['skipped']}");
         $this->info("Protected (added on website) : {$result['protected']}");
         $this->info("Enrichment preserved (kept local price/color/category) : {$result['preserved']}");
-        $this->warn("Unmatched (VIN not in our API fleet — NOT created) : " . ($result['unmatched'] ?? 0));
-        foreach (array_slice($result['unmatched_samples'] ?? [], 0, 20) as $s) {
-            $this->line('  - ' . $s);
+        if (($result['duplicates'] ?? 0) > 0) {
+            $this->warn("Duplicate VIN rows (only the first counted) : {$result['duplicates']}");
         }
 
         if (! empty($result['problems'])) {

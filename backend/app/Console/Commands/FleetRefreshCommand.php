@@ -19,12 +19,14 @@ use Throwable;
  * One-click "fresh sync": pull every source in the correct order and store progress in
  * a SyncRun row (so the Data Sync page can show it live). Backs up first.
  *
- * Order matters (API FIRST, then sheet — the API is the source of truth for our fleet):
- *  1. API vehicles           -> create OUR cars (owner 1541 + extra serials) with identity +
- *                               operational data (VIN/plate/year/status/odometer/car_serial),
- *                               specs + rental defaults, and the MORTGAGE flag.
- *                               This IS the link+status step now — no separate link phase.
- *  2. Sheet "Faster" tab     -> enrich make/model/color + purchase price (won't clobber #1)
+ * Order matters (SHEET FIRST, then API — the "Faster" tab is the fleet register since 2026-08-19):
+ *  1. Sheet "Faster" tab     -> WHICH CARS EXIST. Creates any car the tab lists and we do not
+ *                               hold, and enriches make/model/color + purchase price.
+ *  2. API vehicles           -> refresh identity + operational data on the cars the sheet listed
+ *                               (VIN/plate/year/status/odometer/car_serial), specs + rental
+ *                               defaults, and the MORTGAGE flag. This IS the link+status step —
+ *                               no separate link phase. It NEVER creates a car: an OM car the
+ *                               sheet does not list is reported as `unlisted` and skipped.
  *  3. Sheet "F RTA"          -> registration fines + status text
  *  4. Sheet "F Insurance"    -> Mulkiya (registration) expiry, mortgaged-by, AND the insurance
  *                               itself: insurer + insurance_expiry. Reverted to the sheet on
@@ -86,13 +88,14 @@ class FleetRefreshCommand extends Command
 
             // --- Data phases: each is GUARDED, so one failing phase (a sheet glitch, an API
             //     hiccup) records the error and the rest STILL run. Every phase is idempotent,
-            //     so a failed phase is simply retried on the next run. Order matters: API cars
-            //     first (owns identity/status), then the sheet enriches make/model/color/price.
+            //     so a failed phase is simply retried on the next run. Order matters: the sheet
+            //     first (it decides which cars exist), then the API refreshes identity/status on
+            //     the cars it listed. Reversed 2026-08-19 — the API used to run first and create.
+            $this->setPhase($run, 'Fleet register (sheet)');
+            $result['vehicles'] = $this->guard('vehicles', fn () => $vehicles->import(), $errors);
+
             $this->setPhase($run, 'Cars from API');
             $result['api_vehicles'] = $this->guard('api_vehicles', fn () => $om->importFleetVehicles($this->progress($run)), $errors);
-
-            $this->setPhase($run, 'Cars info (sheet)');
-            $result['vehicles'] = $this->guard('vehicles', fn () => $vehicles->import(), $errors);
 
             $this->setPhase($run, 'Registrations (sheet)');
             $result['registrations'] = $this->guard('registrations', fn () => $registrations->import(), $errors);
@@ -215,8 +218,8 @@ class FleetRefreshCommand extends Command
     private function summary(array $result, array $errors): void
     {
         $phases = [
+            'vehicles'      => 'Fleet register (sheet)',
             'api_vehicles'  => 'Cars (API)',
-            'vehicles'      => 'Cars info (sheet)',
             'registrations' => 'Registrations (sheet)',
             'insurance'     => 'Insurance + Mulkiya (sheet)',
             'contracts'     => 'Contracts (API)',
@@ -260,8 +263,11 @@ class FleetRefreshCommand extends Command
         $c = fn ($k) => $r[$k] ?? 0;
 
         return match ($key) {
-            'api_vehicles'  => "+{$c('created')} new / {$c('updated')} updated",
-            'vehicles'      => "{$c('updated')} enriched" . ($c('unmatched') ? ", {$c('unmatched')} unmatched" : ''),
+            // The API can no longer add a car, so what matters here is how many it refreshed and
+            // how many of its own cars our register does not list.
+            'api_vehicles'  => "{$c('updated')} refreshed" . ($c('unlisted') ? ", {$c('unlisted')} OM car(s) not on the sheet" : ''),
+            'vehicles'      => "+{$c('created')} new / {$c('updated')} enriched"
+                . ($c('duplicates') ? ", {$c('duplicates')} duplicate VIN row(s)" : ''),
             'contracts'     => "+{$c('created')} new / {$c('updated')} updated" . ($c('foreign_skipped') ? ", {$c('foreign_skipped')} other-company skipped" : ''),
             'invoices'      => "+{$c('created')} new / {$c('updated')} updated",
             // enrichCustomersBulk returns updated/masked/missing/target — NOT the old 'failed'.

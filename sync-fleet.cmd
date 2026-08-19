@@ -5,8 +5,10 @@ REM
 REM  Double-click  -> shows a menu, pick what to sync.
 REM  Or pass a target (for Task Scheduler / quick runs):
 REM      sync-fleet.cmd all            (full sync incl. maintenance, backs up first)
-REM      sync-fleet.cmd cars           (cars from API)
-REM      sync-fleet.cmd carinfo        (make/model/color + price, from sheet)
+REM      sync-fleet.cmd fleet          (WHICH CARS EXIST - the "Faster" sheet register)
+REM      sync-fleet.cmd carinfo        (same thing; kept as the old name for scheduled tasks)
+REM      sync-fleet.cmd cars           (refresh those cars from the API - never adds a car)
+REM      sync-fleet.cmd fleet-audit    (read-only: cars we hold that the register does not list)
 REM      sync-fleet.cmd registrations  (RTA fines, from sheet)
 REM      sync-fleet.cmd insurance      (insurance + Mulkiya)
 REM      sync-fleet.cmd contracts      (contracts - last 6 months, fast)
@@ -40,8 +42,8 @@ set "INTERACTIVE=1"
 echo(
 echo   ================= FLEET SYNC =================
 echo     1.  Full sync  (everything incl. maintenance - backs up first)
-echo     2.  Cars            (API: VIN/plate/year/status/odometer)
-echo     3.  Cars info       (sheet: make/model/color/price)
+echo     2.  Fleet register  (sheet: WHICH CARS EXIST - run this first)
+echo     3.  Cars            (API: VIN/plate/year/status/odometer - adds no car)
 echo     4.  Registrations   (sheet: RTA fines)
 echo     5.  Insurance + Mulkiya
 echo     6.  Contracts - last 6 months   (fast: all open + recent)
@@ -51,6 +53,7 @@ echo     9.  Customer names
 echo    10.  Maintenance log  (sheet: N-Maintenance ^& Repair)
 echo    11.  Garages          (sheet: garages ^& parts shops -^> vendors)
 echo    12.  Customer cases   (sheet: customer-charge maintenance log)
+echo    13.  Fleet audit      (read-only: cars we hold that the register omits)
 echo     0.  Quit
 echo   =============================================
 echo(
@@ -58,8 +61,8 @@ set "TARGET="
 set /p "CHOICE=Pick a number then press Enter: "
 if "%CHOICE%"=="0" goto :eof
 if "%CHOICE%"=="1" set "TARGET=all"
-if "%CHOICE%"=="2" set "TARGET=cars"
-if "%CHOICE%"=="3" set "TARGET=carinfo"
+if "%CHOICE%"=="2" set "TARGET=fleet"
+if "%CHOICE%"=="3" set "TARGET=cars"
 if "%CHOICE%"=="4" set "TARGET=registrations"
 if "%CHOICE%"=="5" set "TARGET=insurance"
 if "%CHOICE%"=="6" set "TARGET=contracts"
@@ -69,13 +72,16 @@ if "%CHOICE%"=="9" set "TARGET=customers"
 if "%CHOICE%"=="10" set "TARGET=maintenance"
 if "%CHOICE%"=="11" set "TARGET=garages"
 if "%CHOICE%"=="12" set "TARGET=customer-cases"
+if "%CHOICE%"=="13" set "TARGET=fleet-audit"
 if not defined TARGET ( echo   Invalid choice - try again. & goto menu )
 
 :resolve
 set "CMD="
 if /i "%TARGET%"=="all"           ( set "CMD=fleet:refresh"                          & set "NAME=Full sync" )
 if /i "%TARGET%"=="cars"          ( set "CMD=om:sync --vehicles --skip-backup"       & set "NAME=Cars (API)" )
-if /i "%TARGET%"=="carinfo"       ( set "CMD=sync:vehicles"                          & set "NAME=Cars info (sheet)" )
+if /i "%TARGET%"=="fleet"         ( set "CMD=sync:vehicles"                          & set "NAME=Fleet register (sheet)" )
+if /i "%TARGET%"=="carinfo"       ( set "CMD=sync:vehicles"                          & set "NAME=Fleet register (sheet)" )
+if /i "%TARGET%"=="fleet-audit"   ( set "CMD=fleet:register-audit"                   & set "NAME=Fleet register audit (read-only)" )
 if /i "%TARGET%"=="registrations" ( set "CMD=sync:registrations"                     & set "NAME=Registrations (sheet)" )
 if /i "%TARGET%"=="insurance"     ( set "CMD=sync:insurance"                         & set "NAME=Insurance + Mulkiya" )
 if /i "%TARGET%"=="contracts"     ( set "CMD=om:sync --contracts --months=6 --skip-backup" & set "NAME=Contracts (last 6 months)" )
@@ -86,7 +92,7 @@ if /i "%TARGET%"=="maintenance"   ( set "CMD=import:maintenance-sheet"          
 if /i "%TARGET%"=="customer-cases" ( set "CMD=import:customer-cases"                 & set "NAME=Customer cases (sheet)" )
 if /i "%TARGET%"=="garages"       ( set "CMD=garages:sync"                           & set "NAME=Garages to vendors (sheet)" )
 if not defined CMD (
-  echo Unknown target "%TARGET%". Valid: all cars carinfo registrations insurance contracts invoices customers maintenance customer-cases garages
+  echo Unknown target "%TARGET%". Valid: all fleet cars carinfo fleet-audit registrations insurance contracts invoices customers maintenance customer-cases garages
   if defined INTERACTIVE pause
   goto :eof
 )

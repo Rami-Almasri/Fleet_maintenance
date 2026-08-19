@@ -43,8 +43,18 @@ Schedule::command('import:garage-locations')
 // so every run refreshes + adds new). All use --skip-backup: routine delta syncs never dump the
 // DB (that would be far too often for the hourly one — schedule a separate db:backup for that).
 
-// Cars — once a day. --vehicles imports new cars from the API; --link refreshes each car's STATUS
-// (API StatusNo) + car_serial. Cars change rarely, so daily is plenty.
+// The fleet REGISTER, first thing: the "Faster" tab decides which cars exist (2026-08-19), so it
+// creates any car the team has taken on and enriches make/model/colour + purchase price. It runs
+// BEFORE om:sync because om:sync can only refresh a car that is already on the register — a car
+// added to the sheet today would otherwise wait a full day for its OM identity/status.
+Schedule::command('sync:vehicles')
+    ->dailyAt('02:50')
+    ->withoutOverlapping()
+    ->runInBackground();
+
+// Cars — once a day. --vehicles refreshes our cars from the API (identity, specs, odometer); --link
+// refreshes each car's STATUS (API StatusNo) + car_serial. Neither creates a car any more. Cars
+// change rarely, so daily is plenty.
 Schedule::command('om:sync --vehicles --link --skip-backup')
     ->dailyAt('03:00')
     ->withoutOverlapping()
@@ -75,11 +85,7 @@ Schedule::command('sync:insurance')
 // production ran for months on whatever sheet data its database happened to be seeded with while
 // om:sync kept the same rows' updated_at looking current. Ordered to mirror fleet:refresh —
 // cars first, then the registration/fines overlay, then the sheet-sourced maintenance history.
-Schedule::command('sync:vehicles')       // "Faster" tab — make/model/colour + purchase price
-    ->dailyAt('03:25')
-    ->withoutOverlapping()
-    ->runInBackground();
-
+// ("Faster" tab moved to 02:50 — it is the fleet register now and has to precede om:sync.)
 Schedule::command('sync:registrations')  // "F RTA" tab — fines count/amount + status text
     ->dailyAt('03:30')
     ->withoutOverlapping()
