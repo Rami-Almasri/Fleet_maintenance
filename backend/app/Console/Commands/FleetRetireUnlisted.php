@@ -30,6 +30,7 @@ class FleetRetireUnlisted extends Command
         {--dry : Show what would be retired and change nothing}
         {--force : Retire even cars with an open contract or an open workflow ticket}
         {--twins : Also retire a held-back car that is a DUPLICATE of a car we keep (its ticket belongs to the real car)}
+        {--strict : Keep ONLY cars whose VIN is on the register — no plate fallback, so VIN-less leftovers go too}
         {--restore : Reverse: bring every retired car back}';
 
     protected $description = 'Retire (soft-delete) every car the "Faster" register does not list, so the fleet matches the sheet';
@@ -50,12 +51,23 @@ class FleetRetireUnlisted extends Command
 
         $this->line('Register ("Faster" tab): ' . count($vins) . ' car(s).');
 
-        // A car is ours if the register lists its VIN. The plate is only a fallback for a car that
-        // has no VIN at all — matching on plate more widely would "keep" a sold car whose plate was
-        // later reassigned to a car that IS on the register.
-        $drop = Vehicle::all()->filter(function (Vehicle $v) use ($vins, $plates) {
+        // A car is ours if the register lists its VIN. The plate is a fallback for a car that has no
+        // VIN at all, so a real car we hold without a chassis number is not retired by accident.
+        //
+        // That fallback cuts the other way too: a long-sold VIN-less row whose plate digits were
+        // later reassigned to a car that IS on the register gets kept, and the fleet reads a couple
+        // of cars above the register forever. --strict drops the fallback — VIN on the register or
+        // out — which is what "my fleet is exactly this sheet" actually means. Check first that
+        // every register row HAS matched a VIN (fleet:register-audit reports it), because in strict
+        // mode a genuinely VIN-less fleet car has nothing left to match on.
+        $strict = (bool) $this->option('strict');
+
+        $drop = Vehicle::all()->filter(function (Vehicle $v) use ($vins, $plates, $strict) {
             if ($v->vin) {
                 return ! isset($vins[strtoupper(trim($v->vin))]);
+            }
+            if ($strict) {
+                return true;
             }
             $digits = PlateResolver::plateDigits($v->plate_no);
 
