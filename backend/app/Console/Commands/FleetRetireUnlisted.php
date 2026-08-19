@@ -29,6 +29,7 @@ class FleetRetireUnlisted extends Command
     protected $signature = 'fleet:retire-unlisted
         {--dry : Show what would be retired and change nothing}
         {--force : Retire even cars with an open contract or an open workflow ticket}
+        {--twins : Also retire a held-back car that is a DUPLICATE of a car we keep (its ticket belongs to the real car)}
         {--restore : Reverse: bring every retired car back}';
 
     protected $description = 'Retire (soft-delete) every car the "Faster" register does not list, so the fleet matches the sheet';
@@ -72,7 +73,37 @@ class FleetRetireUnlisted extends Command
         $busy = $this->carsWithLiveWork($ids);
 
         $held = $this->option('force') ? collect() : $drop->filter(fn ($v) => isset($busy[$v->id]));
+
+        // A held-back car that is really a DUPLICATE of a car we keep — OfficeManager's
+        // chassis-typed-into-the-plate-field row. Its ticket is work on the REAL car, so holding the
+        // duplicate back over it just leaves the same car on screen twice. An open CONTRACT is still
+        // an absolute stop: money moved against that row, so it is not a phantom.
+        $twins = [];
+        if ($this->option('twins')) {
+            foreach ($held as $v) {
+                if (($twin = $this->twinOf($v)) && ! str_contains($busy[$v->id], 'contract')) {
+                    $twins[$v->id] = $twin;
+                }
+            }
+            $held = $held->reject(fn ($v) => isset($twins[$v->id]));
+        }
+
         $retire = $drop->reject(fn ($v) => $held->contains('id', $v->id));
+
+        if ($twins) {
+            $this->newLine();
+            $this->line('DUPLICATES being retired (--twins) — the same car listed twice:');
+            $this->table(
+                ['duplicate', 'car', 'its "plate"', 'is really', 'the real car'],
+                collect($twins)->map(fn ($t, $id) => [
+                    $id,
+                    trim(($d = $drop->firstWhere('id', $id))->make . ' ' . $d->model),
+                    $d->plate_no ?: '—',
+                    'id ' . $t->id . ' · plate ' . ($t->plate_no ?: '—'),
+                    $t->vin,
+                ])->values()->all(),
+            );
+        }
 
         if ($held->isNotEmpty()) {
             $this->newLine();
@@ -83,7 +114,8 @@ class FleetRetireUnlisted extends Command
                     $v->id, trim($v->make . ' ' . $v->model), $v->plate_no ?: '—', $v->status, $busy[$v->id],
                 ])->all(),
             );
-            $this->line('Put them on the sheet, or finish the work, or re-run with --force.');
+            $this->line('Put them on the sheet, or finish the work, or re-run with --force'
+                . ($this->option('twins') ? '.' : ' (or --twins if they are duplicates).'));
         }
 
         $this->newLine();
@@ -124,6 +156,29 @@ class FleetRetireUnlisted extends Command
         $this->line('Reverse the whole thing with: php artisan fleet:retire-unlisted --restore');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * The car this row is a duplicate OF: a kept car whose VIN carries this row's "plate". Only a
+     * VIN-less row can be one — a row with its own chassis number is its own car. Same evidence bar
+     * as the importers: six digits or more ending the VIN, or eight or more anywhere inside it.
+     */
+    private function twinOf(Vehicle $v): ?Vehicle
+    {
+        if ($v->vin) {
+            return null;
+        }
+        $digits = PlateResolver::plateDigits($v->plate_no);
+        if (strlen($digits) < 6) {
+            return null;
+        }
+
+        return Vehicle::whereNotNull('vin')->get(['id', 'vin', 'plate_no', 'make', 'model'])
+            ->first(function (Vehicle $c) use ($digits) {
+                $vin = strtoupper(trim($c->vin));
+
+                return str_ends_with($vin, $digits) || (strlen($digits) >= 8 && str_contains($vin, $digits));
+            });
     }
 
     /** Bring every retired car back — the undo for this command. */
