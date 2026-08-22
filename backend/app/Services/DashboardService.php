@@ -173,49 +173,64 @@ class DashboardService
     }
 
     /**
-     * Fleet breakdown by the OfficeManager lifecycle `status` (AssetStatusNo) — the API
-     * is the source of truth, NOT the contract-derived operational_status. "Available" is
-     * exactly the cars whose status is `ready`; rented = `rented`; maintenance =
-     * `under_maintenance`; everything else (office_use / out_of_order / suspended /
-     * disposed / sold / returned) rolls into `other`.
+     * The fleet split behind the dashboard donut, in two layers.
      *
-     * `booked` is an OVERLAY, not a slice of the total: a car reserved for a future
-     * window is usually still `ready` today, so available + rented + maintenance +
-     * other = total, while booked is counted separately on top.
+     * WHICH CARS COUNT is the fleet register's decision — the "Faster" tab of the Database
+     * Warehouse workbook, captured per car in `vehicles.sheet_status`. The active fleet is
+     * exactly the rows that tab marks "Active", so `available + rented + maintenance` always
+     * equals the figure someone reads off the sheet. It is the same number by construction, not
+     * by coincidence, and it cannot drift again: no status value and no contract can promote a
+     * car into those buckets if the register does not list it as Active.
      *
-     * Returns the FULL OfficeManager lifecycle breakdown (one bucket per status), which is
-     * mutually exclusive and sums to `total` — so the dashboard donut can show a named slice
-     * for every status (Sold, Disposed, …) instead of a vague "Other". `booked` is an
-     * operational overlay (a car can be ready AND booked), so it's reported separately and is
-     * NOT part of the donut sum.
+     * WHAT EACH CAR IS DOING is then decided by CONTRACTS, not by the lifecycle `status` column,
+     * which drifts badly (a car out on rent usually still reads `ready` in OfficeManager).
+     * Priority: open type-U (in the garage) ⇒ open type-C (out earning) ⇒ available.
      *
-     * @return array{available:int, rented:int, maintenance:int, office_use:int, out_of_order:int, suspended:int, returned:int, sold:int, disposed:int, booked:int, other:int, total:int}
+     * The register deliberately outranks live contract data here. A car the sheet calls "Office"
+     * that still carries an open rental is reported under office_use, not On Rent. That conflict
+     * is not hidden — it is surfaced on the Vehicles page as an amber "Register mismatch" chip,
+     * which is where it can actually be resolved. Silently counting the car twice, once per
+     * source, is what produced the drift this method exists to prevent.
+     *
+     * Everything the register does not call Active folds into its lifecycle bucket, with the
+     * sheet's for-sale cars named rather than dumped in `other`. All buckets are mutually
+     * exclusive and sum to `total`.
+     *
+     * `booked` is an OVERLAY, not a slice: a car reserved for a future window is usually still
+     * available today, so it is reported alongside and is NOT part of the sum.
+     *
+     * NOTE: maintenance here is CONTRACT-based only (open type-U), deliberately narrower than
+     * OperationsService::vehiclesInMaintenance(), which also unions workflow tickets and manual
+     * garage events and drives the /maintenance board. The donut may legitimately show fewer
+     * cars in the shop than that board does.
+     *
+     * @return array{available:int, rented:int, maintenance:int, office_use:int, out_of_order:int, suspended:int, returned:int, sold:int, disposed:int, for_sale:int, booked:int, other:int, total:int}
      */
     public function fleetStatus(): array
     {
-        // SINGLE SOURCE OF TRUTH for live state: classify every car from CONTRACTS + the canonical
-        // maintenance set — NOT the OfficeManager lifecycle `status`, which drifts (a car out on
-        // rent usually stays `ready`/`rented` in OM). Priority per car: in-maintenance ⇒ rented
-        // (open type-C) ⇒ available (an active car free to earn) ⇒ its lifecycle bucket. The result
-        // is mutually exclusive, sums to total, and matches the Vehicles list, Fleet Ops, the
-        // /maintenance board, the fleet-pulse grid and the per-car operational_status.
-        // The two override sets. Maintenance wins over rented, so drop any rented car that is also
-        // in the garage. NOTE: the dashboard donut counts CONTRACT-based maintenance only (open
-        // type-U contracts) — deliberately NARROWER than the canonical vehiclesInMaintenance() set
-        // (which also unions app workflow tickets + manual garage events and still drives the
-        // /maintenance board and rental-eligibility guards). So the donut may legitimately show
-        // fewer "in maintenance" cars than the board; ticket/manual-only cars fall back to their
-        // lifecycle bucket (available/rented) here.
-        // Both override sets are counted from `contracts`, so they must be gated on a car that still
-        // exists and is still on the fleet register. A contract whose vehicle_id points at a retired
-        // (soft-deleted) or missing car would otherwise add +1 to rented/maintenance with nothing to
-        // subtract from the per-status totals below — inflating `total` past the real fleet size.
-        $liveIds = DB::table('vehicles')->whereNull('deleted_at')->pluck('id')
-            ->mapWithKeys(fn ($id) => [(int) $id => true])->all();
+        // MEMBERSHIP is the register's call, not ours. The active fleet is exactly the cars the
+        // "Faster" tab marks "Active" — no more, no less — so available + rented + maintenance
+        // always equals the number the sheet shows. A car the register does not call Active
+        // cannot enter those three buckets no matter what its status column or its contracts say;
+        // it folds into its lifecycle bucket below instead.
+        //
+        // This deliberately overrides live contract data with the register's word. A car the sheet
+        // calls "Office" that still carries an open rental will now sit in office_use rather than
+        // On Rent — the conflict does not disappear, it moves to where it can be seen and fixed:
+        // the Vehicles page flags it amber under "Register mismatch".
+        $registerActive = DB::table('vehicles')
+            ->whereNull('deleted_at')
+            ->whereRaw("LOWER(TRIM(COALESCE(sheet_status, ''))) = 'active'")
+            ->pluck('id')->mapWithKeys(fn ($id) => [(int) $id => true])->all();
 
+        // WITHIN the register's fleet, contracts decide what each car is doing right now — the
+        // status column drifts (a car out on rent usually still reads `ready` in OM), so it is not
+        // trusted for this. Maintenance wins over rented; whatever is left is free to earn.
         $maintSet = [];
         foreach ($this->contractMaintenanceVehicleIds() as $vid) {
-            $maintSet[$vid] = true;
+            if (isset($registerActive[$vid])) {
+                $maintSet[$vid] = true;
+            }
         }
 
         $rentedSet = [];
@@ -224,49 +239,49 @@ class DashboardService
                 ->whereNotNull('vehicle_id')->distinct()->pluck('vehicle_id')->all() as $vid
         ) {
             $vid = (int) $vid;
-            if (isset($liveIds[$vid]) && ! isset($maintSet[$vid])) {
+            if (isset($registerActive[$vid]) && ! isset($maintSet[$vid])) {
                 $rentedSet[$vid] = true;
             }
         }
 
         $counts = [
-            'available' => 0, 'rented' => count($rentedSet), 'maintenance' => count($maintSet),
+            // Residual, so the three always sum to the register's Active count exactly.
+            'available'   => count($registerActive) - count($maintSet) - count($rentedSet),
+            'rented'      => count($rentedSet),
+            'maintenance' => count($maintSet),
             'office_use' => 0, 'out_of_order' => 0, 'suspended' => 0, 'returned' => 0,
-            'sold' => 0, 'disposed' => 0, 'other' => 0,
+            'sold' => 0, 'disposed' => 0, 'for_sale' => 0, 'other' => 0,
         ];
 
-        // Per-status fleet totals in ONE grouped query (no model hydration, no full-table load).
-        // whereNull('deleted_at') is NOT optional: these are DB::table() queries, so Eloquent's
-        // SoftDeletes global scope does not apply. Without it a car retired by fleet:retire-unlisted
-        // (soft-deleted precisely so it "disappears from the lists, boards and counts") keeps being
-        // counted here, and the donut reports more cars than the fleet register lists.
-        $byStatus = DB::table('vehicles')
+        // Everything the register does NOT call Active, folded by lifecycle status in ONE grouped
+        // query. whereNull('deleted_at') is NOT optional here: this is a DB::table() query, so
+        // Eloquent's SoftDeletes global scope does not apply, and a car retired by
+        // fleet:retire-unlisted (soft-deleted precisely so it "disappears from the lists, boards
+        // and counts") would otherwise keep being counted.
+        $rest = DB::table('vehicles')
             ->whereNull('deleted_at')
-            ->selectRaw('status, COUNT(*) as c')
-            ->groupBy('status')
-            ->pluck('c', 'status');
+            ->whereRaw("LOWER(TRIM(COALESCE(sheet_status, ''))) <> 'active'")
+            ->selectRaw("status, LOWER(TRIM(COALESCE(sheet_status, ''))) AS reg, COUNT(*) AS c")
+            ->groupBy('status', 'reg')
+            ->get();
 
-        // The override cars must NOT also be counted by their lifecycle status — fetch just that
-        // subset's statuses and subtract them from the totals before folding the rest into buckets.
-        $overrideIds = array_keys($maintSet + $rentedSet);
-        $overrideByStatus = $overrideIds
-            ? DB::table('vehicles')->whereNull('deleted_at')->whereIn('id', $overrideIds)
-                ->selectRaw('status, COUNT(*) as c')->groupBy('status')->pluck('c', 'status')->all()
-            : [];
+        // Buckets that describe a car OUT of service. 'ready'/'rented' are absent on purpose: for a
+        // car the register does not call Active those two say nothing useful (they are exactly the
+        // stale values that inflated this count), so such a car lands in `other` rather than being
+        // quietly re-admitted to the active fleet through the back door.
+        $lifecycle = ['office_use', 'out_of_order', 'suspended', 'returned', 'sold', 'disposed'];
 
-        foreach ($byStatus as $status => $total) {
-            $remaining = (int) $total - (int) ($overrideByStatus[$status] ?? 0);
-            if ($remaining <= 0) {
-                continue;
-            }
-            $key = (string) $status;
-            if (in_array($key, ['ready', 'rented'], true)) {
-                // Active car (ready, or OM-says-rented but with NO open rental) = free to earn.
-                $counts['available'] += $remaining;
-            } elseif (array_key_exists($key, $counts)) {
-                $counts[$key] += $remaining;   // office_use / out_of_order / suspended / returned / sold / disposed
+        foreach ($rest as $row) {
+            $n = (int) $row->c;
+            if ($row->reg === 'for sale') {
+                // Give the register's for-sale cars a named home instead of the `other` catch-all —
+                // there are a dozen of them and "unaccounted" is the wrong word for a car we know
+                // we are selling.
+                $counts['for_sale'] += $n;
+            } elseif (in_array((string) $row->status, $lifecycle, true)) {
+                $counts[(string) $row->status] += $n;
             } else {
-                $counts['other'] += $remaining;   // uncategorised / null status
+                $counts['other'] += $n;
             }
         }
 
@@ -303,9 +318,11 @@ class DashboardService
      * OperationsService::vehiclesInMaintenance() on purpose so the dashboard reflects only cars the
      * OfficeManager/contract layer says are in the shop, without the ticket/manual overlays.
      *
-     * Gated on a car that still exists and is still on the fleet register: the contract, not the
-     * vehicle, is what we count from, so an open type-U contract pointing at a retired (soft-deleted)
-     * or missing car would otherwise be counted as a car in the shop.
+     * Gated on a car the fleet register still lists as Active. We count from the CONTRACT, not the
+     * vehicle, so without this an open type-U contract pointing at a retired (soft-deleted) car —
+     * or at one the register has since marked Sold or Under process — would be reported as a car
+     * sitting in our garage. The gate lives here rather than at each call site so the donut and
+     * the cars-in-maintenance KPI cannot drift apart.
      *
      * @return array<int,int>
      */
@@ -315,7 +332,8 @@ class DashboardService
             ->whereNotNull('vehicle_id')
             ->whereExists(fn ($q) => $q->select(DB::raw(1))->from('vehicles')
                 ->whereColumn('vehicles.id', 'contracts.vehicle_id')
-                ->whereNull('vehicles.deleted_at'))
+                ->whereNull('vehicles.deleted_at')
+                ->whereRaw("LOWER(TRIM(COALESCE(vehicles.sheet_status, ''))) = 'active'"))
             ->distinct()
             ->pluck('vehicle_id')
             ->map(fn ($id) => (int) $id)
