@@ -120,6 +120,7 @@ class Vehicle extends Model
         'color',
         'category',
         'sheet_category',
+        'sheet_status',   // the fleet register's own word ("Active"/"For sale"/…), kept verbatim
         'vehicle_class',
         'status',
         'status_no',

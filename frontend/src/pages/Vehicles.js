@@ -9,7 +9,7 @@ import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { usePageStat } from '../components/PageStat';
 import { usePermissions } from '../hooks/usePermissions';
 import VehicleForm, { VEHICLE_STATUSES, vehicleToForm, cleanPayload } from './vehicles/VehicleForm';
-import DualState, { ContractLines } from '../components/ops/DualState';
+import DualState, { ContractLines, RegisterStatus, registerConflict } from '../components/ops/DualState';
 import { CommandPanel, StatGaugeTile } from '../components/ops';
 import VehiclesAnalytics from '../components/analytics/VehiclesAnalytics';
 import { useI18n } from '../i18n/I18nContext';
@@ -93,7 +93,10 @@ export default function Vehicles() {
       (flag === 'available' && v.available) ||
       (flag === 'reserved' && v.reserved) ||
       (flag === 'rented' && v.rented) ||
-      (flag === 'maint' && v.under_maintenance);
+      (flag === 'maint' && v.under_maintenance) ||
+      // Cars where the fleet register and our live state contradict each other. Not a movement
+      // flag like the others — it's the reconciliation list, and it should stay short.
+      (flag === 'register_clash' && registerConflict(v));
     const matchSearch = (v) =>
       !q || [v.plate_display, v.plate_no, v.vin, v.make, v.model].some((f) => (f || '').toLowerCase().includes(q));
 
@@ -148,6 +151,11 @@ export default function Vehicles() {
     () => list.filter((v) => v.status === 'ready' || v.status === 'rented'),
     [list],
   );
+  // Cars whose register word contradicts our live state. Counted over the whole list, not just
+  // `active`: a car the register still calls "Active" while we have it marked sold is exactly the
+  // kind of mismatch worth surfacing, and excluding sold cars would hide that direction of it.
+  const registerClashCount = useMemo(() => list.filter(registerConflict).length, [list]);
+
   const resetFilters = (fn) => { fn(); setPage(1); };
   const toggleFlag = (f) => resetFilters(() => setFlag((cur) => (cur === f ? '' : f)));
 
@@ -321,6 +329,21 @@ export default function Vehicles() {
               />
               {t('vehicles.sharedPlatesOnly')}{sharedPlateCount ? ` (${sharedPlateCount})` : ''}
             </label>
+            {/* Register mismatch: the cars where the "Faster" sheet and our live state disagree.
+                Hidden entirely when there are none — an always-visible zero would read as a
+                broken filter rather than a clean fleet. */}
+            {registerClashCount > 0 && (
+              <button
+                className="opx-ibtn"
+                onClick={() => toggleFlag('register_clash')}
+                title={t('vehicles.registerClashHint')}
+                style={{ borderColor: 'rgba(245,158,11,.38)',
+                  background: flag === 'register_clash' ? 'rgba(245,158,11,.16)' : 'rgba(245,158,11,.07)',
+                  color: '#d97706' }}
+              >
+                ⚠ {t('vehicles.registerClash')} ({registerClashCount})
+              </button>
+            )}
             {flag && <button className="opx-ibtn" onClick={() => toggleFlag(flag)}>✕ {t('vehicles.clearFilter')}</button>}
           </div>
 
@@ -367,6 +390,10 @@ export default function Vehicles() {
                     <td className="r opx-mono2">{fmtKm(v.odometer)}</td>
                     <td>
                       <DualState vehicle={v} />
+                      {/* What the fleet register calls this car, in its own words. Quiet when it
+                          agrees with the chips above, amber when it doesn't — that mismatch is
+                          why the dashboard count and the sheet used to drift apart. */}
+                      <RegisterStatus vehicle={v} />
                       {/* The live paperwork: every open contract (linked), plus a note wherever
                           our own workflow raised the repair and no OM contract exists. */}
                       <ContractLines

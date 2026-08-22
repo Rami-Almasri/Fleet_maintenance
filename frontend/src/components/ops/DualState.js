@@ -94,6 +94,60 @@ export default function DualState({ vehicle = {}, size = 'sm', stack = false, sh
 }
 
 /* -----------------------------------------------------------------------
+   <RegisterStatus> — what the fleet register (the "Faster" tab) calls this
+   car, in the register's own words: Active / For sale / Office / Under
+   process / Insurance claim / Sold.
+
+   This is NOT another view of vehicles.status. It is the sheet's claim, held
+   separately in `sheet_status`, and the two can legitimately disagree — a car
+   the register calls "Office" can be out on a live rental right now. That
+   disagreement used to be invisible: the register's word was mapped into a
+   status slug and discarded, so the only way to find a conflict was to open
+   Google and read across 247 rows by hand.
+
+   So the chip goes quiet when the two agree and turns amber when they don't.
+   Opt-in, not folded into <DualState>, because most boards want the car's
+   operational state and nothing else; this belongs where someone is
+   reconciling the fleet against the register.
+   ----------------------------------------------------------------------- */
+
+// True when the register's verdict and our live state point opposite ways.
+// "Active" on the register should mean a car that is earning or in the shop
+// to get back to earning; anything else should mean a car we are not counting.
+export function registerConflict(vehicle = {}) {
+  const sheet = String(vehicle.sheet_status || '').trim();
+  if (!sheet) return false;
+  const registerSaysActive = sheet.toLowerCase() === 'active';
+  const st = String(vehicle.status || '').toLowerCase();
+  // Live paperwork counts as "in use" even when the status column disagrees — the
+  // dashboard's own donut classifies from contracts first, so this must match it.
+  const onPaper = (vehicle.contract_lines || []).some((l) => l.kind !== 'note' && (l.type === 'C' || l.type === 'U'));
+  const weTreatAsActive = ['ready', 'rented', 'under_maintenance'].includes(st) || onPaper;
+  return registerSaysActive !== weTreatAsActive;
+}
+
+export function RegisterStatus({ vehicle = {}, size = 'sm' }) {
+  const { t } = useI18n();
+  const sheet = String(vehicle.sheet_status || '').trim();
+  // No word recorded yet — the car predates the register capture, or was made on
+  // the website (those are deliberately never touched by the sheet importers).
+  if (!sheet) return null;
+  const clash = registerConflict(vehicle);
+  return (
+    <span
+      className={`ds-chip ${size} ds-reg${clash ? ' clash' : ''}`}
+      title={clash
+        ? t('The fleet register calls this car "{word}", which does not match how the system is currently treating it. One of the two is out of date.', { word: sheet })
+        : t('The fleet register calls this car "{word}".', { word: sheet })}
+    >
+      <span className="ds-reg-k">{t('Register')}</span>
+      {t(sheet)}
+      {clash && <span className="ds-reg-warn">!</span>}
+    </span>
+  );
+}
+
+/* -----------------------------------------------------------------------
    <ContractLines> — the paperwork that sits under the status chips: one line
    per live contract on the car (Rental / Maintenance / Booking), each with its
    number and dates, linking straight to the contract.

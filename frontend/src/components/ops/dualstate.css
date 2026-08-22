@@ -40,6 +40,13 @@
 .ds-none    {color:#94a3b8;background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.24)}
 .ds-none .ds-dot{background:#94a3b8}
 
+/* the fleet register's own word — quiet when it agrees with our state, amber when it doesn't */
+.ds-reg     {color:#64748b;background:rgba(100,116,139,.07);border-color:rgba(100,116,139,.20);font-weight:600}
+.ds-reg .ds-reg-k{font-weight:800;opacity:.6;text-transform:uppercase;font-size:.84em;letter-spacing:.05em}
+.ds-reg.clash{color:#d97706;background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.38);font-weight:700}
+.ds-reg.clash .ds-reg-k{opacity:.75}
+.ds-reg .ds-reg-warn{font-weight:900;margin-left:1px}
+
 /* -------- the paperwork lines under the chips: contracts, and the note --------
    One row per live contract. The system-raised note is deliberately styled apart
    (amber, dashed border, no hover) so "no contract number" reads as a statement
@@ -100,6 +107,8 @@
 [data-theme='dark'] .ds-crit{color:#fb7185}
 [data-theme='dark'] .ds-blocked{color:#94a3b8}
 [data-theme='dark'] .ds-none{color:#8592ab}
+[data-theme='dark'] .ds-reg{color:#8592ab}
+[data-theme='dark'] .ds-reg.clash{color:#fbbf24}
 [data-theme='dark'] .ds-ribbon-tx b{color:#fbbf24}
 [data-theme='dark'] .ds-ribbon-tx span{color:#c9a45e}
 [data-theme='dark'] .ds-ribbon.crit .ds-ribbon-tx b{color:#fb7185}

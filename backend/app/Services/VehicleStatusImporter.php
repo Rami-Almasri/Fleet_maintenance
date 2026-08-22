@@ -62,6 +62,7 @@ class VehicleStatusImporter
         $counts = [
             'rows' => 0, 'matched' => 0, 'unmatched' => 0, 'unchanged' => 0,
             'protected' => 0, 'changed' => 0, 'flagged' => 0, 'category_set' => 0,
+            'sheet_status_set' => 0,
         ];
         $changes         = [];
         $unmatched       = [];
@@ -106,12 +107,27 @@ class VehicleStatusImporter
             // category whether it stays Active or is pulled out), so persist it here before any of
             // the status branches can `continue` past a save.
             $category = trim($this->cell($row, $col['category'] ?? null));
+            $dirty = false;
             if ($category !== '' && $vehicle->sheet_category !== $category) {
                 $counts['category_set']++;
-                if (! $dry) {
-                    $vehicle->sheet_category = $category;
-                    $vehicle->save();
-                }
+                $vehicle->sheet_category = $category;
+                $dirty = true;
+            }
+
+            // Keep the register's own word verbatim ("Active" / "For sale" / "Office" / …) beside
+            // the category. This must happen HERE, before the branches below can `continue`: the
+            // most important value to record is "Active", and that maps to null precisely so we do
+            // NOT touch the car's status — so a capture placed after the mapping would miss every
+            // Active car and store only the exceptions. `status` remains our operational answer;
+            // this is the register's claim, kept so a screen can show both when they disagree.
+            if ($rawStatus !== '' && $vehicle->sheet_status !== $rawStatus) {
+                $counts['sheet_status_set']++;
+                $vehicle->sheet_status = $rawStatus;
+                $dirty = true;
+            }
+
+            if ($dirty && ! $dry) {
+                $vehicle->save();
             }
 
             $key = $this->norm($rawStatus);

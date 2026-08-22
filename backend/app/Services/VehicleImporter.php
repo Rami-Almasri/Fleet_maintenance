@@ -144,6 +144,13 @@ class VehicleImporter
                 $data['status'] = $status;
             }
 
+            // Keep the register's own word beside the mapped slug. mapStatus() collapses several
+            // sheet words onto one status — 'active', 'ready', 'available' and 'for sale' all
+            // become 'ready' — so the mapped value cannot be read backwards to recover what the
+            // register actually said. Set on both create and update: the register owns this field
+            // outright, so unlike the enrichment fields below it is always overwritten.
+            $data['sheet_status'] = $this->strOrNull($this->cell($row, $map['status'] ?? null));
+
             // A car the sheet lists and we do not hold yet. Create it here — this is the whole
             // point of the sheet being the register: a car the team takes on is on this tab
             // before OfficeManager has it, and OM's own list is full of cars we sold years ago.

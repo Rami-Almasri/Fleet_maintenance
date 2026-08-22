@@ -77,6 +77,7 @@ class ImportVehicleStatus extends Command
             [$dry ? 'Would change status' : 'Status changed', $c['changed']],
             [$dry ? 'Would flag for-sale' : 'Flagged for-sale', $c['flagged']],
             [$dry ? 'Would set category' : 'Category set', $c['category_set'] ?? 0],
+            [$dry ? 'Would record sheet status' : 'Sheet status recorded', $c['sheet_status_set'] ?? 0],
             ['Left unchanged (Active/other)', $c['unchanged']],
             ['Protected (web-made)', $c['protected']],
             ['Unmatched (not our car)', $c['unmatched']],

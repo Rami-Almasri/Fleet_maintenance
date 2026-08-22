@@ -131,7 +131,14 @@ class VehicleResource extends JsonResource
             "year" => $this->year,
             "color" => $this->color,
             "category" => $this->category,
+            "sheet_category" => $this->sheet_category,
             "status" => $this->status,
+            // What the fleet register itself calls this car — "Active" / "For sale" / "Office" /
+            // "Under process" / "Insurance claim" / "Sold" — verbatim, NOT one of our status slugs.
+            // `status` above is our operational answer; this is the register's claim. They can
+            // legitimately disagree (a car the register calls "Office" can be out on a live rental),
+            // and showing both is the point — the disagreement is the thing worth seeing.
+            "sheet_status" => $this->sheet_status,
             "status_no" => $this->status_no,
             "for_sale" => (bool) $this->for_sale,
             "operational_status" => $this->operational_status,
