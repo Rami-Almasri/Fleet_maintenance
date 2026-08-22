@@ -35,11 +35,12 @@ return [
     | Valid status slugs are the values of Vehicle::OM_STATUS: office_use, ready, rented,
     | out_of_order, under_maintenance, suspended, disposed, sold, returned.
     |
-    | The three "leave as-is for now" entries below are intentional — flip them to a status slug
-    | whenever you want this step to act on them (no code change needed, just edit this map):
-    |     'exported'        => 'sold',          // or 'disposed'
-    |     'insurance claim' => 'out_of_order',
-    |     'under process'   => 'suspended',
+    | 'insurance claim' and 'under process' were parked as null ("leave as-is") and have now been
+    | flipped: both left cars sitting on a live ready/rented status, so the dashboard counted them
+    | as active fleet while the register did not. 'exported' stays null for now — both exported
+    | cars already read 'sold', so there is nothing for it to correct (flip it to 'sold'/'disposed'
+    | if that ever stops being true). No code change is needed to act on a status — just edit
+    | this map.
     */
     'status_map' => [
         'active'          => null,        // leave as-is — om:sync's live status wins
@@ -48,7 +49,7 @@ return [
         'personal'        => 'office_use', // not in the rental pool
         'office'          => 'office_use', // not in the rental pool
         'exported'        => null,         // leave as-is (flip to 'sold'/'disposed' when ready)
-        'insurance claim' => null,         // leave as-is (flip to 'out_of_order' when ready)
-        'under process'   => null,         // leave as-is
+        'insurance claim' => 'out_of_order', // with the insurer, not earning — out of the active pool
+        'under process'   => 'suspended',    // paperwork in flight, not rentable yet
     ],
 ];

@@ -206,13 +206,25 @@ class DashboardService
         // /maintenance board and rental-eligibility guards). So the donut may legitimately show
         // fewer "in maintenance" cars than the board; ticket/manual-only cars fall back to their
         // lifecycle bucket (available/rented) here.
-        $maintSet  = array_flip($this->contractMaintenanceVehicleIds());
+        // Both override sets are counted from `contracts`, so they must be gated on a car that still
+        // exists and is still on the fleet register. A contract whose vehicle_id points at a retired
+        // (soft-deleted) or missing car would otherwise add +1 to rented/maintenance with nothing to
+        // subtract from the per-status totals below — inflating `total` past the real fleet size.
+        $liveIds = DB::table('vehicles')->whereNull('deleted_at')->pluck('id')
+            ->mapWithKeys(fn ($id) => [(int) $id => true])->all();
+
+        $maintSet = [];
+        foreach ($this->contractMaintenanceVehicleIds() as $vid) {
+            $maintSet[$vid] = true;
+        }
+
         $rentedSet = [];
         foreach (
             Contract::where('contract_type', 'C')->currentlyOpen()
                 ->whereNotNull('vehicle_id')->distinct()->pluck('vehicle_id')->all() as $vid
         ) {
-            if (! isset($maintSet[$vid])) {
+            $vid = (int) $vid;
+            if (isset($liveIds[$vid]) && ! isset($maintSet[$vid])) {
                 $rentedSet[$vid] = true;
             }
         }
@@ -224,7 +236,12 @@ class DashboardService
         ];
 
         // Per-status fleet totals in ONE grouped query (no model hydration, no full-table load).
+        // whereNull('deleted_at') is NOT optional: these are DB::table() queries, so Eloquent's
+        // SoftDeletes global scope does not apply. Without it a car retired by fleet:retire-unlisted
+        // (soft-deleted precisely so it "disappears from the lists, boards and counts") keeps being
+        // counted here, and the donut reports more cars than the fleet register lists.
         $byStatus = DB::table('vehicles')
+            ->whereNull('deleted_at')
             ->selectRaw('status, COUNT(*) as c')
             ->groupBy('status')
             ->pluck('c', 'status');
@@ -233,7 +250,7 @@ class DashboardService
         // subset's statuses and subtract them from the totals before folding the rest into buckets.
         $overrideIds = array_keys($maintSet + $rentedSet);
         $overrideByStatus = $overrideIds
-            ? DB::table('vehicles')->whereIn('id', $overrideIds)
+            ? DB::table('vehicles')->whereNull('deleted_at')->whereIn('id', $overrideIds)
                 ->selectRaw('status, COUNT(*) as c')->groupBy('status')->pluck('c', 'status')->all()
             : [];
 
@@ -286,12 +303,19 @@ class DashboardService
      * OperationsService::vehiclesInMaintenance() on purpose so the dashboard reflects only cars the
      * OfficeManager/contract layer says are in the shop, without the ticket/manual overlays.
      *
+     * Gated on a car that still exists and is still on the fleet register: the contract, not the
+     * vehicle, is what we count from, so an open type-U contract pointing at a retired (soft-deleted)
+     * or missing car would otherwise be counted as a car in the shop.
+     *
      * @return array<int,int>
      */
     private function contractMaintenanceVehicleIds(): array
     {
         return Contract::where('contract_type', 'U')->currentlyOpen()
             ->whereNotNull('vehicle_id')
+            ->whereExists(fn ($q) => $q->select(DB::raw(1))->from('vehicles')
+                ->whereColumn('vehicles.id', 'contracts.vehicle_id')
+                ->whereNull('vehicles.deleted_at'))
             ->distinct()
             ->pluck('vehicle_id')
             ->map(fn ($id) => (int) $id)
