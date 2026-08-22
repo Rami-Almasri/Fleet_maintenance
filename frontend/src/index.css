@@ -399,18 +399,37 @@ h1, h2, h3, .font-display {
    Without an explicit :hover rule the row would show no hover feedback on dark. */
 [data-theme='dark'] .hover\:bg-indigo-50\/40:hover { background-color: rgb(var(--brand-500) / 0.18); }
 
-/* --- Accent text lightened so values/badges read on dark --- */
-[data-theme='dark'] .text-emerald-700, [data-theme='dark'] .text-emerald-600 { color: rgb(52 211 153); }
-[data-theme='dark'] .text-green-700, [data-theme='dark'] .text-green-600 { color: rgb(52 211 153); }
-[data-theme='dark'] .text-amber-700, [data-theme='dark'] .text-amber-600 { color: rgb(251 191 36); }
-[data-theme='dark'] .text-orange-700, [data-theme='dark'] .text-orange-600 { color: rgb(251 146 60); }
-[data-theme='dark'] .text-red-700, [data-theme='dark'] .text-red-600 { color: rgb(248 113 113); }
-[data-theme='dark'] .text-rose-700, [data-theme='dark'] .text-rose-600 { color: rgb(251 113 133); }
-[data-theme='dark'] .text-blue-700, [data-theme='dark'] .text-blue-600 { color: rgb(96 165 250); }
-[data-theme='dark'] .text-indigo-700, [data-theme='dark'] .text-indigo-600 { color: rgb(125 162 251); }
-[data-theme='dark'] .text-violet-700, [data-theme='dark'] .text-violet-600 { color: rgb(56 189 248); }
-[data-theme='dark'] .text-cyan-700, [data-theme='dark'] .text-cyan-600 { color: rgb(34 211 238); }
+/* --- Accent text lightened so values/badges read on dark ---
+   The -800 rung is mapped alongside -700/-600: it is the ink Tailwind pairs with a
+   `bg-{color}-50` panel in light mode, so any tinted callout (the "Still needed before
+   you can submit" block on the ticket modal, for one) keeps near-black accent text on a
+   dark tint unless it is lightened here too. */
+[data-theme='dark'] .text-emerald-800, [data-theme='dark'] .text-emerald-700, [data-theme='dark'] .text-emerald-600 { color: rgb(52 211 153); }
+[data-theme='dark'] .text-green-800, [data-theme='dark'] .text-green-700, [data-theme='dark'] .text-green-600 { color: rgb(52 211 153); }
+[data-theme='dark'] .text-amber-800, [data-theme='dark'] .text-amber-700, [data-theme='dark'] .text-amber-600 { color: rgb(251 191 36); }
+[data-theme='dark'] .text-orange-800, [data-theme='dark'] .text-orange-700, [data-theme='dark'] .text-orange-600 { color: rgb(251 146 60); }
+[data-theme='dark'] .text-red-800, [data-theme='dark'] .text-red-700, [data-theme='dark'] .text-red-600 { color: rgb(248 113 113); }
+[data-theme='dark'] .text-rose-800, [data-theme='dark'] .text-rose-700, [data-theme='dark'] .text-rose-600 { color: rgb(251 113 133); }
+[data-theme='dark'] .text-blue-800, [data-theme='dark'] .text-blue-700, [data-theme='dark'] .text-blue-600 { color: rgb(96 165 250); }
+[data-theme='dark'] .text-indigo-800, [data-theme='dark'] .text-indigo-700, [data-theme='dark'] .text-indigo-600 { color: rgb(125 162 251); }
+[data-theme='dark'] .text-violet-800, [data-theme='dark'] .text-violet-700, [data-theme='dark'] .text-violet-600 { color: rgb(56 189 248); }
+[data-theme='dark'] .text-cyan-800, [data-theme='dark'] .text-cyan-700, [data-theme='dark'] .text-cyan-600 { color: rgb(34 211 238); }
 [data-theme='dark'] .text-yellow-800, [data-theme='dark'] .text-yellow-700, [data-theme='dark'] .text-yellow-600 { color: rgb(250 204 21); }
+
+/* Hover ink on the same accents. In light mode hovering a link inside a tinted panel
+   DARKENS it (-800/-900); on dark that reads as the text going out, so brighten instead.
+   Matched by class-attribute substring because the escaped `.hover\:text-…` selectors
+   would otherwise need one rule per class. */
+[data-theme='dark'] [class*="hover:text-emerald-8"]:hover, [data-theme='dark'] [class*="hover:text-emerald-9"]:hover { color: rgb(110 231 183); }
+[data-theme='dark'] [class*="hover:text-green-8"]:hover,   [data-theme='dark'] [class*="hover:text-green-9"]:hover   { color: rgb(110 231 183); }
+[data-theme='dark'] [class*="hover:text-amber-8"]:hover,   [data-theme='dark'] [class*="hover:text-amber-9"]:hover   { color: rgb(253 230 138); }
+[data-theme='dark'] [class*="hover:text-orange-8"]:hover,  [data-theme='dark'] [class*="hover:text-orange-9"]:hover  { color: rgb(253 186 116); }
+[data-theme='dark'] [class*="hover:text-red-8"]:hover,     [data-theme='dark'] [class*="hover:text-red-9"]:hover     { color: rgb(252 165 165); }
+[data-theme='dark'] [class*="hover:text-rose-8"]:hover,    [data-theme='dark'] [class*="hover:text-rose-9"]:hover    { color: rgb(253 164 175); }
+[data-theme='dark'] [class*="hover:text-blue-8"]:hover,    [data-theme='dark'] [class*="hover:text-blue-9"]:hover    { color: rgb(147 197 253); }
+[data-theme='dark'] [class*="hover:text-indigo-8"]:hover,  [data-theme='dark'] [class*="hover:text-indigo-9"]:hover  { color: rgb(165 192 253); }
+[data-theme='dark'] [class*="hover:text-violet-8"]:hover,  [data-theme='dark'] [class*="hover:text-violet-9"]:hover  { color: rgb(125 211 252); }
+[data-theme='dark'] [class*="hover:text-cyan-8"]:hover,    [data-theme='dark'] [class*="hover:text-cyan-9"]:hover    { color: rgb(103 232 249); }
 
 /* --- Shadows get real depth on dark --- */
 [data-theme='dark'] .shadow-soft { box-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 10px 26px -10px rgb(0 0 0 / 0.55); }
