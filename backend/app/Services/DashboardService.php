@@ -706,9 +706,22 @@ class DashboardService
         // event matched to THIS contract's visit window (our contract↔sheet Hard-Lock rule).
         $sheetProblems = $this->sheetProblemsForContracts($contracts);
 
+        // Live app tickets for these same CARS, keyed by vehicle. The contract's own `maintenance`
+        // relation is a contract_id join, but ticketInShopRows() excludes duplicates by VEHICLE — so a
+        // ticket raised without a contract_id (the common case: the app opened the visit, the sheet
+        // contract arrived separately) was dropped as a duplicate on one side and never recognised as
+        // "also in the system" on the other, and the whole panel read "From system 0". Badge by the
+        // same key the exclusion uses, so a car in both records is counted in both pills.
+        $trackedTickets = Maintenance::query()
+            ->whereIn('workflow_status', Maintenance::CHECKPOINT_TRACKED_STATES)
+            ->whereIn('vehicle_id', $contracts->pluck('vehicle_id')->filter()->all())
+            ->pluck('id', 'vehicle_id');
+
         return $contracts
-            ->map(function ($c) use ($sheetProblems) {
+            ->map(function ($c) use ($sheetProblems, $trackedTickets) {
                 $m = $c->maintenance;
+                // The live ticket standing behind this visit, found by contract link OR by car.
+                $liveTicketId = $trackedTickets[(int) $c->vehicle_id] ?? null;
                 // Prefer any fault recorded on the ticket itself; else fall back to the matched sheet fault.
                 $problem = $this->ticketProblem($m);
                 if (! $problem['label']) {
@@ -730,11 +743,14 @@ class DashboardService
                     'car'        => $c->vehicle ? (trim(($c->vehicle->make ?? '') . ' ' . ($c->vehicle->model ?? '')) ?: null) : null,
                     'stage'      => 'In workshop',
                     // Provenance — 'contract' (the sheet/OM record alone) or 'both' when the same visit
-                    // is ALSO live as an app workflow ticket.
-                    'source'      => $m && in_array($m->workflow_status, Maintenance::CHECKPOINT_TRACKED_STATES, true)
+                    // is ALSO live as an app workflow ticket, whether that ticket names this contract
+                    // or only the car.
+                    'source'      => ($m && in_array($m->workflow_status, Maintenance::CHECKPOINT_TRACKED_STATES, true)) || $liveTicketId
                         ? 'both' : 'contract',
                     'contract_id' => (int) $c->id,
-                    'ticket_id'   => $m?->id ? (int) $m->id : null,
+                    // Deep-link to the live ticket when there is one, so the card opens the visit that is
+                    // actually running rather than a closed contract header.
+                    'ticket_id'   => $liveTicketId ? (int) $liveTicketId : ($m?->id ? (int) $m->id : null),
                     'garage'     => $m?->vendor?->name ?: ($m?->garage ?: null),
                     // WHY the car is in the shop — the fault(s)/reason behind the visit.
                     'problem'       => $problem['label'],
