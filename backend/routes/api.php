@@ -544,6 +544,9 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::get('/', 'index')->middleware('permission:maintenance.view');
     Route::get('/board', 'board')->middleware('permission:maintenance.view');              // live pipeline (6 columns + counts)
     Route::get('/my-queue', 'myQueue')->middleware('permission:maintenance.view');          // role-scoped dashboard (Inspector / Driver)
+    // ⌘K plate lookup — "where is this car?": the open board ticket and/or the pending review request
+    // for a plate, each with the deep link that lands on that exact card. STATIC — must precede /{ticket}.
+    Route::get('/plate-locator', 'plateLocator')->middleware('permission:maintenance.view');
     Route::get('/findings-catalog', 'findingsCatalog')->middleware('permission:maintenance.view'); // central issue-keyword library
     Route::get('/assignable-drivers', 'assignableDrivers')->middleware('permission:maintenance.delegate'); // supervisor: delegation picker
     // Vehicle profile panel: health + tickets + condition photos. Static segment before {ticket}.

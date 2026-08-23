@@ -16,6 +16,7 @@ use App\Models\MaintenanceTemporaryRelease;
 use App\Models\Vehicle;
 use App\Services\MaintenanceAnalyticsService;
 use App\Services\MaintenanceWorkflowService;
+use App\Services\PlateResolver;
 use App\Services\ReviewReminderService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -781,6 +782,182 @@ class MaintenanceWorkflowController extends Controller
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }
+    }
+
+    /**
+     * PLATE LOOKUP — "type a plate, tell me where that car is."
+     *
+     * Answers ONE question for the ⌘K palette: for the car wearing this plate, is there a live record
+     * on the two pages where a car is actually being worked on, and if so, WHICH record — so the search
+     * can drop the user on that exact card instead of on a page they then have to scan by eye.
+     *
+     *   • /maintenance-workflow  → an open workflow ticket, deep-linked as /maintenance-workflow/{id}
+     *                              (the ticket's own command view).
+     *   • /inspection-review     → a request sitting in the Controller's approval gate, deep-linked as
+     *                              /inspection-review?ticket={id} (the queue scrolls to that card).
+     *
+     * Only lanes that the board ACTUALLY RENDERS count as "on /maintenance-workflow" (self::COLUMNS).
+     * A ticket parked in awaiting_invoice lives on the invoice tracker, not the repair pipeline, and
+     * saying "it's on the board" about it would send someone looking for a card that isn't drawn.
+     *
+     * The review side reuses reviewQueue()'s OWN source (MaintenanceWorkflowService::pendingReview) rather
+     * than re-deriving the predicate here. That query withdraws requests reality has already answered, so
+     * a second hand-written copy of it would eventually promise a card the queue has since dropped. It is
+     * the expensive half, so it only runs when there is a matched car AND the searcher may open that page
+     * at all (`maintenance.manage` — the same gate as the route).
+     *
+     * Plates are matched on DIGITS (PlateResolver::plateDigits), so "K 19397" / "19397" / "0019397" are
+     * one plate. An exact digit match wins; a shorter entry is treated as a prefix so a half-typed plate
+     * still narrows, and each distinct plate resolves through PlateResolver to the CURRENT car — never the
+     * sold history row that shares its number.
+     */
+    public function plateLocator(Request $request)
+    {
+        return $this->run(function () use ($request) {
+            $raw    = trim((string) $request->query('plate', ''));
+            $digits = PlateResolver::plateDigits($raw);
+
+            // Two digits match half the fleet — that is a filter, not an answer. Below the floor we say
+            // "nothing", never a wall of cars.
+            if (strlen($digits) < 3) {
+                return ResponseHelper::SuccessResponse(
+                    ['query' => $raw, 'digits' => $digits, 'matches' => []],
+                    'OK',
+                    200
+                );
+            }
+
+            $rows = Vehicle::query()
+                ->whereNotNull('plate_no')->where('plate_no', '<>', '')
+                ->get(['id', 'plate_no', 'make', 'model', 'status', 'car_serial', 'operational_status']);
+
+            // Group every candidate by its plate digits, then let PlateResolver pick the current car
+            // inside each group (plates get re-issued; the sold row must never win the lookup).
+            $byPlate = [];
+            foreach ($rows as $v) {
+                $d = PlateResolver::plateDigits($v->plate_no);
+                if ($d !== '' && str_starts_with($d, $digits)) {
+                    $byPlate[$d][] = $v;
+                }
+            }
+            if ($byPlate === []) {
+                return ResponseHelper::SuccessResponse(
+                    ['query' => $raw, 'digits' => $digits, 'matches' => []],
+                    'OK',
+                    200
+                );
+            }
+
+            // Exact plate first, then the prefix neighbours in plate order. Capped: this is a jump-to,
+            // not a browse.
+            uksort($byPlate, function ($a, $b) use ($digits) {
+                $ax = $a === $digits ? 0 : 1;
+                $bx = $b === $digits ? 0 : 1;
+                return $ax === $bx ? strcmp($a, $b) : $ax <=> $bx;
+            });
+            $byPlate = array_slice($byPlate, 0, 6, true);
+
+            $vehicles = [];
+            foreach ($byPlate as $group) {
+                $picked = PlateResolver::pickBest($group);
+                if ($picked) {
+                    $vehicles[(int) $picked->id] = $picked;
+                }
+            }
+            if ($vehicles === []) {
+                return ResponseHelper::SuccessResponse(
+                    ['query' => $raw, 'digits' => $digits, 'matches' => []],
+                    'OK',
+                    200
+                );
+            }
+
+            $vehicleIds = array_keys($vehicles);
+
+            // --- /maintenance-workflow: open tickets, restricted to lanes the board draws -------------
+            $boardStates = array_merge(...array_values(self::COLUMNS));
+            $tickets = Maintenance::openWorkflow()
+                ->whereIn('vehicle_id', $vehicleIds)
+                ->whereIn('workflow_status', $boardStates)
+                ->with(['vendor:id,name'])
+                ->orderByRaw('last_state_change_at IS NULL, last_state_change_at DESC')
+                ->orderByDesc('id')
+                ->get();
+
+            $laneOf = [];
+            foreach (self::COLUMNS as $lane => $states) {
+                foreach ($states as $s) {
+                    $laneOf[$s] = $lane;
+                }
+            }
+
+            $hits = [];
+            foreach ($tickets as $t) {
+                $lane = $laneOf[$t->workflow_status] ?? null;
+                // The paused status feeds two lanes; the split is the physical return, exactly as board().
+                if ($lane === 'paused' && $t->vehicle_returned_at) {
+                    $lane = 'returned_waiting_resume';
+                }
+                $hits[(int) $t->vehicle_id][] = [
+                    'page'         => 'maintenance-workflow',
+                    'to'           => '/maintenance-workflow/'.$t->id,
+                    'ticket_id'    => (int) $t->id,
+                    'status'       => $t->workflow_status,
+                    'status_label' => MaintenanceWorkflowResource::LABELS[$t->workflow_status] ?? $t->workflow_status,
+                    'lane'         => $lane,
+                    'garage'       => optional($t->vendor)->name,
+                    'since'        => optional($t->last_state_change_at)->toIso8601String(),
+                ];
+            }
+
+            // --- /inspection-review: the Controller approval gate --------------------------------------
+            if ($request->user()?->can('maintenance.manage')) {
+                foreach ($this->workflow->pendingReview() as $t) {
+                    if (! in_array((int) $t->vehicle_id, $vehicleIds, true)) {
+                        continue;
+                    }
+                    $hits[(int) $t->vehicle_id][] = [
+                        'page'         => 'inspection-review',
+                        'to'           => '/inspection-review?ticket='.$t->id,
+                        'ticket_id'    => (int) $t->id,
+                        'status'       => $t->workflow_status,
+                        'status_label' => MaintenanceWorkflowResource::LABELS[$t->workflow_status] ?? $t->workflow_status,
+                        // Which tab the queue will land on — mirrors its own is_system_withdrawal split.
+                        'lane'         => $t->workflow_status === Maintenance::WF_REVIEW_REJECTED ? 'withdrawn' : 'awaiting',
+                        'garage'       => null,
+                        'since'        => optional($t->requested_at)->toIso8601String(),
+                    ];
+                }
+            }
+
+            $matches = [];
+            foreach ($vehicles as $id => $v) {
+                $matches[] = [
+                    'vehicle' => [
+                        'id'       => (int) $v->id,
+                        'plate_no' => $v->plate_no,
+                        'make'     => $v->make,
+                        'model'    => $v->model,
+                        'status'   => $v->status,
+                        'label'    => trim(implode(' ', array_filter([$v->make, $v->model]))) ?: $v->plate_no,
+                        'to'       => '/vehicles/'.$v->id,
+                    ],
+                    'hits' => $hits[$id] ?? [],
+                ];
+            }
+
+            // The car whose plate was actually TYPED comes first — a prefix neighbour that happens to be
+            // in the shop must never outrank the exact plate the searcher asked about. Among equals, the
+            // car that IS somewhere outranks one that is nowhere: that is the whole point of the search.
+            $exact = fn ($m) => PlateResolver::plateDigits($m['vehicle']['plate_no']) === $digits ? 0 : 1;
+            usort($matches, fn ($a, $b) => [$exact($a), -count($a['hits'])] <=> [$exact($b), -count($b['hits'])]);
+
+            return ResponseHelper::SuccessResponse(
+                ['query' => $raw, 'digits' => $digits, 'matches' => $matches],
+                'OK',
+                200
+            );
+        });
     }
 
     /**

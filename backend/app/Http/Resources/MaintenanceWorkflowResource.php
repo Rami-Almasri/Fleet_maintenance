@@ -19,8 +19,11 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class MaintenanceWorkflowResource extends JsonResource
 {
-    /** workflow_status → human label. */
-    private const LABELS = [
+    // workflow_status → human label.
+    // PUBLIC on purpose: this is the one English name each workflow state answers to, and the plate
+    // locator (MaintenanceWorkflowController::plateLocator) has to name the same states without
+    // serializing a whole ticket. Two label maps would eventually disagree; one cannot.
+    public const LABELS = [
         Maintenance::WF_PENDING_REVIEW         => 'Pending review',
         Maintenance::WF_REVIEW_REJECTED        => 'Review rejected',
         Maintenance::WF_INSPECTION_REQUESTED  => 'Inspection requested',
