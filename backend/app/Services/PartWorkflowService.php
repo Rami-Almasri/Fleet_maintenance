@@ -81,8 +81,19 @@ class PartWorkflowService
         $req->save();
 
         $this->logVehicle($req->vehicle_id, VehicleLogEvent::EVENT_PART_REQUESTED, $actor, $req->maintenance_id, [
-            'description' => "Part requested: {$req->part_name} ({$req->source})",
-            'meta'        => ['part_request_id' => $req->id, 'part_class' => $req->part_class, 'source' => $req->source],
+            'description' => "Part requested: {$req->part_name} ({$req->source})"
+                . ($req->estimated_price ? " — est. {$req->estimated_price} {$req->currency}" : ''),
+            'meta'        => [
+                'part_request_id'   => $req->id,
+                'part_class'        => $req->part_class,
+                'source'            => $req->source,
+                'part_number'       => $req->part_number,
+                'quantity'          => (float) ($req->quantity ?: 1),
+                'estimated_price'   => $req->estimated_price !== null ? (float) $req->estimated_price : null,
+                'currency'          => $req->currency,
+                'reason'            => $req->reason,
+                'requested_by_name' => $req->requested_by_name,
+            ],
         ]);
         PartRequirementRaised::dispatch($req->id, $req->vehicle_id, $req->maintenance_id, $req->maintenance_task_id, $actor->id);
 
@@ -230,8 +241,13 @@ class PartWorkflowService
         $req->forceFill($fill)->save();
 
         $this->logVehicle($req->vehicle_id, VehicleLogEvent::EVENT_PART_APPROVED, $actor, $req->maintenance_id, [
-            'description' => "Part request approved: {$req->part_name}" . ($ackDuplicate ? ' (duplicate acknowledged)' : ''),
-            'meta'        => ['part_request_id' => $req->id, 'duplicate_ack' => $ackDuplicate],
+            'description' => "Part request approved: {$req->part_name} — by {$req->approved_by_name}"
+                . ($ackDuplicate ? ' (duplicate acknowledged)' : ''),
+            'meta'        => [
+                'part_request_id'  => $req->id,
+                'duplicate_ack'    => $ackDuplicate,
+                'approved_by_name' => $req->approved_by_name,
+            ],
         ]);
         PartRequestApproved::dispatch($req->id, $req->vehicle_id, $req->maintenance_id, $actor->id);
 
@@ -333,9 +349,25 @@ class PartWorkflowService
 
             $req->forceFill(['status' => PartRequest::STATUS_PURCHASED])->save();
 
+            $seller = $this->sellerName($purchase);
+            $qty    = (float) ($purchase->quantity ?: 1);
             $this->logVehicle($req->vehicle_id, VehicleLogEvent::EVENT_PART_PURCHASED, $actor, $req->maintenance_id, [
-                'description' => "Part purchased ({$purchase->purchase_source}): {$purchase->part_name} — {$purchase->purchase_price} {$purchase->currency}",
-                'meta'        => ['part_purchase_id' => $purchase->id, 'source' => $purchase->purchase_source, 'duplicate' => $verdict['duplicate']],
+                'description' => "Part purchased from {$seller}: {$purchase->part_name}"
+                    . ($qty > 1 ? ' ×' . rtrim(rtrim(number_format($qty, 2, '.', ''), '0'), '.') : '')
+                    . " — {$purchase->purchase_price} {$purchase->currency}",
+                'meta'        => [
+                    'part_purchase_id' => $purchase->id,
+                    'source'           => $purchase->purchase_source,
+                    // WHO it was bought from, by name and by id — the timeline used to carry only the
+                    // word 'supplier'/'garage', which cannot answer "where did this part come from?".
+                    'seller_name'      => $seller,
+                    'source_vendor_id' => $purchase->source_vendor_id,
+                    'po_number'        => $purchase->po_number,
+                    'quantity'         => $qty,
+                    'price'            => (float) $purchase->purchase_price,
+                    'currency'         => $purchase->currency,
+                    'duplicate'        => $verdict['duplicate'],
+                ],
             ]);
 
             $investigation = null;
@@ -345,6 +377,38 @@ class PartWorkflowService
 
             return ['purchase' => $purchase->fresh(), 'verdict' => $verdict, 'investigation' => $investigation];
         });
+    }
+
+    /**
+     * WHO the part was bought from, in the words a human would use — for the vehicle timeline.
+     *
+     * The purchase row records the CHANNEL (`purchase_source`: garage vs supplier) and, separately, the
+     * party: a registered vendor, or a free-typed name for a walk-in. The channel word alone is what the
+     * timeline used to carry, and "Part purchased (supplier)" cannot answer where a part came from a year
+     * later. Preference order is strongest-identity first — the linked vendor, then whatever was typed,
+     * then the ticket's own garage for a garage buy that named nobody — and only if all three are empty
+     * does it fall back to the bare channel word.
+     */
+    private function sellerName(PartPurchase $purchase): string
+    {
+        $vendor = $purchase->source_vendor_id
+            ? optional($purchase->sourceVendor()->first())->name
+            : null;
+        if ($vendor) {
+            return $vendor;
+        }
+        if (filled($purchase->source_name)) {
+            return trim($purchase->source_name);
+        }
+        if ($purchase->purchase_source === PartPurchase::SOURCE_GARAGE && $purchase->maintenance_id) {
+            $ticket = Maintenance::find($purchase->maintenance_id);
+            $garage = $ticket?->vendor?->name ?: $ticket?->garage;
+            if (filled($garage)) {
+                return $garage;
+            }
+        }
+
+        return $purchase->purchase_source === PartPurchase::SOURCE_GARAGE ? 'the garage' : 'a supplier';
     }
 
     /** Raise the admin duplicate-purchase investigation + HIGH/MEDIUM alert. Best-effort, never blocks. */
@@ -504,8 +568,17 @@ class PartWorkflowService
             }
 
             $this->logVehicle($purchase->vehicle_id, VehicleLogEvent::EVENT_PART_INSTALLED, $actor, $purchase->maintenance_id, [
-                'description' => "Part installed: {$purchase->part_name} ({$purchase->result})",
-                'meta'        => ['part_purchase_id' => $purchase->id, 'line_item_id' => $lineItemId, 'result' => $purchase->result],
+                'description' => "Part installed: {$purchase->part_name} ({$purchase->result})"
+                    . " — {$purchase->purchase_price} {$purchase->currency} from " . $this->sellerName($purchase),
+                'meta'        => [
+                    'part_purchase_id' => $purchase->id,
+                    'line_item_id'     => $lineItemId,
+                    'result'           => $purchase->result,
+                    'seller_name'      => $this->sellerName($purchase),
+                    'source_vendor_id' => $purchase->source_vendor_id,
+                    'price'            => (float) $purchase->purchase_price,
+                    'currency'         => $purchase->currency,
+                ],
             ]);
             PartInstalled::dispatch($purchase->id, $purchase->part_request_id, $purchase->vehicle_id, $purchase->maintenance_id, $actor->id);
 
@@ -531,8 +604,12 @@ class PartWorkflowService
         $purchase->forceFill(['delivered_at' => Carbon::now()])->save();
 
         $this->logVehicle($purchase->vehicle_id, VehicleLogEvent::EVENT_PART_DELIVERED, $actor, $purchase->maintenance_id, [
-            'description' => "Part delivered: {$purchase->part_name}",
-            'meta'        => ['part_purchase_id' => $purchase->id],
+            'description' => "Part delivered: {$purchase->part_name} (from " . $this->sellerName($purchase) . ')',
+            'meta'        => [
+                'part_purchase_id' => $purchase->id,
+                'seller_name'      => $this->sellerName($purchase),
+                'source_vendor_id' => $purchase->source_vendor_id,
+            ],
         ]);
         PartDelivered::dispatch($purchase->id, $purchase->part_request_id, $purchase->vehicle_id, $purchase->maintenance_id, $actor->id);
 
