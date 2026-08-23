@@ -92,6 +92,7 @@ const QUEUE = {
       // answer for this car until someone phones the customer.
       contract_id: 95, contract_no: 'C-9005', customer: 'Samir Haddad',
       customer_no: '5121', customer_phone: '0501234567', customer_whatsapp: '0509999999',
+      contract_remarks: 'BETA TEAM / ONLINE / CARDO',
       vehicle_id: 9, plate: 'B 55510', car: 'TOYOTA COROLLA', out_date: '2026-07-28',
       projection: {
         ...LIMITS, status: 'chase_due', expected: 8200, km_to_threshold: -200,
@@ -735,6 +736,22 @@ test('the call list carries the car, the customer and the number to dial', async
   expect(dialog.getByText('0501234567').closest('a')).toHaveAttribute('href', 'tel:0501234567');
 });
 
+/**
+ * WHOSE CUSTOMER IS THIS. The branch writes a note on the contract in OM — which team owns the
+ * rental, how it was booked. The caller needs that before they dial, and they need it word for
+ * word: it is the branch's own shorthand, and this app does not get to paraphrase it.
+ */
+test('the call list prints the contract note from OM verbatim', async () => {
+  await load();
+  await chip(/Call customer \(1\)/);
+
+  fireEvent.click(await screen.findByText(/Call list \(1\)/));
+
+  const dialog = within(await screen.findByRole('dialog'));
+  expect(dialog.getByText('Contract note')).toBeInTheDocument();
+  expect(dialog.getByText('BETA TEAM / ONLINE / CARDO')).toBeInTheDocument();
+});
+
 /** The same list, written out — the caller can work off a phone or hand it to someone else. */
 test('the call list downloads as a CSV of every row it shows', async () => {
   const blobs = [];
@@ -752,9 +769,10 @@ test('the call list downloads as a CSV of every row it shows', async () => {
 
     expect(click).toHaveBeenCalled();
     const csv = blobs.at(-1);
-    expect(csv).toContain('"Car","Plate","Customer","Phone","CX number","Contract","Km left before the allowance","Days left (est.)","Today (est.) km","Max allowed km"');
-    // The margin travels with the figures it was made of: 8,000 allowed − 8,200 estimated = −200.
-    expect(csv).toContain('"TOYOTA COROLLA","B 55510","Samir Haddad","0501234567","5121","C-9005","-200","-1","8200","8000"');
+    expect(csv).toContain('"Car","Plate","Customer","Phone","CX number","Contract","Contract note","Km left before the allowance","Days left (est.)","Today (est.) km","Max allowed km"');
+    // The margin travels with the figures it was made of: 8,000 allowed − 8,200 estimated = −200,
+    // and the branch's own note on the contract travels with the row that it belongs to.
+    expect(csv).toContain('"TOYOTA COROLLA","B 55510","Samir Haddad","0501234567","5121","C-9005","BETA TEAM / ONLINE / CARDO","-200","-1","8200","8000"');
   } finally {
     global.Blob = RealBlob;
     click.mockRestore();

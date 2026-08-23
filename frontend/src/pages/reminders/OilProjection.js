@@ -1403,6 +1403,9 @@ export function CallListDialog({ rows, laneLabel, onClose }) {
       phone:    r.customer_phone || '',
       cx:       r.customer_no || '',
       contract: r.contract_no || '',
+      // The branch's own note on the contract — which team, booked which way. Carried out with the
+      // list so a sheet handed to someone else still says whose customer each row belongs to.
+      remarks:  r.contract_remarks || '',
       // The figures the margin is made of travel WITH it — a spreadsheet handed to someone else has
       // to be able to show its own arithmetic, exactly like the page does.
       left:     m.km == null ? '' : m.km,
@@ -1414,11 +1417,11 @@ export function CallListDialog({ rows, laneLabel, onClose }) {
 
   const download = () => {
     const head = [
-      t('Car'), t('Plate'), t('Customer'), t('Phone'), t('CX number'), t('Contract'),
+      t('Car'), t('Plate'), t('Customer'), t('Phone'), t('CX number'), t('Contract'), t('Contract note'),
       t('Km left before the allowance'), t('Days left (est.)'), t('Today (est.) km'), t('Max allowed km'),
     ];
     const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const lines = csvRows.map((r) => [r.car, r.plate, r.customer, r.phone, r.cx, r.contract, r.left, r.days, r.now, r.max].map(cell).join(','));
+    const lines = csvRows.map((r) => [r.car, r.plate, r.customer, r.phone, r.cx, r.contract, r.remarks, r.left, r.days, r.now, r.max].map(cell).join(','));
     // A leading BOM so Excel opens Arabic customer names as Arabic, not as mojibake.
     const blob = new Blob(['﻿' + [head.map(cell).join(','), ...lines].join('\r\n')], {
       type: 'text/csv;charset=utf-8',
@@ -1457,6 +1460,7 @@ export function CallListDialog({ rows, laneLabel, onClose }) {
                 <th className="px-2 py-2 text-start">{t('Customer')}</th>
                 <th className="px-2 py-2 text-start">{t('Phone')}</th>
                 <th className="px-2 py-2 text-start">{t('CX number')}</th>
+                <th className="px-2 py-2 text-start">{t('Contract note')}</th>
                 <th className="px-2 py-2 text-end">{t('Km left for oil')}</th>
               </tr>
             </thead>
@@ -1488,6 +1492,12 @@ export function CallListDialog({ rows, laneLabel, onClose }) {
                     )}
                   </td>
                   <td className="px-2 py-2 text-slate-700" dir="ltr">{r.customer_no || '—'}</td>
+                  {/* What the branch wrote on the contract in OM — which team owns this rental and
+                      how it was booked. Printed word for word: it is somebody else's shorthand, and
+                      a call list that re-words it would be telling the caller something we invented. */}
+                  <td className="max-w-[14rem] px-2 py-2 text-xs text-slate-600" dir="ltr">
+                    {r.contract_remarks || <span className="text-slate-400">—</span>}
+                  </td>
                   {/* How much run is left before this car passes what it is allowed. The order of
                       the list is this column, so the person dialling can stop wherever they run out
                       of time and know the cars they skipped were the least urgent ones. */}
@@ -1524,7 +1534,8 @@ export function CallListDialog({ rows, laneLabel, onClose }) {
           {/* The column states its own arithmetic — nobody should have to guess what "km left" is. */}
           <div className="mt-3 text-xs text-slate-500">
             <span className="font-semibold">{t('Data origin:')}</span>{' '}
-            {t('“Km left for oil” is the max allowed (oil limit + grace) minus today’s estimated odometer — the same two figures shown on each car’s card. The days are that gap at the projection’s own km/day pace. Nothing here is a new calculation.')}
+            {t('“Km left for oil” is the max allowed (oil limit + grace) minus today’s estimated odometer — the same two figures shown on each car’s card. The days are that gap at the projection’s own km/day pace. Nothing here is a new calculation.')}{' '}
+            {t('“Contract note” is the remark typed on the contract in OfficeManager, shown word for word.')}
           </div>
         </div>
       )}

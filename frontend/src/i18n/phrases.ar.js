@@ -933,6 +933,8 @@ const phrasesAr = {
   'Captured': 'تم التقاطها',
   'Car': 'السيارة',
   'CX number': 'رقم العميل (CX)',
+  'Contract note': 'ملاحظة العقد',
+  '“Contract note” is the remark typed on the contract in OfficeManager, shown word for word.': '«ملاحظة العقد» هي الملاحظة المكتوبة على العقد في OfficeManager، وتُعرض كما هي حرفياً.',
   'Car →': 'السيارة →',
   'Car is out': 'المركبة خارج الموقع',
   'car needs a mileage review': 'مركبة تحتاج إلى مراجعة المسافة',

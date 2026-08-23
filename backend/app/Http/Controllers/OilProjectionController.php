@@ -84,6 +84,11 @@ class OilProjectionController extends Controller
                                             ?: ($c->customer?->whatsapp ?: $c->customer?->mobile2),
                         'customer_mobile2' => $c->customer?->mobile2,
                         'customer_whatsapp'=> $c->customer?->whatsapp,
+                        // What the branch wrote on the contract in OM ("BETA TEAM / ONLINE / CARDO").
+                        // It says which team owns this rental and how it was booked, so the person
+                        // dialling knows whose customer they are ringing before they ring them.
+                        // Verbatim from the API's `Remarks` — never parsed, never interpreted.
+                        'contract_remarks' => $this->cleanRemarks($c->remarks),
                         'vehicle_id'    => $c->vehicle?->id,
                         'plate'         => $c->vehicle?->plate_no,
                         'car'           => trim(($c->vehicle?->make ?? '') . ' ' . ($c->vehicle?->model ?? '')),
@@ -384,6 +389,20 @@ class OilProjectionController extends Controller
         } catch (Throwable $e) {
             return ResponseHelper::fromException($e);
         }
+    }
+
+    /**
+     * The contract remark exactly as OM holds it, or null when there is nothing written.
+     *
+     * Whitespace only — collapsing runs of spaces and newlines so a remark typed across two lines
+     * still reads as one line in a table cell. The WORDS are never touched: "BETA TEAM / ONLINE /
+     * CARDO" is a branch's own shorthand and this app does not pretend to know what it decodes to.
+     */
+    private function cleanRemarks(?string $remarks): ?string
+    {
+        $clean = trim(preg_replace('/\s+/u', ' ', (string) $remarks));
+
+        return $clean === '' ? null : $clean;
     }
 
     /**
