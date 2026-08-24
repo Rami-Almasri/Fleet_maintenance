@@ -2068,6 +2068,9 @@ class MaintenanceWorkflowService
                 $this->withdrawRequestsForMaintenanceContracts();
                 $this->withdrawRequestsForWorkshopLog();
                 $this->withdrawRequestsWhoseConditionCleared();
+                // …and requests whose CAR has left the fleet entirely — the sheet dropped it, so there is
+                // no car left to decide about.
+                $this->withdrawRequestsForRemovedVehicles();
             } catch (\Throwable $e) {
                 report($e); // a failed sweep must never take the queue down with it
             }
@@ -2148,6 +2151,19 @@ class MaintenanceWorkflowService
                     ? ! $onContract->has((int) $t->vehicle_id)
                     : ! isset($onLog[(int) $t->vehicle_id]);
             })->values();
+        }
+
+        // A CAR THAT IS NOT IN THE FLEET IS NOT A DECISION. The sweep above withdraws these, but it only
+        // reaches `pending_review` rows and only runs once a minute; this drops any that remain (an
+        // unreviewed `inspection_requested`, or a row the sweep could not lock) so the queue never serves
+        // a card with no plate, no odometer and a vehicle page that 404s. Nothing is written here — the
+        // request keeps its state and its audit trail, it is simply not offered as work.
+        $referenced = $tickets->pluck('vehicle_id')->filter()->unique()->all();
+        if ($referenced) {
+            $liveVehicles = Vehicle::whereIn('id', $referenced)->pluck('id')->flip();
+            $tickets = $tickets
+                ->reject(fn ($t) => $t->vehicle_id && ! $liveVehicles->has((int) $t->vehicle_id))
+                ->values();
         }
 
         // Attach each car's last REAL inspection/test-drive (before this request) so the reviewer can see
@@ -2658,6 +2674,76 @@ class MaintenanceWorkflowService
             ],
             ['anchor_source' => $anchor['source'] ?? null, 'anchor_source_id' => $anchor['source_id'] ?? null],
         );
+    }
+
+    /**
+     * THE CAR IS GONE — withdraw the requests still waiting on it.
+     *
+     * The fleet sheet is the sole source of which cars exist; a car dropped from the sheet is removed
+     * here, and every request still sitting in the review queue for that car becomes un-decidable. It
+     * cannot even be read: no plate, no make, no odometer (the card renders the word "Vehicle" and
+     * "0 km", because every one of those values comes off a `vehicle` relation that now resolves to
+     * null), and opening it answers `No query results for model [App\Models\Vehicle] <id>`. Nobody can
+     * approve a test for a car the fleet does not have.
+     *
+     * Unlike the three sweeps above, this one is NOT limited to `system_schedule`. Those withdraw a
+     * request because a CLOCK moved, and a clock may not overrule a person who asked for something it
+     * cannot see. This one is not a judgement about the request at all — its SUBJECT has left. A human
+     * requester is told (systemWithdraw notifies them with the sentence below), and the request keeps
+     * its whole audit trail; only its place in the queue goes.
+     *
+     * A soft-deleted vehicle counts as gone: `Vehicle::query()` excludes trashed rows everywhere else
+     * in the app, so treating it as present here is the one thing that would put the card back.
+     *
+     * Idempotent, row-locked, and a human decision always outranks it (see systemWithdraw()).
+     *
+     * @return int how many requests were withdrawn
+     */
+    public function withdrawRequestsForRemovedVehicles(): int
+    {
+        $pending = Maintenance::where('workflow_status', Maintenance::WF_PENDING_REVIEW)
+            ->whereNotNull('vehicle_id')
+            ->get(['id', 'vehicle_id', 'plate', 'car_label', 'requested_by', 'created_at']);
+
+        if ($pending->isEmpty()) {
+            return 0;
+        }
+
+        $live = Vehicle::whereIn('id', $pending->pluck('vehicle_id')->unique()->all())
+            ->pluck('id')
+            ->flip();
+
+        $withdrawn = 0;
+        foreach ($pending as $row) {
+            if ($live->has((int) $row->vehicle_id)) {
+                continue;
+            }
+
+            $ticket = Maintenance::find($row->id);
+            if (! $ticket) {
+                continue;
+            }
+
+            $sentence = 'This car is no longer in the fleet list, so the request cannot be acted on.';
+
+            $withdrawn += $this->systemWithdraw(
+                $ticket,
+                Maintenance::REVIEW_REJECT_VEHICLE_LEFT_FLEET,
+                $sentence,
+                // The evidence: which car id stopped resolving, and what the request still remembered
+                // about it — the only identity left once the vehicle row is gone.
+                [
+                    'source'             => 'vehicle_removed',
+                    'vehicle_id'         => (int) $row->vehicle_id,
+                    'last_known_plate'   => $row->plate,
+                    'last_known_car'     => $row->car_label,
+                    'request_created_at' => $row->created_at?->toIso8601String(),
+                ],
+                ['vehicle_id' => (int) $row->vehicle_id],
+            ) ? 1 : 0;
+        }
+
+        return $withdrawn;
     }
 
     /**
