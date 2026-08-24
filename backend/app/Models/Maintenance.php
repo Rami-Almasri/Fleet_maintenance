@@ -799,6 +799,14 @@ class Maintenance extends Model
     public const REVIEW_REJECT_CONDITION_CLEARED       = 'condition_cleared';
     public const REVIEW_REJECT_SUPERSEDED_BY_TEST      = 'superseded_by_test';
     public const REVIEW_REJECT_OIL_TEST_NOT_WANTED     = 'oil_test_not_wanted';
+    /**
+     * THE CAR IS NO LONGER IN THE FLEET. The fleet sheet is the sole source of which cars exist
+     * ([[vehicle-sourcing-rule]]), so a car dropped from it is removed here — and any request still
+     * waiting on that car is waiting on nothing. Nobody can approve a test for a car we do not have,
+     * and the card cannot even render (no plate, no odometer, and its vehicle page 404s), so the
+     * request is withdrawn rather than left in the queue as an un-decidable row.
+     */
+    public const REVIEW_REJECT_VEHICLE_LEFT_FLEET      = 'vehicle_left_fleet';
 
     public const REVIEW_SYSTEM_WITHDRAWAL_REASONS = [
         self::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT => 'Already in maintenance (OfficeManager contract)',
@@ -806,6 +814,7 @@ class Maintenance extends Model
         self::REVIEW_REJECT_CONDITION_CLEARED       => 'Back from maintenance — the check clock restarted',
         self::REVIEW_REJECT_SUPERSEDED_BY_TEST      => 'Someone drove the car and sent it in',
         self::REVIEW_REJECT_OIL_TEST_NOT_WANTED     => 'The oil recall is no longer having a test',
+        self::REVIEW_REJECT_VEHICLE_LEFT_FLEET      => 'The car is no longer in the fleet',
     ];
 
     /** True when a stored rejection code was written by the system, not chosen by a reviewer. */
