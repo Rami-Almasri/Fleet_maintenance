@@ -18,6 +18,7 @@ import SystemChecksStatus from './SystemChecksStatus';
 import CheckpointModal from '../maintenance/CheckpointModal';
 import CheckpointTimeline from '../maintenance/CheckpointTimeline';
 import { getTicketCheckpoints, isCheckpointStage } from '../../lib/maintenanceCheckpoints';
+import { copyText } from '../../lib/clipboard';
 import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, REASON_TONE, ORIGIN_LABEL, ORIGIN_TONE, custodyBlocked, custodyHolderName, isAtGarage, canOrderParts } from './meta';
 import { fmtDate } from '../../lib/format';
 import { SHOW_FINANCIALS } from '../../config/features';
@@ -395,7 +396,13 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => { navigator.clipboard?.writeText(url); toast.success(t('workflow.garageInvoice.copied')); }}
+            onClick={async () => {
+              // Over plain http there is no clipboard API — say what actually happened, and point at the
+              // box above (the link is already on screen) rather than claiming a copy that never occurred.
+              const ok = await copyText(url);
+              if (ok) toast.success(t('workflow.garageInvoice.copied'));
+              else toast.info(t('workflow.garageInvoice.copyBlocked'));
+            }}
           >
             {t('workflow.garageInvoice.copy')}
           </Button>

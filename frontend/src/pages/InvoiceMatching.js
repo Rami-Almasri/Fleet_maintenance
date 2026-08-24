@@ -27,6 +27,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import InvoicesPanel from '../components/workflow/InvoicesPanel';
 import { fmtDuration, fmtDateTime } from '../components/workflow/meta';
 import { getTicketCheckpoints, useCheckpointVocab } from '../lib/maintenanceCheckpoints';
+import { copyText } from '../lib/clipboard';
 
 const money = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const compactMoney = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -384,7 +385,7 @@ function ChargedLines({ invoices, activeInvoiceId, onHover }) {
 // gives each garage its own slot: the work that garage did, the bill it handed us (if any), a Create-bill
 // button that opens the form with only ITS unbilled work ticked, and its own tokenised link to submit the
 // invoice itself. One row per garage is the whole billing model, made visible.
-function GarageSlot({ slot, canManage, onCreateBill, onIssueLink, linkBusy, copiedFor, onCopy, onHover, active }) {
+function GarageSlot({ slot, canManage, onCreateBill, onIssueLink, linkBusy, copiedFor, copyFailedFor, onCopy, onHover, active }) {
   const { t } = useI18n();
   const state = slot.invoices.length === 0 ? 'no_invoice' : slot.unbilled.length > 0 ? 'partial' : 'matched';
   const meta = STATES[state];
@@ -453,16 +454,43 @@ function GarageSlot({ slot, canManage, onCreateBill, onIssueLink, linkBusy, copi
           )}
           {/* Or let the garage fill it in itself — the same tokenised link the ticket issues, scoped to
               this garage so it only ever sees (and bills) its own work. */}
-          {slot.vendor_id && (
+          {slot.vendor_id && (slot.link || slot.linkable) && (
             slot.link ? (
-              <button
-                type="button"
-                onClick={() => onCopy(slot)}
-                className="focus-ring-self inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-200"
-              >
-                {copiedFor === slot.vendor_id ? <Icon.Check className="h-3.5 w-3.5 text-emerald-600" /> : <Icon.Route className="h-3.5 w-3.5" />}
-                {copiedFor === slot.vendor_id ? t('Link copied') : t('Copy garage link')}
-              </button>
+              /* The link itself is ON SCREEN, not hidden behind the clipboard. Over plain http the
+                 browser has no clipboard API at all, and a copy button that silently does nothing is
+                 how a link the server already issued ends up looking like it was never created. */
+              <div className="w-full space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    readOnly
+                    value={`${window.location.origin}${slot.link.path}`}
+                    onFocus={(e) => e.target.select()}
+                    aria-label={t('Copy garage link')}
+                    className="focus-ring-self min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-600 outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onCopy(slot)}
+                    className="focus-ring-self inline-flex shrink-0 items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-200"
+                  >
+                    {copiedFor === slot.vendor_id ? <Icon.Check className="h-3.5 w-3.5 text-emerald-600" /> : <Icon.Route className="h-3.5 w-3.5" />}
+                    {copiedFor === slot.vendor_id ? t('Link copied') : t('Copy garage link')}
+                  </button>
+                </div>
+                {copyFailedFor === slot.vendor_id && (
+                  <p className="text-[10.5px] text-amber-700">
+                    {t('This browser blocked the copy — select the link above and copy it manually.')}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onIssueLink(slot)}
+                  disabled={linkBusy === slot.vendor_id}
+                  className="text-[10.5px] font-semibold text-slate-400 transition hover:text-slate-600 disabled:text-slate-300"
+                >
+                  {t('Issue a new link')}
+                </button>
+              </div>
             ) : (
               <Button size="sm" variant="secondary" loading={linkBusy === slot.vendor_id} onClick={() => onIssueLink(slot)}>
                 <Icon.Route className="h-3.5 w-3.5" />{t('Send link to garage')}
@@ -1021,6 +1049,8 @@ export default function InvoiceMatching() {
   const [garageLinks, setGarageLinks] = useState([]);   // live per-garage portal links for this ticket
   const [linkBusy, setLinkBusy] = useState(null);
   const [copiedFor, setCopiedFor] = useState(null);
+  const [copyFailedFor, setCopyFailedFor] = useState(null);
+  const [linkError, setLinkError] = useState(null);
   const [garages, setGarages] = useState([]);
   const [findingsCatalog, setFindingsCatalog] = useState([]);
 
@@ -1071,7 +1101,12 @@ export default function InvoiceMatching() {
     }
   }, [canManage]);
 
-  useEffect(() => { setCopiedFor(null); loadLinks(selectedId); }, [selectedId, loadLinks]);
+  useEffect(() => {
+    setCopiedFor(null);
+    setCopyFailedFor(null);
+    setLinkError(null);
+    loadLinks(selectedId);
+  }, [selectedId, loadLinks]);
 
   // Why a car was late is a question the checkpoint trail already answers — it just was not on this desk.
   // Read-only, its own endpoint, so a failure here never blocks the matching work.
@@ -1154,9 +1189,15 @@ export default function InvoiceMatching() {
       slotFor(key, inv.is_internal ? null : inv.vendor_id, inv.vendor_name || null).invoices.push(inv);
     });
 
-    // Attach whichever tokenised link is already live for each garage.
+    // Attach whichever tokenised link is already live for each garage — and whether a link may be issued
+    // at all. The portal scopes a link by the garage that OWNS work (maintenance_tasks.current_vendor_id);
+    // a slot here can also exist off the ticket's own garage as a fallback, and asking for a link on one
+    // of those is refused by the server. Offer the button only where it can actually succeed.
     map.forEach((slot) => {
-      slot.link = garageLinks.find((g) => String(g.vendor_id) === String(slot.vendor_id))?.link || null;
+      const row = garageLinks.find((g) => String(g.vendor_id) === String(slot.vendor_id));
+      slot.link = row?.link || null;
+      // An empty list means "not loaded / nothing billable" — don't hide the action on that alone.
+      slot.linkable = garageLinks.length === 0 ? true : !!row;
     });
 
     return [...map.values()].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -1172,19 +1213,23 @@ export default function InvoiceMatching() {
 
   const issueLink = async (slot) => {
     setLinkBusy(slot.vendor_id);
+    setLinkError(null);
     try {
       await api.post(`/maintenance-tickets/${selectedId}/garage-invoice-link`, { vendor_id: slot.vendor_id });
       await loadLinks(selectedId);
-    } catch { /* the slot simply keeps offering the button */ }
+    } catch (e) {
+      // A refused link is a fact the desk has to see — silence here reads as "the button does nothing".
+      setLinkError(e?.response?.data?.message || e?.response?.data?.msg || t('Could not create the garage link.'));
+    }
     setLinkBusy(null);
   };
 
   const copyLink = async (slot) => {
     if (!slot.link?.path) return;
-    try {
-      await navigator.clipboard.writeText(`${window.location.origin}${slot.link.path}`);
-      setCopiedFor(slot.vendor_id);
-    } catch { /* clipboard blocked — the link stays visible on the ticket */ }
+    const ok = await copyText(`${window.location.origin}${slot.link.path}`);
+    setCopiedFor(ok ? slot.vendor_id : null);
+    // Not copied is not the same as not issued: the URL stays on screen for a manual copy.
+    setCopyFailedFor(ok ? null : slot.vendor_id);
   };
 
   // Hovering a garage slot lights up that garage's work in the left column — the same cross-link the
@@ -1394,6 +1439,9 @@ export default function InvoiceMatching() {
                         ? t('1 garage worked this car')
                         : t('{n} garages worked this car', { n: garageSlots.length })}
                     />
+                    {linkError && (
+                      <p className="rounded-lg bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">{linkError}</p>
+                    )}
                     <div className="stagger grid grid-cols-1 gap-2.5 md:grid-cols-2">
                       {garageSlots.map((slot) => (
                         <GarageSlot
@@ -1404,6 +1452,7 @@ export default function InvoiceMatching() {
                           onIssueLink={issueLink}
                           linkBusy={linkBusy}
                           copiedFor={copiedFor}
+                          copyFailedFor={copyFailedFor}
                           onCopy={copyLink}
                           onHover={(s) => setActiveGarageId(s?.vendor_id ?? null)}
                           active={!!activeGarageId && String(activeGarageId) === String(slot.vendor_id)}
