@@ -2019,6 +2019,29 @@ function FleetCountdownPanel() {
 }
 
 
+/* ── where the car IS, as a filter on the queue ────────────────────────────────────────────────────
+ *
+ * A Controller works this queue differently depending on where the car is standing. A car sitting on
+ * the yard can be sent in today; a car out on rent cannot be touched until the customer brings it back.
+ * Same request, different decision — so the queue can be narrowed to one or the other.
+ *
+ * The value is the car's own `operational_status` (vehicles.operational_status, carried on each ticket by
+ * MaintenanceWorkflowResource) — a stored fact about the car, not a judgement made here. Filtering never
+ * changes the badge on the tab: that stays the whole backlog, so narrowing the list can't hide the count.
+ */
+const CAR_STATE_LABEL = {
+  available:   ['review.carState.available', 'On the yard — available'],
+  rented:      ['review.carState.rented', 'Out on rent'],
+  maintenance: ['review.carState.maintenance', 'In the shop'],
+  test:        ['review.carState.test', 'On a test drive'],
+  in_transit:  ['review.carState.inTransit', 'In transit'],
+  transfer:    ['review.carState.transfer', 'Being transferred'],
+  sale_prep:   ['review.carState.salePrep', 'Sale prep'],
+  unknown:     ['review.carState.unknown', 'Car state not recorded'],
+};
+const CAR_STATE_ORDER = ['available', 'rented', 'maintenance', 'test', 'in_transit', 'transfer', 'sale_prep', 'unknown'];
+const carStateOf = (tk) => (CAR_STATE_LABEL[tk.operational_status] ? tk.operational_status : 'unknown');
+
 export default function InspectionReviewQueue() {
   const toast = useToast();
   const { t, tf } = useI18n();
@@ -2041,6 +2064,23 @@ export default function InspectionReviewQueue() {
   // is still true (open OM type-U contract / open garage-log trip). A car that came back is recounted,
   // not carded, so nothing here is stale by construction.
   const awaiting = useMemo(() => tickets.filter((t) => !t.review?.is_system_withdrawal), [tickets]);
+
+  // Narrow the queue to where the car is standing — "show me only the cars I can send in today", or only
+  // the ones stuck with a customer. `all` is the default, so nobody has to opt back into the full list.
+  const [carState, setCarState] = useState('all');
+  const carStateChips = useMemo(() => {
+    const n = {};
+    awaiting.forEach((tk) => { const k = carStateOf(tk); n[k] = (n[k] || 0) + 1; });
+    return CAR_STATE_ORDER.filter((k) => n[k] > 0).map((k) => ({ key: k, label: CAR_STATE_LABEL[k], n: n[k] }));
+  }, [awaiting]);
+  const awaitingShown = useMemo(
+    () => (carState === 'all' ? awaiting : awaiting.filter((tk) => carStateOf(tk) === carState)),
+    [awaiting, carState],
+  );
+  // A chip that stops existing (its last request was actioned) must not leave the queue looking empty.
+  useEffect(() => {
+    if (carState !== 'all' && !carStateChips.some((c) => c.key === carState)) setCarState('all');
+  }, [carStateChips, carState]);
 
   // Three tabs, three questions. This one: what needs a decision. Tab 2: which cars are in a shop
   // right now (its own endpoint, keyed off the shop stay — not off this payload, because a car on a
@@ -2073,6 +2113,9 @@ export default function InspectionReviewQueue() {
       // here, and Send-a-car-in can fire this while the countdown tab is open. Switch to the card's own
       // tab first, or the deep-link would scroll to something that isn't rendered.
       setTab(match.review?.is_system_withdrawal ? 'withdrawn' : 'awaiting');
+      // A deep-link points at ONE card — clear any car-state narrowing, or it would scroll to a card the
+      // filter is hiding.
+      setCarState('all');
       setHighlightId(match.id);
       requestAnimationFrame(() => {
         document.getElementById(`review-card-${match.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -2211,11 +2254,34 @@ export default function InspectionReviewQueue() {
                 />
               ) : (
                 <>
+                  {/* Where the car is standing. One chip per state actually present, each carrying its
+                      own count, so the filter row doubles as a read of the queue. */}
+                  {carStateChips.length > 1 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {[{ key: 'all', label: ['review.carState.all', 'All cars'], n: awaiting.length }, ...carStateChips].map((c) => (
+                        <button
+                          key={c.key}
+                          type="button"
+                          onClick={() => setCarState(c.key)}
+                          aria-pressed={carState === c.key}
+                          className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition ${
+                            carState === c.key
+                              ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
+                              : 'bg-white text-slate-500 ring-slate-200 hover:text-slate-800'
+                          }`}
+                        >
+                          {tf(c.label[0], c.label[1])} <span className="tabular-nums opacity-60">{c.n}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Analytics — the shape of the queue, before the request cards. Withdrawn requests are
-                      excluded: they are not a backlog and would distort every count on it. */}
-                  <InspectionReviewAnalytics tickets={awaiting} />
+                      excluded: they are not a backlog and would distort every count on it. It reads the
+                      filtered list, so the numbers always describe the cards underneath them. */}
+                  <InspectionReviewAnalytics tickets={awaitingShown} />
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    {awaiting.map((tk) => (
+                    {awaitingShown.map((tk) => (
                       <RequestCard
                         key={tk.id}
                         tk={tk}
