@@ -44,7 +44,7 @@ export default function DriverObservationsAnalytics({ rows = [] }) {
         key,
         label: r.plate || (r.vehicle_id ? `#${r.vehicle_id}` : t('Unknown car')),
         sub: r.car || undefined,
-        to: r.vehicle_id ? `/car-status/${r.vehicle_id}` : undefined,
+        to: r.vehicle_id ? `/vehicles/${r.vehicle_id}` : undefined,
         value: 0,
         escalated: 0,
       };

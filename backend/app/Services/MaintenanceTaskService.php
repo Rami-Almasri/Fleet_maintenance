@@ -141,6 +141,17 @@ class MaintenanceTaskService
         // path that promotes findings closes the traceability loop automatically.
         $this->bindRequiredParts($ticket);
 
+        // Same reasoning, same place: a system check the inspector answered "replace → approved" has
+        // been waiting for the fault its keyword produces. Now that the fault exists, the obligation
+        // is bound to it and will resolve when that repair does — closing the chain
+        // recommendation → check → result → decision → action → completion without a second creation
+        // path for faults. See [[VehicleCheckService]].
+        try {
+            app(VehicleCheckService::class)->bindActions($ticket, $actor);
+        } catch (\Throwable $e) {
+            report($e);   // check bookkeeping must never sink the promotion of a real fault
+        }
+
         return $created;
     }
 
@@ -587,6 +598,12 @@ class MaintenanceTaskService
                         . ($note ? ' — ' . $note : ''),
                     'meta'        => ['status' => $status, 'note' => $note],
                 ]);
+
+                // A fault born of a system check discharges that check when it ends — and records HOW
+                // it ended, because a cancelled or mis-diagnosed fault repaired nothing and must not
+                // count as a recommendation that led to a fix. Best-effort inside the service, so a
+                // check bookkeeping failure can never block a repair sign-off.
+                app(VehicleCheckService::class)->completeActionFor($task, $actor);
             }
 
             // Routine service (oil / battery) confirmation is DEFERRED to ticket close. Performing the

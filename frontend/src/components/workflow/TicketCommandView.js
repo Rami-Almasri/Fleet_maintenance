@@ -11,7 +11,10 @@ import { useToast } from '../ui/Toast';
 import { useCountUp } from '../ui/Gauge';
 import FindingsList from './FindingsList';
 import TicketParts from './TicketParts';
+import TicketContract from './TicketContract';
+import FaultRecurrence, { hasFaultHistory } from './FaultRecurrence';
 import SuggestedChecks from './SuggestedChecks';
+import SystemChecksStatus from './SystemChecksStatus';
 import CheckpointModal from '../maintenance/CheckpointModal';
 import CheckpointTimeline from '../maintenance/CheckpointTimeline';
 import { getTicketCheckpoints, isCheckpointStage } from '../../lib/maintenanceCheckpoints';
@@ -483,6 +486,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
   // Maintenance progress: show the checkpoint timeline once there's history, the user may file one, or the
   // car is at a workshop stage where checkpoints are tracked. `cpMon` drives the at-a-glance ETA line.
   const cpMon = cp?.monitor;
+  const hasAnyFaultHistory = (tk.tasks || []).some(hasFaultHistory);
   const showCheckpoints = !!cp && (cp.checkpoints?.length > 0 || cp.can_submit || isCheckpointStage(tk.workflow_status));
   const cpEtaTone = cpMon?.overdue ? 'bg-red-50 text-red-700 ring-red-200'
     : cpMon?.needs_update ? 'bg-amber-50 text-amber-700 ring-amber-200'
@@ -699,6 +703,10 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                   </div>
                 )
               )}
+              {/* …and the ADDRESSABLE obligations behind that agenda sentence. Read-only: the Decide
+                  step stays the only place a check can be answered. See [[SystemChecksStatus]] on why
+                  a supervisor needs to see an unanswered check without being able to answer it. */}
+              <SystemChecksStatus checks={tk.required_checks} t={t} />
             </Panel>
 
             {hasReport(tk.test_drive_report) && (
@@ -707,11 +715,28 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
               </Panel>
             )}
 
+            {/* Faults this car has had BEFORE, and the sign-off on repairing them again. Reads the
+                ticket's TASKS (the authoritative fault records) — not the findings blob below, which is
+                null on a large share of tickets. Renders nothing when no fault has history. */}
+            {hasAnyFaultHistory && (
+              <Panel title={t('workflow.detail.faultHistory')} icon={<Icon.Refresh className="h-4 w-4" />} accent="#f59e0b">
+                <FaultRecurrence tasks={tk.tasks || []} />
+              </Panel>
+            )}
+
             <Panel title={t('workflow.detail.findings')} icon={<Icon.Flag className="h-4 w-4" />} accent="#f59e0b">
               {tk.findings?.length ? <FindingsList findings={tk.findings} tasks={tk.tasks} /> : (
                 <EmptyState title={t('workflow.detail.noFindings')} icon={<Icon.Flag className="h-6 w-6" />} />
               )}
             </Panel>
+
+            {/* The contract this visit was opened under — the office's record of the same visit, and
+                every event the app logged inside its window. Renders nothing on a workshop-only ticket. */}
+            {tk.contract && (
+              <Panel title={t('workflow.contract.title')} icon={<Icon.Invoice className="h-4 w-4" />} accent="#0ea5e9">
+                <TicketContract contract={tk.contract} vehicleId={tk.vehicle_id} />
+              </Panel>
+            )}
 
             {/* Parts — requested against this ticket, filed here in-context. The /parts board still owns
                 the review → approve → purchase → install lifecycle. */}

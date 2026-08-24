@@ -60,12 +60,53 @@ export const isTemporarilyReleased = (tk) => !!tk?.temporarily_released;
 export const isTempReleasable = (tk) =>
   PAUSABLE_STATES.includes(tk?.workflow_status) && !isTemporarilyReleased(tk) && !isPaused(tk);
 
+// A release is a ROUND TRIP, and while it runs, the release's own stage — not the ticket's frozen
+// workflow_status — decides what the card asks for next. CONTRACT with
+// App\Models\MaintenanceTemporaryRelease::STAGES. The lanes these map onto live on the backend
+// (STAGE_LANES); the board just renders where the server put the card.
+//
+//   out_dispatch     supervisor: where does it go, and who drives it?
+//   out_assigned     driver: collect it from the garage (captures the odometer OUT)
+//   out_transit      driver: confirm it arrived at the destination
+//   at_destination   controller/supervisor: call it back when the repair wants it
+//   return_dispatch  supervisor: confirm/change the garage + assign a driver
+//   return_assigned  driver: collect it from where it's parked
+//   return_transit   driver: confirm it's back in the workshop (captures the odometer IN)
+export const RELEASE_ACTION = {
+  out_dispatch:    { action: 'assignReleaseMove',   perm: ['maintenance.delegate', 'maintenance.manage'],   variant: 'primary' },
+  out_assigned:    { action: 'startReleaseMove',    perm: ['maintenance.logistics', 'maintenance.delegate'], variant: 'primary' },
+  out_transit:     { action: 'arriveAtDestination', perm: ['maintenance.logistics', 'maintenance.delegate'], variant: 'success' },
+  at_destination:  { action: 'requestReleaseReturn', perm: ['maintenance.manage', 'maintenance.delegate'],   variant: 'primary' },
+  return_dispatch: { action: 'assignReleaseReturn', perm: ['maintenance.delegate', 'maintenance.manage'],    variant: 'primary' },
+  return_assigned: { action: 'startReleaseReturn',  perm: ['maintenance.logistics', 'maintenance.delegate'], variant: 'primary' },
+  return_transit:  { action: 'returnFromRelease',   perm: ['maintenance.logistics', 'maintenance.delegate', 'maintenance.manage'], variant: 'success' },
+};
+
+// Where the open release stands (null when the car isn't out).
+export const releaseStage = (tk) =>
+  (isTemporarilyReleased(tk) ? (tk?.release_stage || tk?.active_temporary_release?.stage || null) : null);
+
+// The car is physically away from the workshop right now (in transit or parked somewhere else) — as
+// opposed to released-on-paper but still sitting in the garage waiting to be collected.
+export const AWAY_RELEASE_STAGES = ['out_transit', 'at_destination', 'return_dispatch', 'return_assigned', 'return_transit'];
+export const isReleaseAway = (tk) => AWAY_RELEASE_STAGES.includes(releaseStage(tk));
+
+// The release can still be called off — the car hasn't physically moved yet, it's sitting in the garage
+// waiting to be collected. Once a driver has the keys there is no cancelling: the car is out, and the
+// only way back is the return leg. Mirrors MaintenanceWorkflowService::cancelTemporaryRelease.
+export const isReleaseCancellable = (tk) => ['out_dispatch', 'out_assigned'].includes(releaseStage(tk));
+
 // Some statuses need a DYNAMIC action beyond a pure workflow_status lookup. ready_for_pickup covers BOTH
 // legs of the driver's return trip (collect the car from the garage, then arrive at our park) — the
 // ticket's workflow_status doesn't change in between, so this keys off picked_up_from_garage_at instead.
 // Every ACTION[...] lookup across the board/drawer/queue should go through this, not the raw map.
 export function resolveAction(tk) {
   if (!tk) return undefined;
+  // Temporary Vehicle Release — while the car is out, the round trip OUTRANKS the repair stage: the
+  // repair is frozen and can't advance until the car is back, so the only thing anyone can do to this
+  // ticket is move the car along its trip. See RELEASE_ACTION.
+  const rel = releaseStage(tk);
+  if (rel) return RELEASE_ACTION[rel];
   if (tk.workflow_status === 'ready_for_pickup') {
     return tk.picked_up_from_garage_at
       ? { action: 'arriveAtPark', perm: 'maintenance.logistics', variant: 'success' }
@@ -109,6 +150,16 @@ export const allows = (can, perm) => (Array.isArray(perm) ? perm.some(can) : can
 // check-in gate has no override on the backend and keeps none here.
 export function custodyBlocked(tk, userId, can = null) {
   if (!tk) return false;
+  // A release leg in flight belongs to whoever is actually driving it — only they can confirm the
+  // arrival. Mirrors MaintenanceWorkflowService::assertReleaseDriver (supervisors may step in).
+  const rel = releaseStage(tk);
+  if (rel === 'out_transit' || rel === 'return_transit') {
+    const holder = rel === 'out_transit'
+      ? tk.active_temporary_release?.out_driver_id
+      : tk.active_temporary_release?.return_driver_id;
+    if (!holder || canSupersedeDriver(can)) return false;
+    return Number(holder) !== Number(userId);
+  }
   if (tk.workflow_status === 'in_transit' && tk.dispatched_by_id) {
     return Number(tk.dispatched_by_id) !== Number(userId);
   }
@@ -131,7 +182,17 @@ const canSupersedeDriver = (can) => typeof can === 'function' && !!can('maintena
 // open to the pool — first driver to claim it takes it — which is how garage transfers are raised.
 // A supervisor may take any pickup, assigned or not — pass `can` so their button stays live.
 export function assignmentBlocked(tk, userId, can = null) {
-  if (!tk || tk.workflow_status !== 'awaiting_dispatch') return false;
+  if (!tk) return false;
+  // The same rule on a release pickup: a named driver owns that leg; an unnamed one is the pool's.
+  const rel = releaseStage(tk);
+  if (rel === 'out_assigned' || rel === 'return_assigned') {
+    const named = rel === 'out_assigned'
+      ? tk.active_temporary_release?.out_driver_id
+      : tk.active_temporary_release?.return_driver_id;
+    if (!named || canSupersedeDriver(can)) return false;
+    return Number(named) !== Number(userId);
+  }
+  if (tk.workflow_status !== 'awaiting_dispatch') return false;
   const driverId = tk.delegation?.driver_id ?? tk.assigned_driver_id;
   if (!driverId) return false;
   if (canSupersedeDriver(can)) return false;
@@ -142,6 +203,9 @@ export function assignmentBlocked(tk, userId, can = null) {
 // job, the pickup is open to the pool, or the viewer may take it anyway.
 export function assignedDriverName(tk, userId, can = null) {
   if (!assignmentBlocked(tk, userId, can)) return null;
+  const rel = releaseStage(tk);
+  if (rel === 'out_assigned') return tk.active_temporary_release?.out_driver_name || null;
+  if (rel === 'return_assigned') return tk.active_temporary_release?.return_driver_name || null;
   return tk.delegation?.driver_name || tk.assigned_driver_name || null;
 }
 
@@ -149,6 +213,9 @@ export function assignedDriverName(tk, userId, can = null) {
 // action button is hidden). Returns null when the current user IS the custodian or the leg isn't gated.
 export function custodyHolderName(tk, userId, can = null) {
   if (!custodyBlocked(tk, userId, can)) return null;
+  const rel = releaseStage(tk);
+  if (rel === 'out_transit') return tk.active_temporary_release?.out_driver_name || null;
+  if (rel === 'return_transit') return tk.active_temporary_release?.return_driver_name || null;
   if (tk.workflow_status === 'in_transit') return tk.dispatched_by_name || null;
   if (tk.workflow_status === 'ready_for_pickup') return tk.picked_up_from_garage_by_name || null;
   return null;

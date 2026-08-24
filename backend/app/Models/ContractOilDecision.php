@@ -116,7 +116,7 @@ class ContractOilDecision extends Model
      */
     public function owesReturnToCustomer(): bool
     {
-        return $this->isOilChanged()
+        return $this->oilWorkDone()
             && $this->returned_to_customer_at === null
             && $this->contract
             && $this->contract->state !== 'closed'
@@ -217,6 +217,65 @@ class ContractOilDecision extends Model
     }
 
     /**
+     * Is the oil actually done — by EITHER hand that can do it?
+     *
+     * There are two, and they leave different traces. Somebody in our own yard reads the dial and
+     * presses "Oil changed", which stamps this row (isOilChanged) and moves the car's service anchor.
+     * A GARAGE does it inside the maintenance workflow instead, and the trace is the ticket closing —
+     * that path stamps the vehicle through confirmRoutineServices() and never touches this row.
+     *
+     * Asking only the first question is what made a garage-changed car go quiet: the ticket closed,
+     * the workshop moved on, and the recall read "completed" while a customer was still paying for a
+     * car standing in our parking. Everything that asks "is the work finished, can we give it back"
+     * asks THIS, not `oil_changed_at`.
+     */
+    public function oilWorkDone(): bool
+    {
+        if ($this->isOilChanged()) {
+            return true;
+        }
+
+        $ticket = $this->settled_ticket_id ? $this->settledTicket : null;
+
+        return $ticket !== null && in_array($ticket->workflow_status, Maintenance::WF_TERMINAL, true);
+    }
+
+    /**
+     * A recalled car that has landed with NO test asked for, and nobody holding it yet.
+     *
+     * This is the gap the hand-over closes. With a test there is an inspection request, so the car is
+     * announced, reviewed and handed to the Inspector. Without one there is no request at all — the
+     * car arrives and the only thing that knows it owes an oil change is this row. So the moment it
+     * lands it is handed to the Supervisors as a real ticket in their dispatch queue, where reading
+     * the dial and picking the garage is the job they already do.
+     *
+     * Parking is excluded on purpose: the change happens here, by our own inspector, and there is no
+     * garage for a Supervisor to pick.
+     *
+     * @see \App\Services\OilChangeProjectionService::handOverAtWorkshop()
+     */
+    public function awaitsSupervisorHandOver(): bool
+    {
+        if ($this->decision !== self::DECISION_RECALL
+            || ! $this->isOpen()
+            || $this->test_required
+            || $this->oilWorkDone()
+            || $this->settled_ticket_id !== null
+            || $this->serviceLocation() !== self::LOCATION_GARAGE
+            || $this->recallStage() !== self::STAGE_AT_WORKSHOP) {
+            return false;
+        }
+
+        // A request still alive means somebody IS being asked to look at this car — an adopted
+        // routine check, or one a Controller already released to the Inspector — whatever the test
+        // flag says. That car is spoken for; handing it to the Supervisors as well would put it in
+        // two queues at once.
+        $request = $this->inspection_ticket_id ? $this->inspectionTicket : null;
+
+        return $request === null || in_array($request->workflow_status, Maintenance::WF_TERMINAL, true);
+    }
+
+    /**
      * What must happen to this car once it is back, as facts rather than checkboxes.
      *
      * The oil change is NOT stored and NOT settable. This recall exists because the oil lifecycle
@@ -239,7 +298,7 @@ class ContractOilDecision extends Model
                 // question of whether the workshop has actually performed it, with the reading it
                 // was performed at. A requirement that quietly disappears once it is met loses the
                 // reason the customer was interrupted in the first place.
-                'done'     => $this->isOilChanged(),
+                'done'     => $this->oilWorkDone(),
                 'done_at'  => optional($this->oil_changed_at)->toIso8601String(),
                 'odometer' => $this->oil_changed_odometer,
                 'done_by'  => $this->oil_changed_by_name,
@@ -248,6 +307,13 @@ class ContractOilDecision extends Model
                 'required' => (bool) $this->test_required,
                 'locked'   => false,
                 'decided'  => $this->test_required !== null,
+                // The answer is not a preference, it is a ROUTE: with a test the car is announced to
+                // the review queue and handed to the Inspector, who runs the workflow; without one it
+                // goes straight to the Supervisors, who read the dial and pick the garage. Published
+                // so the card can say who is waiting for the car instead of leaving people to guess.
+                'routes_to' => $this->test_required
+                    ? 'inspector'
+                    : ($this->serviceLocation() === self::LOCATION_PARKING ? 'inspector' : 'supervisor'),
             ],
         ];
     }
@@ -270,17 +336,16 @@ class ContractOilDecision extends Model
         // changed, and the reading that proves it is on this row. But "the oil is done" is not the
         // end of a RECALL — we took the car off a paying customer, and it is only finished when
         // they have it back.
-        if ($this->isOilChanged()) {
+        // Either hand counts (see oilWorkDone): our own "Oil changed" stamp, or the garage's ticket
+        // closing. A car whose garage ticket is shut is just as finished as one someone recorded by
+        // hand — and just as much still ours until the customer has it back.
+        if ($this->oilWorkDone()) {
             return $this->owesReturnToCustomer()
                 ? self::STAGE_RETURN_TO_CUSTOMER
                 : self::STAGE_COMPLETED;
         }
         if ($this->settled_ticket_id) {
-            $ticket = $this->settledTicket;
-
-            return $ticket && in_array($ticket->workflow_status, Maintenance::WF_TERMINAL, true)
-                ? self::STAGE_COMPLETED
-                : self::STAGE_OIL_SERVICE;
+            return self::STAGE_OIL_SERVICE;
         }
         if ($this->settled_at) {
             // Settled with no ticket: the car came back and the ACTUAL mileage proved oil was not

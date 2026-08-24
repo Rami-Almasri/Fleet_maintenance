@@ -277,7 +277,7 @@ function DecisionCard({ row, t, lang, canDecide, busy, onDecide }) {
               <Icon.Wrench className="h-3.5 w-3.5" /> {t('oversight.severity.openTicket')}
             </Link>
             {row.vehicle_id && (
-              <Link to={`/car-status/${row.vehicle_id}`} className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50">
+              <Link to={`/vehicles/${row.vehicle_id}`} className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50">
                 <Icon.Search className="h-3.5 w-3.5" /> {t('oversight.severity.viewInspection')}
               </Link>
             )}

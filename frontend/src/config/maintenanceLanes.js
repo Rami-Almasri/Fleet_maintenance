@@ -13,23 +13,26 @@ import { useMemo } from 'react';
 import { useI18n } from '../i18n/I18nContext';
 import { SHOW_VIDEO_REVIEW } from './features';
 
+// `role` is WHOSE desk the stage sits on — the one thing about a lane that isn't visual. It drives
+// the "Who's holding the work" split, so it lives here beside the key rather than in each surface.
 export const PRIMARY_LANES = [
-  { key: 'requested',        name: 'Needs Test Drive',   tone: '#d946ef', hint: 'Vehicles need a test drive to confirm the issue' },
-  { key: 'diagnostic',       name: 'Being Inspected',    tone: '#8b5cf6', hint: 'Currently under inspection or diagnostic' },
-  { key: 'pending',          name: 'Needs Dispatch',     tone: '#a855f7', hint: 'Ready to be dispatched to a garage' },
-  { key: 'awaiting_pickup',  name: 'Awaiting Pickup',    tone: '#f59e0b', hint: 'Garage + driver assigned — awaiting pickup' },
-  { key: 'in_transit',       name: 'En Route to Garage', tone: '#f59e0b', hint: 'On the way to the garage' },
-  { key: 'under_repair',     name: 'In Workshop',        tone: '#f97316', hint: 'Being worked on at the garage' },
-  { key: 'ready_for_pickup', name: 'Ready for Pickup',   tone: '#10b981', hint: 'Work complete — awaiting collection' },
-  { key: 'qa_reinspection',  name: 'Final QA',           tone: '#9333ea', hint: 'Back at our park, awaiting re-inspection sign-off' },
+  { key: 'requested',        name: 'Needs Test Drive',   role: 'inspector',  tone: '#d946ef', hint: 'Vehicles need a test drive to confirm the issue' },
+  { key: 'diagnostic',       name: 'Being Inspected',    role: 'inspector',  tone: '#8b5cf6', hint: 'Currently under inspection or diagnostic' },
+  { key: 'pending',          name: 'Needs Dispatch',     role: 'supervisor', tone: '#a855f7', hint: 'Ready to be dispatched to a garage' },
+  { key: 'awaiting_pickup',  name: 'Awaiting Pickup',    role: 'driver',     tone: '#f59e0b', hint: 'Garage + driver assigned — awaiting pickup' },
+  { key: 'in_transit',       name: 'En Route to Garage', role: 'driver',     tone: '#f59e0b', hint: 'On the way to the garage' },
+  { key: 'under_repair',     name: 'In Workshop',        role: 'garage',     tone: '#f97316', hint: 'Being worked on at the garage' },
+  { key: 'ready_for_pickup', name: 'Ready for Pickup',   role: 'driver',     tone: '#10b981', hint: 'Work complete — awaiting collection' },
+  { key: 'qa_reinspection',  name: 'Final QA',           role: 'inspector',  tone: '#9333ea', hint: 'Back at our park, awaiting re-inspection sign-off' },
 ];
 
 export const EXCEPTION_LANES = [
-  ...(SHOW_VIDEO_REVIEW ? [{ key: 'repair_review', name: 'Video Review', tone: '#7c3aed', hint: 'Awaiting supervisor video sign-off' }] : []),
-  { key: 'reinspection_failed',     name: 'Sent Back — QA Failed', tone: '#dc2626', hint: 'Came back still broken — supervisor re-dispatches' },
-  { key: 'paused',                  name: 'Paused',                tone: '#64748b', hint: 'Repair on hold — car released to service' },
-  { key: 'returned_waiting_resume', name: 'Returned — Resume Due', tone: '#f97316', hint: 'Physically back — return handover pending' },
-  { key: 'on_site',                 name: 'On-Site Service',       tone: '#0d9488', hint: 'Minor job done where the car is parked' },
+  { key: 'triage',                  name: 'Complaint Triage',      role: 'inspector',  tone: '#f43f5e', hint: 'A driver complaint waiting to be judged into a ticket' },
+  ...(SHOW_VIDEO_REVIEW ? [{ key: 'repair_review', name: 'Video Review', role: 'supervisor', tone: '#7c3aed', hint: 'Awaiting supervisor video sign-off' }] : []),
+  { key: 'reinspection_failed',     name: 'Sent Back — QA Failed', role: 'supervisor', tone: '#dc2626', hint: 'Came back still broken — supervisor re-dispatches' },
+  { key: 'paused',                  name: 'Paused',                role: 'none',       tone: '#64748b', hint: 'Repair on hold — car released to service' },
+  { key: 'returned_waiting_resume', name: 'Returned — Resume Due', role: 'none',       tone: '#f97316', hint: 'Physically back — return handover pending' },
+  { key: 'on_site',                 name: 'On-Site Service',       role: 'inspector',  tone: '#0d9488', hint: 'Minor job done where the car is parked' },
 ];
 
 // Every lane, in render order.

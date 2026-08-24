@@ -108,4 +108,53 @@ return [
     ['slug' => 'light_wiper_washer',    'name' => 'Wiper / washer fault', 'name_ar' => 'خلل في المساحات / الرشاش',      'category_key' => 'lights', 'default_severity' => 'routine', 'on_site' => true, 'sort_order' => 1030],
     ['slug' => 'light_dim',             'name' => 'Foggy / dim lights', 'name_ar' => 'إضاءة ضعيفة / معتمة',        'category_key' => 'lights', 'default_severity' => 'routine', 'on_site' => true, 'sort_order' => 1040],
 
+    // ═════════════════════════════════════════════════════════════════════════════════════════════
+    // SELECTABLE WORDINGS THAT HAD NO CATALOG ROW.
+    //
+    // Every entry below is a keyword config/maintenance_findings.php already OFFERS an inspector, and
+    // which no catalog recognised — so picking it produced a MaintenanceTask with no `kind`, typed
+    // only by the legacy shield's default (fault) with `classification_source = resolver`. It looked
+    // right and carried none of the evidence: no catalog id, no default severity, no on-site rule, and
+    // nothing for the reporting layer to group on.
+    //
+    // Found by badging kind in the findings picker (21 of 95 words were in this state). These 17 are
+    // the ones that are genuinely FAULTS and genuinely missing; the other 4 were the same concept
+    // under a second spelling and are handled as aliases instead — see config/catalog_aliases.php,
+    // because a second row for one concept is the bug, not the fix.
+    // ═════════════════════════════════════════════════════════════════════════════════════════════
+
+    // ── Engine (continues the 10–80 block) ───────────────────────────────────────────────────────
+    ['slug' => 'engine_poor_economy',   'name' => 'Poor fuel economy', 'name_ar' => 'استهلاك وقود عالي',           'category_key' => 'engine', 'default_severity' => 'routine',  'on_site' => false, 'sort_order' => 90],
+    ['slug' => 'engine_exhaust_fault',  'name' => 'Exhaust fault', 'name_ar' => 'خلل في العادم',                   'category_key' => 'engine', 'default_severity' => 'moderate', 'on_site' => false, 'sort_order' => 91],
+    ['slug' => 'engine_fuel_system',    'name' => 'Fuel system fault', 'name_ar' => 'خلل في نظام الوقود',          'category_key' => 'engine', 'default_severity' => 'moderate', 'on_site' => false, 'sort_order' => 92],
+
+    // ── Suspension & Steering (continues 300–350) ────────────────────────────────────────────────
+    ['slug' => 'susp_loose_steering',   'name' => 'Loose steering', 'name_ar' => 'خلخلة في الستيرنج',              'category_key' => 'suspension', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 360],
+    ['slug' => 'susp_steering_noise',   'name' => 'Steering noise', 'name_ar' => 'صوت في الستيرنج',                'category_key' => 'suspension', 'default_severity' => 'moderate', 'on_site' => false, 'sort_order' => 370],
+    ['slug' => 'susp_vibration_speed',  'name' => 'Vibration at speed', 'name_ar' => 'رجّة على السرعات العالية',    'category_key' => 'suspension', 'default_severity' => 'moderate', 'on_site' => false, 'sort_order' => 380],
+    ['slug' => 'susp_steering_warning', 'name' => 'Steering warning light', 'name_ar' => 'لمبة تحذير الستيرنج',    'category_key' => 'suspension', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 390],
+
+    // ── Transmission (continues 400–440) ─────────────────────────────────────────────────────────
+    ['slug' => 'trans_cannot_select',   'name' => 'Cannot select gear', 'name_ar' => 'لا يدخل الجير',              'category_key' => 'transmission', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 450],
+    ['slug' => 'trans_fluid_leak',      'name' => 'Transmission fluid leak', 'name_ar' => 'تسريب زيت الجير',       'category_key' => 'transmission', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 460],
+
+    // ── Electrical (continues 500–550) ───────────────────────────────────────────────────────────
+    ['slug' => 'elec_starter',          'name' => 'Starter problem', 'name_ar' => 'مشكلة في السلف',                'category_key' => 'electrical', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 560],
+
+    // ── Interior (continues 800–840) ─────────────────────────────────────────────────────────────
+    ['slug' => 'int_seat_adjust',       'name' => 'Seat adjustment fault', 'name_ar' => 'خلل في تعديل الكرسي',     'category_key' => 'interior', 'default_severity' => 'routine',  'on_site' => true,  'sort_order' => 850],
+    ['slug' => 'int_water_leak',        'name' => 'Water leakage into cabin', 'name_ar' => 'تسريب ماء لداخل السيارة', 'category_key' => 'interior', 'default_severity' => 'moderate', 'on_site' => false, 'sort_order' => 860],
+    ['slug' => 'int_light_fault',       'name' => 'Interior light fault', 'name_ar' => 'خلل في إضاءة المقصورة',    'category_key' => 'interior', 'default_severity' => 'routine',  'on_site' => true,  'sort_order' => 870],
+
+    // ── Safety systems ───────────────────────────────────────────────────────────────────────────
+    // A WHOLE CATEGORY that had ZERO catalog rows. config/maintenance_findings.php has offered these
+    // four since it shipped, so every airbag and seat-belt fault an inspector has ever logged was
+    // typed by the fallback rule rather than recognised. They carry `critical` where the system is
+    // occupant protection: an airbag or belt fault is not a routine annoyance, and the default
+    // severity is what the board and the dispatch alert read.
+    ['slug' => 'safety_airbag',         'name' => 'Airbag warning', 'name_ar' => 'لمبة تحذير الوسادة الهوائية',    'category_key' => 'safety', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 1100],
+    ['slug' => 'safety_seatbelt',       'name' => 'Seat belt fault', 'name_ar' => 'خلل في حزام الأمان',            'category_key' => 'safety', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 1110],
+    ['slug' => 'safety_parking_sensor', 'name' => 'Parking sensor fault', 'name_ar' => 'خلل في حساس الركن',        'category_key' => 'safety', 'default_severity' => 'routine',  'on_site' => true,  'sort_order' => 1120],
+    ['slug' => 'safety_camera_adas',    'name' => 'Camera / ADAS fault', 'name_ar' => 'خلل في الكاميرا / أنظمة المساعدة', 'category_key' => 'safety', 'default_severity' => 'moderate', 'on_site' => false, 'sort_order' => 1130],
+
 ];

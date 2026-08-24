@@ -25,7 +25,9 @@ class PartRequestController extends Controller
         try {
             // `purchases` is loaded so the board's Install action can find the buy to fit (an approved →
             // purchased request carries its purchase here); without it the Install modal has nothing to act on.
-            $q = PartRequest::query()->with(['vehicle:id,plate_no,make,model', 'customer:id,name_en,name_ar', 'task:id,symptom', 'purchases'])
+            // `purchases.sourceVendor` answers WHERE the part came from — a purchase whose supplier is only
+            // an id reads as a price from nowhere.
+            $q = PartRequest::query()->with(['vehicle:id,plate_no,make,model', 'customer:id,name_en,name_ar', 'task:id,symptom', 'purchases', 'purchases.sourceVendor:id,name'])
                 ->latest('id');
 
             if ($s = $request->query('status')) {

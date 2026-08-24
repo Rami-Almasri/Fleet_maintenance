@@ -143,6 +143,8 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
                 // (non-compact) view; a fault with parts breaks onto its own line so the list reads under it.
                 const task = taskBySymptom[norm(f.text)];
                 const parts = (!compact && task?.parts?.length) ? task.parts : null;
+                // Has this fault been here before, and did anyone approve repairing it again? Full view
+                // only — the board card has no room, and it is a reading fact, not a glance fact.
                 // PER-FAULT TIME. Only the WORK clock belongs to this fault alone — it runs from the
                 // moment the workshop confirmed/started THIS fault. Custody time (from dispatch) is the
                 // car's workshop time and is identical for every fault on the ticket, so it is NEVER

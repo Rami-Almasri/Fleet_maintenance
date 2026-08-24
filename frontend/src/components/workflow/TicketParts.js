@@ -444,6 +444,76 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   );
 }
 
+// The paper trail behind ONE requested part, on the row itself: who asked for it, who approved (or
+// rejected) it, what we actually paid and to whom, and the last time this same car had the same part.
+//
+// This used to be one line — the requester — and everything else was a click away on the Parts board.
+// A person reading a ticket is deciding whether the spend is reasonable, and that decision needs the
+// approval and the previous price in front of them, not behind a link.
+//
+// "The same part" is the API's answer (PartIdentityService), so a part written down differently the
+// last time still counts as the same part here.
+function PartProvenance({ r }) {
+  const { t } = useI18n();
+  const buys = r.purchases || [];
+  // The buy that stands behind this request. A request is fulfilled by one purchase in practice; when
+  // there are several (a re-buy after a failed part), the latest one is the live answer.
+  const buy = buys[buys.length - 1] || null;
+  const paid = buy ? (buy.net_cost ?? buy.purchase_price) : null;
+  const from = buy ? (buy.source_vendor || buy.source_name) : null;
+  const last = r.last_purchase;
+
+  const line = 'mt-0.5 text-[11px] leading-snug text-slate-400';
+  return (
+    <>
+      <p className={line}>
+        <span className="font-semibold text-slate-500">{t('Requested')}</span>{' '}
+        {r.requested_by || '—'}{r.requested_at ? ` · ${fmtAgo(r.requested_at)}` : ''}
+      </p>
+
+      {/* Who said yes — or no, with the reason, which is the more important of the two. */}
+      {r.approved_by && (
+        <p className={line}>
+          <span className="font-semibold text-emerald-600">{t('Approved')}</span>{' '}
+          {r.approved_by}{r.approved_at ? ` · ${fmtAgo(r.approved_at)}` : ''}
+        </p>
+      )}
+      {r.rejected_by && (
+        <p className={`${line} text-rose-500`}>
+          <span className="font-semibold">{t('Rejected')}</span>{' '}
+          {r.rejected_by}{r.rejected_at ? ` · ${fmtAgo(r.rejected_at)}` : ''}
+          {r.rejection_reason ? ` · ${r.rejection_reason}` : ''}
+        </p>
+      )}
+
+      {/* What we paid and to whom. The price is a RECORDED figure — the spend this row exists to
+          justify — so it shows even while SHOW_FINANCIALS hides the analytics elsewhere. */}
+      {buy && (
+        <p className={line}>
+          <span className="font-semibold text-slate-500">{t('Bought')}</span>{' '}
+          {paid != null ? aed(paid) : t('price not recorded')}
+          {from ? ` · ${from}` : ''}
+          {buy.purchased_by ? ` · ${buy.purchased_by}` : ''}
+          {buy.purchased_at ? ` · ${fmtAgo(buy.purchased_at)}` : ''}
+        </p>
+      )}
+
+      {/* The repeat signal. Amber because a car needing the same part twice is a question, not a fact
+          to skim past; plain grey when this car has never had it before, which is equally worth saying. */}
+      {last ? (
+        <p className="mt-0.5 text-[11px] font-medium leading-snug text-amber-700">
+          {t('Last bought for this car')}{' '}
+          {last.purchased_at ? fmtAgo(last.purchased_at) : t('at an unrecorded date')}
+          {last.net_cost != null ? ` · ${aed(last.net_cost)}` : ''}
+          {last.source ? ` · ${last.source}` : ''}
+        </p>
+      ) : (
+        <p className={line}>{t('First time this car has had this part')}</p>
+      )}
+    </>
+  );
+}
+
 // ─── Parts section (list + request) ──────────────────────────────────────────
 // A self-contained card the ticket drawer / command view drops in. Lists every part requested against
 // this ticket (with its lifecycle status) and lets a technician file a new one without leaving the
@@ -461,7 +531,9 @@ export default function TicketParts({
   const load = useCallback(async () => {
     if (!ticketId) return;
     try {
-      const r = await api.get('/part-requests', { params: { maintenance_id: ticketId, per_page: 100 } });
+      // with_last_purchase asks the API for the previous buy of the SAME part on this car — the fact
+      // that decides whether this request is routine or a repeat. Opt-in because it costs a query a row.
+      const r = await api.get('/part-requests', { params: { maintenance_id: ticketId, per_page: 100, with_last_purchase: 1 } });
       setRows(payload(r)?.requests || []);
     } catch {
       setRows([]);
@@ -553,9 +625,7 @@ export default function TicketParts({
                       {r.part_number ? ` · #${r.part_number}` : ''}
                       {SHOW_FINANCIALS && r.estimated_price != null ? ` · ${t('est. {amount}', { amount: aed(r.estimated_price) })}` : ''}
                     </p>
-                    <p className="mt-0.5 text-[11px] text-slate-400">
-                      {r.requested_by || '—'}{r.requested_at ? ` · ${fmtAgo(r.requested_at)}` : ''}
-                    </p>
+                    <PartProvenance r={r} />
                   </div>
                   <Badge tone={STATUS_TONE[r.status] || 'gray'}>{statusLabel(t, r.status)}</Badge>
                 </div>

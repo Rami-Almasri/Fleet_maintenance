@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { ThemeProvider } from './theme/ThemeContext';
 import { I18nProvider } from './i18n/I18nContext';
 import { AuthProvider } from './auth/AuthContext';
@@ -23,13 +23,13 @@ import Contracts from './pages/Contracts';
 import ContractDetail from './pages/contracts/ContractDetail';
 import ContractForm from './pages/contracts/ContractForm';
 import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
-import MaintenanceCheckpoints from './pages/MaintenanceCheckpoints';
-import CarStatus from './pages/CarStatus';
 // ComponentsDashboard is held back as "Coming Soon" — the page file stays in the
 // repo; re-import it here when /components is switched back on.
-import CarStatusVehicle from './pages/CarStatusVehicle';
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
-import InspectionReviewQueue from './pages/InspectionReviewQueue';
+// Control Desk — the Controllers' hub. It owns the four pages that used to be their own routes
+// (Inspection Review, Oil Follow-up, Invoice Matching, Keyword Risk), so App.js no longer mounts
+// them directly; the old paths redirect into their section below.
+import ControlDesk from './pages/ControlDesk';
 import ComplaintsCenter from './pages/ComplaintsCenter';
 import FleetUtilization from './pages/FleetUtilization';
 import MaintenanceSwap from './pages/MaintenanceSwap';
@@ -38,7 +38,6 @@ import QuickCostInput from './pages/QuickCostInput';
 import GarageProfile from './pages/intelligence/GarageProfile';
 import GarageCompare from './pages/intelligence/GarageCompare';
 import Executive from './pages/intelligence/Executive';
-import FindingKeywords from './pages/FindingKeywords';
 import VehicleLocations from './pages/VehicleLocations';
 import PartsHub from './pages/PartsHub';
 import SuppliersHub from './pages/SuppliersHub';
@@ -49,7 +48,8 @@ import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
 import CostIntelligence from './pages/CostIntelligence';
 import RecommendationIntelligence from './pages/RecommendationIntelligence';
-import OilProjection from './pages/reminders/OilProjection';
+import DailyMaintenanceIntelligence from './pages/reports/DailyMaintenanceIntelligence';
+import VehicleSystemDashboard from './pages/reports/VehicleSystemDashboard';
 import EventClassificationReview from './pages/EventClassificationReview';
 import ConceptBridgeReview from './pages/ConceptBridgeReview';
 import MileageCenter from './pages/MileageCenter';
@@ -61,7 +61,6 @@ import SimulationPanel from './pages/SimulationPanel';
 import Users from './pages/Users';
 import NotFound from './pages/NotFound';
 import GarageInvoicePortal from './pages/GarageInvoicePortal';
-import InvoiceMatching from './pages/InvoiceMatching';
 import OversightHub from './pages/oversight/OversightHub';
 import CleaningCapture from './pages/cleaning/CleaningCapture';
 import FleetHealth from './pages/inspections/FleetHealth';
@@ -75,6 +74,23 @@ function RedirectToTab({ to, tab }) {
   const params = new URLSearchParams(search);
   params.set('tab', tab);
   return <Navigate to={`${to}?${params}`} replace />;
+}
+
+// The retired /maintenance-progress queue. A checkpoint reminder carried ?ticket=<id>; that ticket's
+// own page has the same checkpoint panel and "File update" button, and unlike the Dashboard it is
+// reachable by the supervisors the reminder is sent to. With no ticket id, the board is the queue.
+function RedirectCheckpoint() {
+  const { search } = useLocation();
+  const ticket = new URLSearchParams(search).get('ticket');
+  return <Navigate to={ticket ? `/maintenance-workflow/${ticket}` : '/maintenance-workflow'} replace />;
+}
+
+// Redirect a retired per-record route onto its surviving one, carrying the record id and the query
+// string across (e.g. /car-status/628 → /vehicles/628). `param` is the route param to substitute.
+function RedirectToRecord({ to, param }) {
+  const { search } = useLocation();
+  const params = useParams();
+  return <Navigate to={`${to}/${params[param]}${search}`} replace />;
 }
 
 // Index route ("/"). Normally the Workspace command center, but roles blocked
@@ -119,6 +135,14 @@ export default function App() {
                 {/* Module Overview (Odoo-style mini-app home). Self-guards: redirects
                     to the launcher if the user can't reach the module. */}
                 <Route path="/apps/:moduleId" element={<ModuleOverview />} />
+                {/* Control Desk — the Controllers' four jobs behind one sidebar. Deliberately NOT
+                    wrapped in a RequirePermission: its sections carry three different permissions
+                    (maintenance.manage / reminders.view / maintenance.view), so a single route gate
+                    would lock out someone who legitimately holds only one of them. SidebarHub filters
+                    section by section instead — each declaring the route it replaced, so the role
+                    deny list still applies — and says "no access" if nothing is left. The four old
+                    paths below keep their own gates, so a direct URL is refused exactly as before. */}
+                <Route path="/control-desk" element={<ControlDesk />} />
                 {/* Vehicle Readiness board retired — send the old path to the Fleet Health hub. */}
                 <Route path="/readiness" element={<Navigate to="/inspections/schedules" replace />} />
 
@@ -191,7 +215,7 @@ export default function App() {
                   {/* Oil Mileage Follow-up — the mid-rental half of the oil story: cars already out
                       whose projected mileage is nearing the oil limit, and the customer-reported
                       readings that re-anchor the projection. */}
-                  <Route path="/oil-projection" element={<OilProjection />} />
+                  <Route path="/oil-projection" element={<RedirectToTab to="/control-desk" tab="oil" />} />
                   {/* The standalone Service Reminders board is retired — reminder management now lives
                       only as the Service Reminders tab of the Fleet Health hub. The auto-seeder,
                       notification scanner and ticket roll-forward are untouched; this was purely a
@@ -233,12 +257,21 @@ export default function App() {
                   {/* Garage Finder — "this car has this fault; who is best at it?", asked BEFORE a ticket
                       exists. Same engine as the assign step, read-only: it answers, it does not dispatch. */}
                   <Route path="/garage-finder" element={<RedirectToTab to="/garages" tab="finder" />} />
-                  {/* Car Status — the live stage board: every car in the maintenance workflow by the stage
-                      it's in and who's responsible for it there; opens into the per-vehicle operational profile. */}
-                  <Route path="/car-status" element={<CarStatus />} />
-                  <Route path="/car-status/:vehicleId" element={<CarStatusVehicle />} />
-                  {/* Old Maintenance Operations control center — folded into Car Status; keep the path alive. */}
-                  <Route path="/maintenance-operations" element={<Navigate to="/car-status" replace />} />
+                  {/* Car Status retired. The stage board's three charts (pipeline by stage, longest in the
+                      workshop, who's holding the work) moved onto the Dashboard, and the per-vehicle
+                      operational profile IS the vehicle profile. Old links keep working. */}
+                  {/* The board, not the Dashboard: Car Status WAS the stage board, and the supervisor /
+                      driver roles that lived on it are denied /dashboard (config/access.js). */}
+                  <Route path="/car-status" element={<Navigate to="/maintenance-workflow" replace />} />
+                  <Route path="/car-status/:vehicleId" element={<RedirectToRecord to="/vehicles" param="vehicleId" />} />
+                  {/* Management reports — the day's workshop file read back as a document, and one car's
+                      whole history on one system (engine, brakes, …). Both render on their own fixed dark
+                      surface and print straight to PDF, because they are made to be read on the office wall
+                      screen and sent on. Reads only, over the same log the boards read. */}
+                  <Route path="/reports/daily-maintenance" element={<DailyMaintenanceIntelligence />} />
+                  <Route path="/reports/vehicle-system/:vehicleId" element={<VehicleSystemDashboard />} />
+                  {/* Old Maintenance Operations control center — the Dashboard now carries the pipeline. */}
+                  <Route path="/maintenance-operations" element={<Navigate to="/maintenance-workflow" replace />} />
                   {/* Old Maintenance Board retired — the Workflow board is now the single maintenance hub. */}
                   <Route path="/maintenance" element={<Navigate to="/maintenance-workflow" replace />} />
                   {/* Old Workflow Hub — retired; point at the live Workflow board. */}
@@ -261,15 +294,20 @@ export default function App() {
                   <Route path="/maintenance-workflow/:id" element={<MaintenanceWorkflow />} />
                   {/* Pre-maintenance Recommendation queue — Supervisor triage before the active board */}
                   <Route path="/my-maintenance-queue" element={<MyMaintenanceQueue />} />
-                  {/* Maintenance Progress — the supervisors' checkpoint queue; notifications deep-link here
-                      (?ticket=<id>) to open a car's progress form directly. */}
-                  <Route path="/maintenance-progress" element={<MaintenanceCheckpoints />} />
+                  {/* Maintenance Progress retired — Proactive Flags on the Dashboard IS the checkpoint
+                      queue now: every car in the shop, how it's tracking against its ETA, and the form to
+                      file the update.
+                      A ?ticket=<id> deep-link (an old checkpoint reminder) goes to THAT TICKET, not to the
+                      Dashboard: the supervisors who file checkpoints are denied /dashboard in
+                      config/access.js, and the ticket carries the same checkpoint form. Without the
+                      ticket id there is nothing to open, so it falls back to the board. */}
+                  <Route path="/maintenance-progress" element={<RedirectCheckpoint />} />
                   {/* Repair records — the signed-off ledger and each car's workshop history, two tabs. */}
                   <Route path="/repair-records" element={<RepairRecordsHub />} />
                   {/* Fixed & Completed Repairs ledger — every closed ticket with its full story */}
                   <Route path="/completed-repairs" element={<RedirectToTab to="/repair-records" tab="signed-off" />} />
                   {/* Invoice Matching — the car is back: key each garage's bill beside the work it covers */}
-                  <Route path="/invoice-matching" element={<InvoiceMatching />} />
+                  <Route path="/invoice-matching" element={<RedirectToTab to="/control-desk" tab="invoices" />} />
                   {/* /maintenance-foresight is retired — its "keeps breaking down" evidence now
                       lives on each car's own profile (Overview → Repeat faults). Old links land
                       on the fleet list rather than a dead route. */}
@@ -280,7 +318,7 @@ export default function App() {
                   <Route path="/executive" element={<Executive />} />
                   <Route path="/intelligence/garages/compare" element={<GarageCompare />} />
                   <Route path="/intelligence/garages/:id" element={<GarageProfile />} />
-                  <Route path="/finding-keywords" element={<FindingKeywords />} />
+                  <Route path="/finding-keywords" element={<RedirectToTab to="/control-desk" tab="keywords" />} />
                   <Route path="/vehicle-locations" element={<VehicleLocations />} />
                   {/* Maintenance Analytics is marked "Coming Soon" in the module registry —
                       redirect the old URL so the unfinished page isn't reachable directly. */}
@@ -316,8 +354,11 @@ export default function App() {
 
                 <Route element={<RequirePermission permission="maintenance.manage" />}>
                   <Route path="/cost-capture" element={<QuickCostInput />} />
-                  {/* Inspection Request Review Gate — Controllers (Lin & Marwa) approve/reject before Abu Maroof is notified */}
-                  <Route path="/inspection-review" element={<InspectionReviewQueue />} />
+                  {/* Inspection Request Review Gate — Controllers (Lin & Marwa) approve/reject before
+                      Abu Maroof is notified. The first section of the Control Desk now; the redirect
+                      carries the query string through, which the notification deep-links
+                      (/inspection-review?ticket=<id>) rely on to focus one card. */}
+                  <Route path="/inspection-review" element={<RedirectToTab to="/control-desk" tab="review" />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="insights.view" />}>

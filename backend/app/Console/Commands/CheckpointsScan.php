@@ -102,9 +102,15 @@ class CheckpointsScan extends Command
                     'severity' => $meta['severity'],
                     'title'    => $meta['label'] . ' · ' . $plate,
                     'body'     => $body,
-                    // Deep-link to the supervisors' Maintenance Progress queue, focused on this ticket so
-                    // the checkpoint form opens straight away.
-                    'url'      => '/maintenance-progress?ticket=' . $ticket->id,
+                    // Deep-link to THE TICKET — which carries the same checkpoint panel and "File update"
+                    // button, and is the one page about the car this reminder is about.
+                    //
+                    // Deliberately NOT the Dashboard: the recipients here are the supervisors
+                    // (recipientsFor → Waleed/Abdullah), and the `supervisor` role is DENIED /dashboard in
+                    // config/access.js. Sending the chase to a page its recipient cannot open silently
+                    // kills the whole checkpoint loop. The ticket is reachable by every role that can be
+                    // asked to file one.
+                    'url'      => '/maintenance-workflow/' . $ticket->id,
                     'key'      => $key . ':u' . $user->id,
                     'icon'     => 'wrench',
                     'meta'     => [

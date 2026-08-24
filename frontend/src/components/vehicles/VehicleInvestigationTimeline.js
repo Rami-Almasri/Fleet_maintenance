@@ -25,6 +25,10 @@ const TONE_STYLE = {
   slate:   { soft: 'bg-slate-100',   text: 'text-slate-500' },
   blue:    { soft: 'bg-blue-100',    text: 'text-blue-600' },
   cyan:    { soft: 'bg-cyan-100',    text: 'text-cyan-600' },
+  // System Check obligations. Badge already knew `teal`; this map did not, so the marker dot and the
+  // filter chip fell back to slate while the badge beside them rendered teal — a new kind is only
+  // half-added until BOTH palettes carry its tone.
+  teal:    { soft: 'bg-teal-100',    text: 'text-teal-600' },
   red:     { soft: 'bg-red-100',     text: 'text-red-600' },
   emerald: { soft: 'bg-emerald-100', text: 'text-emerald-600' },
   green:   { soft: 'bg-emerald-100', text: 'text-emerald-600' },

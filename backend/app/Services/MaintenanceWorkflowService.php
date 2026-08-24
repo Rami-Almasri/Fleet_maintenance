@@ -18,7 +18,9 @@ use App\Models\ReviewReminder;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\GarageRecommendationDecision;
+use App\Models\VehicleCheckRequirement;
 use App\Models\VehicleLogEvent;
+use App\Support\VehicleCheckCatalog;
 use App\Models\Vendor;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -599,6 +601,11 @@ class MaintenanceWorkflowService
      */
     public function beginGarageTransfer(Maintenance $ticket, Vendor $dest, ?int $driverId, ?string $reason, User $actor, string $transportMethod = Maintenance::TRANSPORT_DRIVER): Maintenance
     {
+        // A garage-to-garage transfer moves a car that is AT a garage. One that is out on a temporary
+        // release isn't — and the release's own return leg already lets a supervisor point it at a
+        // different garage, which is the same decision made in the right place.
+        $this->assertNotTemporarilyReleased($ticket);
+
         $fromGarage = $ticket->garage ?: $ticket->vendor?->name;
         $isRecovery = $transportMethod === Maintenance::TRANSPORT_RECOVERY;
 
@@ -1947,6 +1954,19 @@ class MaintenanceWorkflowService
 
             $this->cascade($ticket->vehicle_id);
 
+            // ── THE OBLIGATIONS BEHIND THE AGENDA ──────────────────────────────────────────────
+            // trigger_detail above froze WHY this request exists, but as one JSON blob nobody can
+            // answer item by item. These are the same conditions as addressable rows the inspector
+            // must each resolve explicitly — so "checked the battery, it was fine" becomes recordable
+            // instead of being indistinguishable from nobody having looked. Idempotent on the gate's
+            // own cycle_key, so the 07:30 rerun that finds the same car still due adds nothing.
+            $checks = app(VehicleCheckService::class);
+            $checks->raiseFromConditions($vehicle, $opts['conditions'] ?? [], [
+                'service' => $opts['service'] ?? null,
+                'source'  => VehicleCheckRequirement::SOURCE_MONITOR,
+            ]);
+            $checks->attachToTicket($ticket);
+
             $this->log->record($ticket, VehicleLogEvent::EVENT_INSPECTION_REQUESTED, null, [
                 'description' => 'Routine inspection auto-requested by the mileage scanner'
                                 . ($ticket->customer_complaint ? ': ' . $ticket->customer_complaint : ''),
@@ -2243,6 +2263,12 @@ class MaintenanceWorkflowService
             $this->openMaintenanceContract($ticket, $reviewer);
 
             $this->cascade($ticket->vehicle_id);
+
+            // Every check still owed on this car joins the inspection that is about to happen — not
+            // only the ones raised in the same scheduler run. A battery check raised three weeks ago
+            // (or reconstructed by the backfill) reaches the next person who opens the bonnet, which
+            // is the whole difference between an obligation and a note the system left itself.
+            app(VehicleCheckService::class)->attachToTicket($ticket, $reviewer);
 
             // The request has been decided, so every "remind me to look at this again" anyone set on it is
             // now noise — a Controller must never be pinged at 16:00 to review a car they sent to Abu
@@ -2977,6 +3003,11 @@ class MaintenanceWorkflowService
             if ($vehicle) {
                 $this->applyTestOdometer($vehicle, $testOdometer);
             }
+
+            // Last chance to adopt anything still owed on this car before the inspector is in front of
+            // it. A driver-raised test drive is often the only look a car gets for weeks; a check
+            // raised by the monitor since then must ride along rather than wait for its own ticket.
+            app(VehicleCheckService::class)->attachToTicket($ticket, $actor);
 
             $this->log->record($ticket, VehicleLogEvent::EVENT_DIAGNOSTIC_STARTED, $actor, [
                 'description' => 'Test drive started on a Driver request · odometer ' . number_format($testOdometer)
@@ -4159,6 +4190,159 @@ class MaintenanceWorkflowService
      *
      * @param array{symptoms?:array, severity?:?string, fault_severity?:?string, recommended_action?:?string, notes?:?string, maintenance_type?:?string} $report
      */
+    /**
+     * The inspector's raw check answers, keyed by requirement id.
+     *
+     * Shape per entry: ['result_code' => 'replace', 'decision_code' => 'approved',
+     *                   'finding_keyword' => null]
+     *
+     * @param  mixed  $raw  whatever arrived on the request
+     * @return array<int,array{result_code:?string,decision_code:?string,finding_keyword:?string}>
+     */
+    private function normalizeCheckResults(mixed $raw): array
+    {
+        $out = [];
+
+        foreach ((array) $raw as $row) {
+            if (! is_array($row) || empty($row['id'])) {
+                continue;
+            }
+
+            $out[(int) $row['id']] = [
+                'result_code'     => $this->clean($row['result_code'] ?? null) ?: null,
+                'decision_code'   => $this->clean($row['decision_code'] ?? null) ?: null,
+                'finding_keyword' => $this->clean($row['finding_keyword'] ?? null) ?: null,
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Validate every outstanding check against the catalog and work out what the answers produce.
+     *
+     * NOTHING IS PERSISTED HERE. This runs before the transaction so a half-answered report is
+     * refused whole, with every problem named at once — the inspector is still on the screen and can
+     * fix all of them in one pass, exactly as the location gate below does.
+     *
+     * @param  \Illuminate\Support\Collection<int,VehicleCheckRequirement>  $openChecks
+     * @param  array<int,array<string,?string>>  $answers
+     * @return array{answers:array<int,array<string,mixed>>, findings:array<int,string>}
+     */
+    private function planCheckAnswers($openChecks, array $answers): array
+    {
+        if ($openChecks->isEmpty()) {
+            return ['answers' => [], 'findings' => []];
+        }
+
+        $planned    = [];
+        $findings   = [];
+        $unanswered = [];
+        $undecided  = [];
+        $unplaceable = [];
+
+        foreach ($openChecks as $requirement) {
+            $answer = $answers[$requirement->id] ?? null;
+            $label  = VehicleCheckCatalog::label($requirement->check_type);
+            $result = $answer['result_code'] ?? null;
+
+            // THE ONE REFUSAL. Silence is not an answer — it is the state we are abolishing.
+            if ($result === null) {
+                $unanswered[] = $label;
+                continue;
+            }
+
+            if (VehicleCheckCatalog::result($requirement->check_type, $result) === null) {
+                throw new WorkflowTransitionException(
+                    "“$result” is not a valid result for the $label check.",
+                    ['field' => 'check_results', 'check_id' => $requirement->id],
+                );
+            }
+
+            $decision = $answer['decision_code'] ?? null;
+
+            if (VehicleCheckCatalog::createsAction($requirement->check_type, $result)) {
+                // A result that means work needs a decision about that work. Recording "needs
+                // replacing" and stopping there is how a finding ends up owned by nobody.
+                if ($decision === null) {
+                    $undecided[] = $label;
+                    continue;
+                }
+
+                if (VehicleCheckCatalog::decision($requirement->check_type, $result, $decision) === null) {
+                    throw new WorkflowTransitionException(
+                        "“$decision” is not a decision offered for the $label check.",
+                        ['field' => 'check_results', 'check_id' => $requirement->id],
+                    );
+                }
+
+                if (VehicleCheckCatalog::decisionAction($requirement->check_type, $result, $decision) === 'open_task') {
+                    // Which finding this becomes.
+                    //
+                    // THE CATALOG'S OWN KEYWORD IS TRUSTED, and deliberately not re-validated against
+                    // the findings catalog here: a service check legitimately names SERVICE vocabulary
+                    // ("Brake Pads (service)", "Tyre Rotation"), which does not live there at all.
+                    // Demanding findings-catalog membership is what forced the first cut of the check
+                    // catalog onto fault wording and turned every scheduled brake check into a
+                    // breakdown. VehicleCheckCatalog::vocabularyViolations() is the real guard, and it
+                    // runs as a test against the classifier the workflow actually uses.
+                    $keyword = VehicleCheckCatalog::findingKeyword($requirement->check_type, $result);
+
+                    if ($keyword === null) {
+                        // No catalog keyword: a HUMAN named it, and a human's free pick must still be
+                        // real findings vocabulary or the fault it creates is invisible to garage
+                        // routing and the recurrence engine ([[findings-vocabulary-contract]]).
+                        $keyword = $answer['finding_keyword'] ?? null;
+
+                        if ($keyword === null || ! VehicleCheckCatalog::isFindingsVocabulary($keyword)) {
+                            $unplaceable[] = $label;
+                            continue;
+                        }
+                    }
+
+                    $findings[] = $keyword;
+                }
+            } else {
+                // A result that needs no action carries no decision. Silently dropping one the client
+                // sent anyway keeps a stale radio from inventing a consequence the catalog denies.
+                $decision = null;
+            }
+
+            $planned[] = [
+                'requirement'   => $requirement,
+                'result_code'   => $result,
+                'decision_code' => $decision,
+                // Only meaningful for a check type the catalog cannot pre-fill; ignored otherwise,
+                // because a catalog keyword must never be overridable from the request body.
+                'finding_keyword' => $answer['finding_keyword'] ?? null,
+            ];
+        }
+
+        if ($unanswered) {
+            throw new WorkflowTransitionException(
+                'The system asked for these checks and they have no result yet: ' . implode(', ', $unanswered)
+                . '. Record what you found — “OK, nothing needed” is a complete answer.',
+                ['field' => 'check_results', 'checks' => $unanswered],
+            );
+        }
+
+        if ($undecided) {
+            throw new WorkflowTransitionException(
+                'Say what should happen about: ' . implode(', ', $undecided) . '.',
+                ['field' => 'check_results', 'checks' => $undecided],
+            );
+        }
+
+        if ($unplaceable) {
+            throw new WorkflowTransitionException(
+                'Pick the fault this work should be logged as, for: ' . implode(', ', $unplaceable) . '.',
+                ['field' => 'check_results', 'checks' => $unplaceable],
+            );
+        }
+
+        return ['answers' => $planned, 'findings' => array_values(array_unique($findings))];
+    }
+
     public function submitReport(Maintenance $ticket, array $report, bool $requiresMaintenance, User $actor): Maintenance
     {
         // Repair Location (only meaningful when a ticket is actually opened). 'on_site' routes the ticket
@@ -4230,6 +4414,44 @@ class MaintenanceWorkflowService
                 ? $report['maintenance_type']
                 : ($requiresMaintenance ? Maintenance::TYPE_ROUTINE : null),
         ];
+
+        // ── SYSTEM CHECKS — every obligation this ticket carries must be answered, right here ──────
+        //
+        // This is the gate that makes the whole entity mean something. The system asked "check the
+        // battery"; the report cannot be filed until somebody says what they found. Three outcomes
+        // are all legitimate and all recorded — OK, monitor, replace — and the fourth (saying
+        // nothing) is the only one refused, because it is the one that used to be indistinguishable
+        // from having looked.
+        //
+        // Refused BEFORE the transaction, alongside the location gate, so the inspector is still on
+        // the screen with his answers intact and fixes every offender in one pass.
+        $checkService = app(VehicleCheckService::class);
+        $openChecks   = $checkService->openForTicket($ticket);
+        $checkAnswers = $this->normalizeCheckResults($report['check_results'] ?? []);
+        $checkPlan    = $this->planCheckAnswers($openChecks, $checkAnswers);
+
+        // Findings the answered checks produce. An approved "Replace" becomes an ordinary symptom and
+        // travels the SAME path as anything the inspector spotted himself — one creation route for
+        // faults, so a check-born repair is dispatched, invoiced and QC'd by machinery that already
+        // exists. A result that needs no action contributes nothing here, which is the point.
+        foreach ($checkPlan['findings'] as $keyword) {
+            $already = array_filter($payload['symptoms'], fn ($s) => mb_strtolower(trim($s)) === mb_strtolower($keyword));
+            if (! $already) {
+                $payload['symptoms'][] = $keyword;
+            }
+        }
+
+        // A report cannot approve work and simultaneously declare the car needs none. Caught here
+        // with its own message rather than falling into the generic mirror rule below, because the
+        // inspector's mistake is specific and so is the fix: change the decision, or open the ticket.
+        if (! $requiresMaintenance && $checkPlan['findings'] !== []) {
+            throw new WorkflowTransitionException(
+                'You approved work on ' . count($checkPlan['findings']) . ' system check(s), so this cannot be '
+                . 'filed as “no maintenance needed”. Change those decisions to deferred / not required, or '
+                . 'choose “Requires maintenance”.',
+                ['field' => 'check_results', 'findings' => $checkPlan['findings']],
+            );
+        }
 
         // THE OIL CHANGE A RECALL OWES IS NOT OPTIONAL HERE EITHER.
         // If this ticket came from an oil recall, a paying customer's rental was interrupted BECAUSE
@@ -4338,7 +4560,20 @@ class MaintenanceWorkflowService
             $this->assertNoDecrease($ticket, $actor, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, $reportNote, 'report_odometer', 'start-of-drive reading');
         }
 
-        return DB::transaction(function () use ($ticket, $payload, $target, $requiresMaintenance, $actor, $faultSeverity, $causeChoices, $detailChoices, $repairLocation, $deferrableForRental, $reportOdo, $reportNote, $reportConfirmed) {
+        return DB::transaction(function () use ($ticket, $payload, $target, $requiresMaintenance, $actor, $faultSeverity, $causeChoices, $detailChoices, $repairLocation, $deferrableForRental, $reportOdo, $reportNote, $reportConfirmed, $checkService, $checkPlan) {
+            // Answer every system check in the same transaction as the report that answers them. A
+            // report that saved while its check answers did not would leave the car looking unchecked
+            // by a person who demonstrably checked it — the exact ambiguity this is here to remove.
+            foreach ($checkPlan['answers'] as $answer) {
+                $checkService->recordResult(
+                    $answer['requirement'],
+                    $answer['result_code'],
+                    $answer['decision_code'],
+                    $actor,
+                    $answer['finding_keyword'],
+                );
+            }
+
             $ticket->test_drive_report = $payload;
 
             // The inspector's symptoms become first-class FINDINGS, source-stamped so they persist and
@@ -5770,6 +6005,9 @@ class MaintenanceWorkflowService
                 'workflow_status' => $ticket->workflow_status,
             ]);
         }
+        // This checkpoint guards on workflow_status directly rather than through assertTransition(), so
+        // it needs the release gate spelled out: a car parked elsewhere can't be collected from a garage.
+        $this->assertNotTemporarilyReleased($ticket);
 
         // The garage-OUT reading — captured the moment the driver collects the car (this is when it
         // physically leaves the garage, now that "Maintenance complete" no longer takes a reading). Stored
@@ -6299,6 +6537,11 @@ class MaintenanceWorkflowService
                 ['from' => $ticket->workflow_status]
             );
         }
+        // A car already out on a temporary release can't ALSO be released into the rentable pool — it
+        // isn't at base to hand over, and two overlapping "the car is out" stories would each report a
+        // different custodian. Bring it back first, then pause it. (It shouldn't be reachable anyway:
+        // a released car is still counted as in-maintenance, so the rental pull never offers it.)
+        $this->assertNotTemporarilyReleased($ticket, Maintenance::WF_PAUSED_RETURNED_TO_SERVICE);
 
         $reason = $this->clean($reason);
 
@@ -6688,16 +6931,39 @@ class MaintenanceWorkflowService
         });
     }
 
+    // ── TEMPORARY VEHICLE RELEASE — the round trip ──────────────────────────────────────────────────
+    //
+    // The car physically leaves the workshop mid-repair (a road test, a customer test/delivery, an
+    // external inspection, storage, …) while the ticket stays EXACTLY where it is. This is deliberately
+    // NOT a pause: workflow_status is untouched (the car is still counted as in-maintenance and stays
+    // out of the rentable pool), the ticket is never closed/completed, every fault stays exactly as it
+    // was, and the repair simply continues when the car comes back.
+    //
+    // But taking a car out is a real MOVEMENT, and a movement needs someone to drive it and someone to
+    // confirm it arrived — so the release walks the same lanes a garage run does, driven entirely by the
+    // release row's own `stage` (the ticket's status never moves):
+    //
+    //   release()            → out_dispatch      the car shows up in NEEDS DISPATCH
+    //   assignReleaseMove()  → out_assigned      destination (a parking yard, the office…) + a driver
+    //   startReleaseMove()   → out_transit       the driver has the car — odometer OUT captured here
+    //   arriveAtDestination()→ at_destination    parked; the ticket waits in RETURNED — RESUME DUE
+    //   requestReleaseReturn()→ return_dispatch  someone wants it back — NEEDS DISPATCH again, showing
+    //                                            the garage it left (changeable)
+    //   assignReleaseReturn()→ return_assigned   garage + driver confirmed
+    //   startReleaseReturn() → return_transit    the driver has the car, heading to the garage
+    //   returnTemporarilyReleasedVehicle() → the row closes, the car is back in the workshop
+    //
+    // Every physical leg raises a LogisticsTask (the canonical home for vehicle movements — see
+    // [[logistics-dispatch-canonical]]) so Driver Availability sees the driver as busy while they drive.
+
     /**
-     * TEMPORARILY RELEASE VEHICLE — the car physically leaves the workshop mid-repair (a road test, a
-     * customer test/delivery, an external inspection, storage, …) while the ticket stays EXACTLY where it
-     * is. This is deliberately NOT a pause: workflow_status is untouched (the car is still counted as
-     * in-maintenance and stays out of the rentable pool), the ticket is never closed/completed, and the
-     * repair simply continues when the car returns. All that changes is a vehicle-level overlay
-     * (active_temporary_release_id) plus an immutable out-leg log row capturing WHO/WHY/WHEN + odometer_out.
+     * RELEASE THE CAR (the decision). A controller says the car may leave the workshop and WHY. Nothing
+     * has moved yet: the ticket lands in Needs Dispatch, where a supervisor picks where it goes and who
+     * drives it. The garage the car is sitting in is snapshotted here so the return leg knows where to
+     * bring it back to without anyone having to remember.
      *
-     * `$data` = ['reason', 'reason_note', 'taken_by', 'odometer_out']. Idempotent + concurrency-safe (row
-     * lock + re-check): a double-submit no-ops on the already-out ticket.
+     * `$data` = ['reason', 'reason_note', 'taken_by']. Idempotent + concurrency-safe (row lock +
+     * re-check): a double-submit no-ops on the already-out ticket.
      */
     public function temporarilyReleaseVehicle(Maintenance $ticket, array $data, User $actor): Maintenance
     {
@@ -6721,43 +6987,66 @@ class MaintenanceWorkflowService
                 'vehicle_id'               => $ticket->vehicle_id,
                 'reason'                   => $data['reason'],
                 'reason_note'              => $this->clean($data['reason_note'] ?? null),
+                'stage'                    => MaintenanceTemporaryRelease::STAGE_OUT_DISPATCH,
                 'taken_by'                 => trim((string) $data['taken_by']),
                 'released_by'              => $actor->id,
                 'released_at'              => Carbon::now(),
-                'odometer_out'             => (int) $data['odometer_out'],
                 'workflow_status_snapshot' => $ticket->workflow_status,
+                // Where the car is RIGHT NOW — the return leg's default destination.
+                'vendor_id_snapshot'       => $ticket->vendor_id,
+                'garage_snapshot'          => $ticket->vendor?->name ?: ($ticket->garage ?: null),
             ]);
 
             $ticket->active_temporary_release_id = $release->id;
             $ticket->save(); // workflow_status intentionally UNCHANGED — no cascade, the car stays in-maintenance
 
             $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_RELEASED, $actor, [
-                'description' => 'Vehicle temporarily released from the workshop (' . $release->reasonLabel() . ')'
-                    . ' — taken by ' . $release->taken_by
-                    . ' at ' . number_format($release->odometer_out) . ' km'
+                'description' => 'Vehicle released from ' . ($release->garage_snapshot ?: 'the workshop')
+                    . ' (' . $release->reasonLabel() . ')'
                     . ($release->reason_note ? ' · ' . $release->reason_note : '')
-                    . ' (by ' . $actor->name . ')',
+                    . ' — awaiting dispatch to its destination (by ' . $actor->name . ')',
                 'meta' => [
                     'temporary_release_id' => $release->id,
                     'reason'               => $release->reason,
+                    'reason_note'          => $release->reason_note,
                     'taken_by'             => $release->taken_by,
-                    'odometer_out'         => $release->odometer_out,
+                    'from_garage'          => $release->garage_snapshot,
                     'from_status'          => $ticket->workflow_status,
+                    'stage'                => $release->stage,
                 ],
             ]);
 
             $vehicle = $ticket->loadMissing('vehicle')->vehicle;
-            $this->notifier->notifyByAnyPermission([self::NOTIFY_CONTROLLERS, self::NOTIFY_DISPATCHER], [
+            $why     = $release->reasonLabel() . ($release->reason_note ? ' — ' . $release->reason_note : '');
+
+            // Supervisors own the next step (pick the destination + a driver), so they are told first and
+            // in those words. Controllers get the same alert for visibility.
+            $this->notifier->notifyByAnyPermission([self::NOTIFY_DISPATCHER, self::NOTIFY_CONTROLLERS], [
                 'type'     => 'maint_temp_released',
                 'category' => 'maintenance',
-                'severity' => 'info',
-                'title'    => '🚗 Temporarily released · ' . $this->label($vehicle),
-                'body'     => trim($this->label($vehicle) . ' was taken out of the workshop for ' . $release->reasonLabel()
-                    . ' (by ' . $release->taken_by . ') — the repair stays open and continues when it returns.'),
+                'severity' => 'warning',
+                'title'    => '🚗 Release approved · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' is leaving ' . ($release->garage_snapshot ?: 'the workshop')
+                    . ' for ' . $why . ' — pick where it goes and who drives it. The repair stays open.'),
                 'url'      => $this->link($ticket),
                 'key'      => 'maint_wf:' . $ticket->id . ':temp_released:' . $release->id,
                 'icon'     => 'car',
                 'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'reason' => $release->reason],
+            ], $actor->id);
+
+            // Drivers are told too — a car is about to need moving, and the person who ends up driving it
+            // should not first hear about it when the job lands on them.
+            $this->notifier->notifyByPermission(self::NOTIFY_LOGISTICS, [
+                'type'     => 'maint_temp_release_upcoming',
+                'category' => 'maintenance',
+                'severity' => 'info',
+                'title'    => '🚗 Car leaving the garage · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' is being released from ' . ($release->garage_snapshot ?: 'the workshop')
+                    . ' for ' . $why . ' — a pickup is coming once the destination is set.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':temp_release_upcoming:' . $release->id,
+                'icon'     => 'truck',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no],
             ], $actor->id);
 
             return $ticket->load($this->eager());
@@ -6765,11 +7054,329 @@ class MaintenanceWorkflowService
     }
 
     /**
-     * RETURN TEMPORARILY-RELEASED VEHICLE — the car is back at the workshop; close the open release leg
-     * (odometer_in + distance) and clear the overlay so the ticket presents at its (unchanged) stage
-     * again. The distance driven while out is recorded and treated as VALID travel: the authoritative
-     * vehicle mileage is advanced to odometer_in so the ongoing repair's remaining odometer checkpoints
-     * compare against the post-release reading and never mis-flag the trip as a discrepancy.
+     * OUT DISPATCH — the supervisor says WHERE the released car goes (free text: "Parking Yard",
+     * "Office", a customer's address…) and, optionally, WHO drives it. Leaving the driver blank keeps the
+     * pickup open to the whole pool, exactly like a garage dispatch.
+     *
+     * `$data` = ['destination', 'driver_id'?, 'note'?].
+     */
+    public function assignReleaseMove(Maintenance $ticket, array $data, User $actor): Maintenance
+    {
+        $destination = $this->clean($data['destination'] ?? null);
+        if ($destination === null) {
+            throw new WorkflowTransitionException('Say where the car is going before dispatching it.', ['field' => 'destination']);
+        }
+        $driver = $this->releaseDriver($data['driver_id'] ?? null);
+
+        return DB::transaction(function () use ($ticket, $destination, $driver, $data, $actor) {
+            $release = $this->openRelease($ticket, [MaintenanceTemporaryRelease::STAGE_OUT_DISPATCH],
+                'This release is already dispatched.');
+
+            $release->destination     = $destination;
+            $release->out_driver_id   = $driver?->id;
+            $release->out_assigned_at = Carbon::now();
+            $release->stage           = MaintenanceTemporaryRelease::STAGE_OUT_ASSIGNED;
+            $release->save();
+
+            if ($driver) {
+                $ticket->watchers()->syncWithoutDetaching([
+                    $driver->id => ['added_by' => $actor->id, 'reason' => 'delegated'],
+                ]);
+            }
+
+            $note = $this->clean($data['note'] ?? null);
+            $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_MOVE, $actor, [
+                'description' => 'Release dispatch assigned — ' . ($release->garage_snapshot ?: 'the garage') . ' → ' . $destination
+                    . ($driver ? ', driver ' . $driver->name : ', pickup open to the pool')
+                    . ($note ? ' · ' . $note : '')
+                    . ' (by ' . $actor->name . ')',
+                'meta' => [
+                    'temporary_release_id' => $release->id,
+                    'leg'                  => 'out',
+                    'stage'                => $release->stage,
+                    'destination'          => $destination,
+                    'driver_id'            => $driver?->id,
+                    'driver'               => $driver?->name,
+                    'note'                 => $note,
+                ],
+            ]);
+
+            $this->notifyReleasePickup($ticket, $release, $driver, $destination, $actor, true);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * OUT PICKUP — the driver physically collects the released car from the garage. This is the moment the
+     * car actually leaves, so the OUT odometer is captured HERE (not at the release decision, when the
+     * car hadn't moved). Raises the transport leg so the driver reads as busy.
+     *
+     * `$data` = ['odometer_out'].
+     */
+    public function startReleaseMove(Maintenance $ticket, array $data, User $actor): Maintenance
+    {
+        $odometer = (int) ($data['odometer_out'] ?? 0);
+        if ($odometer < 1) {
+            throw new WorkflowTransitionException('Capture the odometer as the car leaves the garage.', ['field' => 'odometer_out']);
+        }
+
+        return DB::transaction(function () use ($ticket, $odometer, $actor) {
+            $release = $this->openRelease($ticket, [MaintenanceTemporaryRelease::STAGE_OUT_ASSIGNED],
+                'This release isn\'t waiting for a pickup.');
+            $this->assertReleaseDriver($release->out_driver_id, $actor);
+
+            $release->odometer_out    = $odometer;
+            $release->out_started_at  = Carbon::now();
+            // Whoever ACTUALLY drives it owns the leg — a supervisor stepping in for the assigned driver
+            // becomes the custodian, so the arrival gate names the real person.
+            $release->out_driver_id   = $actor->id;
+            $release->stage           = MaintenanceTemporaryRelease::STAGE_OUT_TRANSIT;
+            $release->save();
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            if ($vehicle) {
+                $this->logistics->raiseMaintenanceLeg(
+                    $vehicle, $release->destination ?: 'the destination', $actor->id, $ticket->id, $actor,
+                    'Temporary release — ' . ($release->garage_snapshot ?: 'the garage') . ' → ' . ($release->destination ?: 'the destination')
+                );
+                // Forward-only heal of the canonical mileage (mirrors every other capture point).
+                $this->applyTestOdometer($vehicle, $odometer);
+            }
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_MOVE, $actor, [
+                'description' => 'Car collected from ' . ($release->garage_snapshot ?: 'the garage')
+                    . ' at ' . number_format($odometer) . ' km — en route to ' . ($release->destination ?: 'its destination')
+                    . ' (by ' . $actor->name . ')',
+                'meta' => [
+                    'temporary_release_id' => $release->id,
+                    'leg'                  => 'out',
+                    'stage'                => $release->stage,
+                    'destination'          => $release->destination,
+                    'odometer_out'         => $odometer,
+                ],
+            ]);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * OUT ARRIVAL — the car is parked at its destination. The transport leg closes, the driver frees up,
+     * and the ticket comes to rest in "Returned — Resume Due", where it waits until someone asks for the
+     * car back. Nothing about the repair has changed the whole time.
+     *
+     * `$data` = ['note'?].
+     */
+    public function arriveAtReleaseDestination(Maintenance $ticket, array $data, User $actor): Maintenance
+    {
+        return DB::transaction(function () use ($ticket, $data, $actor) {
+            $release = $this->openRelease($ticket, [MaintenanceTemporaryRelease::STAGE_OUT_TRANSIT],
+                'This release isn\'t on its way anywhere.');
+            $this->assertReleaseDriver($release->out_driver_id, $actor);
+
+            $release->arrived_at = Carbon::now();
+            $release->stage      = MaintenanceTemporaryRelease::STAGE_AT_DESTINATION;
+            $release->save();
+
+            // The arrival IS the delivery of the transport leg.
+            if ($move = $ticket->activeMove()->first()) {
+                $this->logistics->complete($move, $actor);
+            }
+
+            $note = $this->clean($data['note'] ?? null);
+            $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_MOVE, $actor, [
+                'description' => 'Car delivered to ' . ($release->destination ?: 'its destination')
+                    . ($note ? ' · ' . $note : '')
+                    . ' — waiting there until the repair calls it back (by ' . $actor->name . ')',
+                'meta' => [
+                    'temporary_release_id' => $release->id,
+                    'leg'                  => 'out',
+                    'stage'                => $release->stage,
+                    'destination'          => $release->destination,
+                    'note'                 => $note,
+                ],
+            ]);
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByAnyPermission([self::NOTIFY_CONTROLLERS, self::NOTIFY_DISPATCHER], [
+                'type'     => 'maint_temp_at_destination',
+                'category' => 'maintenance',
+                'severity' => 'info',
+                'title'    => '📍 Released car parked · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' is at ' . ($release->destination ?: 'its destination')
+                    . ' for ' . $release->reasonLabel() . '. Its repair at ' . ($release->garage_snapshot ?: 'the garage')
+                    . ' is still open — send it back whenever you\'re ready.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':temp_arrived:' . $release->id,
+                'icon'     => 'car',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'destination' => $release->destination],
+            ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * ASK FOR THE CAR BACK — the repair wants it in the workshop again. This only re-opens the dispatch
+     * queue: the ticket returns to Needs Dispatch carrying the garage it left, which the supervisor
+     * confirms or changes at the next step.
+     */
+    public function requestReleaseReturn(Maintenance $ticket, User $actor): Maintenance
+    {
+        return DB::transaction(function () use ($ticket, $actor) {
+            $release = $this->openRelease($ticket, [MaintenanceTemporaryRelease::STAGE_AT_DESTINATION],
+                'The car has to be parked at its destination before it can be called back.');
+
+            $release->return_requested_at = Carbon::now();
+            $release->stage               = MaintenanceTemporaryRelease::STAGE_RETURN_DISPATCH;
+            $release->save();
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_MOVE, $actor, [
+                'description' => 'Car called back from ' . ($release->destination ?: 'its destination')
+                    . ' to ' . ($release->returnGarageLabel() ?: 'the garage')
+                    . ' — awaiting dispatch (by ' . $actor->name . ')',
+                'meta' => [
+                    'temporary_release_id' => $release->id,
+                    'leg'                  => 'return',
+                    'stage'                => $release->stage,
+                    'to_garage'            => $release->returnGarageLabel(),
+                ],
+            ]);
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByAnyPermission([self::NOTIFY_DISPATCHER, self::NOTIFY_CONTROLLERS], [
+                'type'     => 'maint_temp_return_requested',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => '↩️ Bring it back · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' is wanted back at ' . ($release->returnGarageLabel() ?: 'the garage')
+                    . ' from ' . ($release->destination ?: 'its destination') . ' — confirm the garage and assign a driver.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':temp_return_requested:' . $release->id,
+                'icon'     => 'truck',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no],
+            ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * RETURN DISPATCH — the supervisor confirms (or changes) the garage the car goes back to and picks a
+     * driver. Changing the garage is legitimate and expected: the shop that had the car may be full, or
+     * the work may be better done elsewhere. The ticket's own vendor is only re-pointed when the car
+     * actually ARRIVES (returnTemporarilyReleasedVehicle) — until then it is still the old garage's car.
+     *
+     * `$data` = ['vendor_id'?, 'driver_id'?, 'note'?]. A missing vendor keeps the garage it left.
+     */
+    public function assignReleaseReturn(Maintenance $ticket, array $data, User $actor): Maintenance
+    {
+        $driver = $this->releaseDriver($data['driver_id'] ?? null);
+
+        return DB::transaction(function () use ($ticket, $driver, $data, $actor) {
+            $release = $this->openRelease($ticket, [MaintenanceTemporaryRelease::STAGE_RETURN_DISPATCH],
+                'This release isn\'t waiting on a return dispatch.');
+
+            // A blank garage means "the one it left" — resolved from the locked row, so a concurrent
+            // change can't leave this pointing at a stale snapshot.
+            $vendorId = (int) ($data['vendor_id'] ?? 0) ?: $release->returnVendorId();
+            $vendor   = $vendorId ? Vendor::find($vendorId) : null;
+            if (! $vendor) {
+                throw new WorkflowTransitionException('Pick the garage the car goes back to.', ['field' => 'vendor_id']);
+            }
+
+            $changed = $release->vendor_id_snapshot && (int) $release->vendor_id_snapshot !== $vendor->id;
+
+            $release->return_vendor_id   = $vendor->id;
+            $release->return_garage      = $vendor->name;
+            $release->return_driver_id   = $driver?->id;
+            $release->return_assigned_at = Carbon::now();
+            $release->stage              = MaintenanceTemporaryRelease::STAGE_RETURN_ASSIGNED;
+            $release->save();
+
+            if ($driver) {
+                $ticket->watchers()->syncWithoutDetaching([
+                    $driver->id => ['added_by' => $actor->id, 'reason' => 'delegated'],
+                ]);
+            }
+
+            $note = $this->clean($data['note'] ?? null);
+            $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_MOVE, $actor, [
+                'description' => 'Return dispatch assigned — ' . ($release->destination ?: 'the destination') . ' → ' . $vendor->name
+                    . ($changed ? ' (a different garage than it left: ' . ($release->garage_snapshot ?: 'previous garage') . ')' : '')
+                    . ($driver ? ', driver ' . $driver->name : ', pickup open to the pool')
+                    . ($note ? ' · ' . $note : '')
+                    . ' (by ' . $actor->name . ')',
+                'meta' => [
+                    'temporary_release_id' => $release->id,
+                    'leg'                  => 'return',
+                    'stage'                => $release->stage,
+                    'to_garage'            => $vendor->name,
+                    'vendor_id'            => $vendor->id,
+                    'garage_changed'       => $changed,
+                    'from_garage'          => $release->garage_snapshot,
+                    'driver_id'            => $driver?->id,
+                    'driver'               => $driver?->name,
+                    'note'                 => $note,
+                ],
+            ]);
+
+            $this->notifyReleasePickup($ticket, $release, $driver, $vendor->name, $actor, false);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * RETURN PICKUP — the driver collects the car from where it was parked and drives it to the garage.
+     * Raises the transport leg; the arrival (returnTemporarilyReleasedVehicle) closes it.
+     */
+    public function startReleaseReturn(Maintenance $ticket, User $actor): Maintenance
+    {
+        return DB::transaction(function () use ($ticket, $actor) {
+            $release = $this->openRelease($ticket, [MaintenanceTemporaryRelease::STAGE_RETURN_ASSIGNED],
+                'This release isn\'t waiting for a return pickup.');
+            $this->assertReleaseDriver($release->return_driver_id, $actor);
+
+            $release->return_started_at = Carbon::now();
+            $release->return_driver_id  = $actor->id; // whoever actually drives it owns the leg
+            $release->stage             = MaintenanceTemporaryRelease::STAGE_RETURN_TRANSIT;
+            $release->save();
+
+            if ($vehicle = $ticket->loadMissing('vehicle')->vehicle) {
+                $this->logistics->raiseMaintenanceLeg(
+                    $vehicle, $release->returnGarageLabel() ?: 'the garage', $actor->id, $ticket->id, $actor,
+                    'Temporary release — returning from ' . ($release->destination ?: 'the destination')
+                    . ' to ' . ($release->returnGarageLabel() ?: 'the garage')
+                );
+            }
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_MOVE, $actor, [
+                'description' => 'Car collected from ' . ($release->destination ?: 'its destination')
+                    . ' — on the way back to ' . ($release->returnGarageLabel() ?: 'the garage')
+                    . ' (by ' . $actor->name . ')',
+                'meta' => [
+                    'temporary_release_id' => $release->id,
+                    'leg'                  => 'return',
+                    'stage'                => $release->stage,
+                    'to_garage'            => $release->returnGarageLabel(),
+                ],
+            ]);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * RETURN ARRIVAL — the car is back at the workshop; close the release (odometer_in + distance) and
+     * clear the overlay so the ticket presents at its (unchanged) stage again, with every fault exactly
+     * as it was. If the return leg was pointed at a DIFFERENT garage, the ticket's garage moves with the
+     * car now that it has physically arrived there.
+     *
+     * The distance driven while out is recorded and treated as VALID travel: the authoritative vehicle
+     * mileage is advanced to odometer_in so the ongoing repair's remaining odometer checkpoints compare
+     * against the post-release reading and never mis-flag the trip as a discrepancy.
      *
      * `$data` = ['odometer_in', 'return_note']. Idempotent + concurrency-safe. Guards a backward reading
      * (an odometer can't return lower than it left).
@@ -6801,8 +7408,12 @@ class MaintenanceWorkflowService
                 return $ticket->load($this->eager());
             }
 
+            $this->assertReleaseDriver($release->return_driver_id, $actor);
+
             // An odometer can't come back LOWER than it left — reject a backward reading outright.
-            if ($odometerIn < $release->odometer_out) {
+            // (odometer_out is null only if the car never physically left, in which case there is nothing
+            // to compare against and the release is simply being cancelled back into the workshop.)
+            if ($release->odometer_out !== null && $odometerIn < $release->odometer_out) {
                 throw new WorkflowTransitionException(
                     'The return reading (' . number_format($odometerIn) . ' km) can\'t be lower than the '
                     . 'out reading (' . number_format($release->odometer_out) . ' km) — re-check the dial.',
@@ -6810,7 +7421,7 @@ class MaintenanceWorkflowService
                 );
             }
 
-            $distance = $odometerIn - $release->odometer_out;
+            $distance = $release->odometer_out !== null ? $odometerIn - $release->odometer_out : null;
 
             $release->returned_at  = Carbon::now();
             $release->returned_by  = $actor->id;
@@ -6820,7 +7431,25 @@ class MaintenanceWorkflowService
             $release->save();
 
             $ticket->active_temporary_release_id = null;
+
+            // The car physically arrived at the garage the return leg was pointed at — if that is a
+            // DIFFERENT shop than the one it left, the repair moves with the car. The ticket's stage and
+            // its faults are untouched; only the garage label changes.
+            $arrivedVendorId = $release->returnVendorId();
+            $garageMoved     = false;
+            if ($arrivedVendorId && (int) $ticket->vendor_id !== $arrivedVendorId) {
+                if ($vendor = Vendor::find($arrivedVendorId)) {
+                    $ticket->vendor_id = $vendor->id;
+                    $ticket->garage    = $vendor->name;
+                    $garageMoved       = true;
+                }
+            }
             $ticket->save();
+
+            // The arrival IS the delivery of the return transport leg.
+            if ($move = $ticket->activeMove()->first()) {
+                $this->logistics->complete($move, $actor);
+            }
 
             // Absorb the distance driven while out as VALID travel — advance the authoritative mileage so
             // the repair's remaining odometer checkpoints anchor on the post-trip reading (never a
@@ -6830,17 +7459,25 @@ class MaintenanceWorkflowService
                 $vehicle->odometer = $odometerIn;
                 $vehicle->save();
             }
+            $this->cascade($ticket->vehicle_id);
 
             $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_RETURNED, $actor, [
-                'description' => 'Vehicle returned to the workshop from a temporary release (' . $release->reasonLabel() . ')'
-                    . ' at ' . number_format($odometerIn) . ' km · ' . number_format($distance) . ' km driven while out'
+                'description' => 'Vehicle back in the workshop at ' . ($ticket->garage ?: 'the garage')
+                    . ' from a temporary release (' . $release->reasonLabel() . ')'
+                    . ' at ' . number_format($odometerIn) . ' km'
+                    . ($distance !== null ? ' · ' . number_format($distance) . ' km driven while out' : '')
+                    . ($garageMoved ? ' · moved from ' . ($release->garage_snapshot ?: 'its previous garage') : '')
                     . ($release->return_note ? ' · ' . $release->return_note : '')
-                    . ' (by ' . $actor->name . ')',
+                    . ' — the repair continues where it left off (by ' . $actor->name . ')',
                 'meta' => [
                     'temporary_release_id' => $release->id,
                     'odometer_out'         => $release->odometer_out,
                     'odometer_in'          => $odometerIn,
                     'distance_km'          => $distance,
+                    'destination'          => $release->destination,
+                    'garage'               => $ticket->garage,
+                    'garage_moved'         => $garageMoved,
+                    'from_garage'          => $release->garage_snapshot,
                 ],
             ]);
 
@@ -6849,8 +7486,9 @@ class MaintenanceWorkflowService
                 'category' => 'maintenance',
                 'severity' => 'info',
                 'title'    => '🔧 Back at the workshop · ' . $this->label($vehicle),
-                'body'     => trim($this->label($vehicle) . ' is back from its temporary release — '
-                    . number_format($distance) . ' km driven while out. The repair continues.'),
+                'body'     => trim($this->label($vehicle) . ' is back at ' . ($ticket->garage ?: 'the garage')
+                    . ($distance !== null ? ' — ' . number_format($distance) . ' km driven while out.' : '.')
+                    . ' The repair continues with its faults exactly as they were.'),
                 'url'      => $this->link($ticket),
                 'key'      => 'maint_wf:' . $ticket->id . ':temp_returned:' . $release->id,
                 'icon'     => 'wrench',
@@ -6859,6 +7497,171 @@ class MaintenanceWorkflowService
 
             return $ticket->load($this->eager());
         });
+    }
+
+    /**
+     * CANCEL A RELEASE — the decision is taken back before the car has physically moved. Only possible
+     * while the release is still on paper (out_dispatch / out_assigned: the car is sitting in the garage
+     * waiting to be collected). Once a driver has the keys, there is no cancelling — the car is out, and
+     * it has to be driven back, which is the return leg.
+     *
+     * The row is closed with no odometers and no distance: nothing happened, and the audit says so.
+     */
+    public function cancelTemporaryRelease(Maintenance $ticket, ?string $reason, User $actor): Maintenance
+    {
+        return DB::transaction(function () use ($ticket, $reason, $actor) {
+            $release = $this->openRelease(
+                $ticket,
+                [MaintenanceTemporaryRelease::STAGE_OUT_DISPATCH, MaintenanceTemporaryRelease::STAGE_OUT_ASSIGNED],
+                'The car has already left the garage — bring it back instead of cancelling.'
+            );
+
+            $note = $this->clean($reason);
+
+            $release->returned_at = Carbon::now();
+            $release->returned_by = $actor->id;
+            $release->return_note = trim('Release cancelled before the car moved.' . ($note ? ' ' . $note : ''));
+            $release->save();
+
+            $ticket->active_temporary_release_id = null;
+            $ticket->save();
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_MOVE, $actor, [
+                'description' => 'Temporary release cancelled — the car never left ' . ($release->garage_snapshot ?: 'the garage')
+                    . ($note ? ' · ' . $note : '')
+                    . ' (by ' . $actor->name . ')',
+                'meta' => [
+                    'temporary_release_id' => $release->id,
+                    'cancelled'            => true,
+                    'stage'                => $release->stage,
+                    'note'                 => $note,
+                ],
+            ]);
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByAnyPermission([self::NOTIFY_DISPATCHER, self::NOTIFY_LOGISTICS], [
+                'type'     => 'maint_temp_release_cancelled',
+                'category' => 'maintenance',
+                'severity' => 'info',
+                'title'    => '↩️ Release cancelled · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' is staying at ' . ($release->garage_snapshot ?: 'the garage')
+                    . ' after all — no pickup is needed.' . ($note ? ' ' . $note : '')),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':temp_cancelled:' . $release->id,
+                'icon'     => 'wrench',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no],
+            ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * The ticket's OPEN release row, ROW-LOCKED and asserted to be at one of `$stages`. Every leg step
+     * goes through here, and always from INSIDE its transaction: the lock is what makes a double-submit
+     * or a retried request safe. Without it two requests both read "awaiting pickup", both pass, and the
+     * car gets two transport legs raised for one journey. The second one now blocks on the lock, then
+     * re-reads the first one's committed stage and bounces off `$wrongStageMessage`.
+     *
+     * Mirrors the lock-and-re-check discipline every other transition in this service holds.
+     */
+    private function openRelease(Maintenance $ticket, array $stages, string $wrongStageMessage): MaintenanceTemporaryRelease
+    {
+        // Re-read the pointer under the same lock — a concurrent return/cancel may have cleared it.
+        $ticket = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+
+        if (! $ticket->isTemporarilyReleased()) {
+            throw new WorkflowTransitionException(
+                'This vehicle isn\'t on a temporary release.',
+                ['from' => $ticket->workflow_status]
+            );
+        }
+
+        $release = MaintenanceTemporaryRelease::where('id', $ticket->active_temporary_release_id)
+            ->lockForUpdate()->first();
+        if (! $release || ! $release->isOpen()) {
+            throw new WorkflowTransitionException('This temporary release is already closed.', ['from' => $ticket->workflow_status]);
+        }
+        if (! in_array($release->stage, $stages, true)) {
+            throw new WorkflowTransitionException($wrongStageMessage, ['stage' => $release->stage]);
+        }
+
+        return $release;
+    }
+
+    /** Resolve + validate an optional driver for a release leg (blank = open to the pool). */
+    private function releaseDriver(mixed $driverId): ?User
+    {
+        $id = (int) ($driverId ?? 0);
+        if (! $id) {
+            return null;
+        }
+        $driver = User::find($id);
+        if (! $driver) {
+            throw new WorkflowTransitionException('That driver no longer exists — pick another.', ['field' => 'driver_id']);
+        }
+        if (! $driver->can('maintenance.logistics')) {
+            throw new WorkflowTransitionException('That user is not a driver — pick someone who can move cars.', ['field' => 'driver_id']);
+        }
+        return $driver;
+    }
+
+    /**
+     * Custody gate for a release leg: when a specific driver was named, that leg is theirs. Anyone
+     * holding the dispatch authority may step in (supervisors run these legs themselves — see
+     * maySupersedeDriver), and a leg left open to the pool is anyone's to take.
+     */
+    private function assertReleaseDriver(?int $assignedId, User $actor): void
+    {
+        if (! $assignedId || (int) $assignedId === (int) $actor->id || $this->maySupersedeDriver($actor)) {
+            return;
+        }
+        $holder = User::find($assignedId);
+        throw new WorkflowTransitionException(
+            'This leg is assigned to ' . ($holder?->name ?: 'another driver') . ' — ask a supervisor to reassign it.',
+            ['field' => 'driver_id']
+        );
+    }
+
+    /**
+     * Tell whoever has to physically move the car that a leg is waiting — the named driver directly, or
+     * the whole pool when the leg is open. `$outbound` only changes the words, not the audience.
+     */
+    private function notifyReleasePickup(Maintenance $ticket, MaintenanceTemporaryRelease $release, ?User $driver, string $destination, User $actor, bool $outbound): void
+    {
+        $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+        $from    = $outbound ? ($release->garage_snapshot ?: 'the garage') : ($release->destination ?: 'its destination');
+        $what    = $outbound
+            ? ' out for ' . $release->reasonLabel()
+            : ' back to the workshop';
+
+        if ($driver) {
+            $this->notifier->notifyUser($driver, [
+                'type'     => 'maint_temp_pickup_assigned',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => '🚗 Pickup assigned · ' . $this->label($vehicle),
+                'body'     => trim($actor->name . ' assigned you to take ' . $this->label($vehicle) . $what
+                    . ': ' . $from . ' → ' . $destination . '. Capture the odometer when you collect it.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':temp_pickup:' . $release->id . ':' . $release->stage . ':' . $driver->id,
+                'icon'     => 'truck',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'destination' => $destination],
+            ]);
+            return;
+        }
+
+        $this->notifier->notifyByPermission(self::NOTIFY_LOGISTICS, [
+            'type'     => 'maint_temp_pickup_ready',
+            'category' => 'maintenance',
+            'severity' => 'warning',
+            'title'    => '🚗 Pickup open · ' . $this->label($vehicle),
+            'body'     => trim($this->label($vehicle) . ' needs taking' . $what . ': ' . $from . ' → ' . $destination . '.'),
+            'url'      => $this->link($ticket),
+            'key'      => 'maint_wf:' . $ticket->id . ':temp_pickup:' . $release->id . ':' . $release->stage,
+            'icon'     => 'truck',
+            'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'destination' => $destination],
+        ], $actor->id);
     }
 
     /** Auto-compose an Incident's description from the comparison's threshold breaches. */
@@ -7711,6 +8514,8 @@ class MaintenanceWorkflowService
             ]);
         }
 
+        $this->assertNotTemporarilyReleased($ticket, $to);
+
         $allowed = self::TRANSITIONS[$from] ?? [];
         if (! in_array($to, $allowed, true)) {
             throw new WorkflowTransitionException(
@@ -7718,6 +8523,33 @@ class MaintenanceWorkflowService
                 ['from' => $from, 'to' => $to, 'allowed' => $allowed]
             );
         }
+    }
+
+    /**
+     * The repair is FROZEN while the car is out on a temporary release. Nothing that claims work was
+     * done to the car — marked ready, approved, collected from the garage, re-inspected, closed — can be
+     * true of a car sitting in a parking yard, so every stage transition is refused until it is back.
+     *
+     * Called from assertTransition() (which every staged transition routes through) and directly from
+     * the two return-leg checkpoints that guard on workflow_status themselves. The release's OWN legs
+     * never touch workflow_status, so they never meet this gate.
+     */
+    private function assertNotTemporarilyReleased(Maintenance $ticket, ?string $to = null): void
+    {
+        if (! $ticket->isTemporarilyReleased()) {
+            return;
+        }
+
+        $release = $ticket->activeTemporaryRelease;
+        $where   = $release?->destination
+            ? 'at ' . $release->destination
+            : 'out of the workshop';
+
+        throw new WorkflowTransitionException(
+            'This car is ' . $where . ' on a temporary release — the repair can\'t move until it is back '
+            . 'in the workshop.',
+            ['from' => $ticket->workflow_status, 'to' => $to, 'release_stage' => $release?->stage]
+        );
     }
 
     /** Standard controller alert for the simple mid-lifecycle steps. */

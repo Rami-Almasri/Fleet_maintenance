@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
@@ -15,9 +15,11 @@ import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
 import RecentlyFixedCard from '../components/RecentlyFixedCard';
 import RepeatPartPurchases from '../components/dashboard/RepeatPartPurchases';
-import MaintenanceWorkflowAnalyticsPanel from '../components/analytics/MaintenanceWorkflowAnalyticsPanel';
+import PipelinePanel from '../components/analytics/PipelinePanel';
 import { aed, fmtDate } from '../lib/format';
-import { useCheckpointVocab } from '../lib/maintenanceCheckpoints';
+import { useCheckpointVocab, resolveCheckpointTicket } from '../lib/maintenanceCheckpoints';
+import CheckpointModal from '../components/maintenance/CheckpointModal';
+import { useToast } from '../components/ui/Toast';
 import { SHOW_FINANCIALS } from '../config/features';
 import { useAuth } from '../auth/AuthContext';
 import { useI18n } from '../i18n/I18nContext';
@@ -127,6 +129,11 @@ const SOURCE_BADGE = {
   both: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
 };
 
+// A stable DOM id per in-shop card, so a checkpoint reminder carrying ?ticket=<id> can scroll to and
+// ring the exact car it was raised for. Contract-only rows have no ticket yet and key off the contract.
+const flagKey = (it) => `${it?.source}-${it?.ticket_id ?? it?.contract_id ?? it?.id}`;
+const flagCardId = (it) => `in-shop-${flagKey(it)}`;
+
 function SourceBadge({ source }) {
   const { t } = useI18n();
   const cls = SOURCE_BADGE[source];
@@ -146,15 +153,20 @@ function SourceBadge({ source }) {
 // the target is exceeded (bar stays pinned at 100% when overdue) — a status badge ("N days remaining"
 // / "Due today" / "+N days overdue"), and a compact grid of the underlying figures. All data comes
 // from the open type-U maintenance contract's eta (out_date = start, expected_return_date = target;
-// a null target falls back to the default window and the card is flagged "Estimated"). Deep-links to
-// the vehicle. The whole card is the KPI the user asked for — no plain text ETA.
-function RepairProgressCard({ item }) {
+// a null target falls back to the default window and the card is flagged "Estimated"). The whole card
+// is the KPI the user asked for — no plain text ETA.
+//
+// Clicking the card opens the TICKET — everything that has happened to this car on this visit, which
+// is what someone reading a stalled repair actually wants. A car we only know about from the sheet
+// contract has no ticket yet, so it falls back to the vehicle profile. The "File update" button files
+// the checkpoint (the promised date, why it moved, a note and photos) without leaving the Dashboard —
+// this card replaced the /maintenance-progress queue, so the form has to live on it.
+function RepairProgressCard({ item, onCheckpoint, busy, highlighted }) {
   const { t, tp } = useI18n();
   const days = daysWith(tp);
   const { id, plate, car, garage, eta, checkpoint, problem, problem_items, problem_type, source, ticket_id, other_tickets } = item || {};
   const e = eta || {};
-  // Deep-link to the car; a ticket-sourced card with no vehicle falls back to its own ticket.
-  const to = id ? `/vehicles/${id}` : ticket_id ? `/maintenance-workflow/${ticket_id}` : '/maintenance-workflow';
+  const to = ticket_id ? `/maintenance-workflow/${ticket_id}` : id ? `/vehicles/${id}` : '/maintenance-workflow';
 
   const el = e.days_elapsed ?? 0;     // total days in the workshop
   const al = e.days_allotted ?? 0;    // planned repair duration (target)
@@ -175,14 +187,27 @@ function RepairProgressCard({ item }) {
   const remainTone = status === 'overdue' ? 'text-red-600' : status === 'due_today' ? 'text-amber-600' : 'text-emerald-600';
 
   return (
-    <Link
-      to={to}
-      className="group relative block overflow-hidden rounded-2xl border border-slate-200/70 bg-white p-3.5 pt-4 shadow-soft transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+    <div
+      id={flagCardId(item)}
+      className={`group relative overflow-hidden rounded-2xl border bg-white p-3.5 pt-4 shadow-soft transition hover:-translate-y-0.5 hover:shadow-md ${
+        highlighted
+          ? 'border-indigo-400 ring-2 ring-indigo-400/60'
+          : 'border-slate-200/70 hover:border-slate-300'
+      }`}
     >
-      {/* Tone accent strip + ambient wash — instant read of health before the eye reaches the bar. */}
-      <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${c.accent}`} />
+      {/* Tone accent strip + ambient wash — instant read of health before the eye reaches the bar.
+          Positioned against the CARD, so they stay outside the content wrapper below. */}
+      <div className={`pointer-events-none absolute inset-x-0 top-0 z-[1] h-1 bg-gradient-to-r ${c.accent}`} />
       <div className={`pointer-events-none absolute -end-8 -top-10 h-24 w-24 rounded-full ${c.glow} blur-2xl`} />
 
+      {/* The whole card opens the ticket. It sits UNDER the content (which is click-through) so the
+          one interactive control on the card — "File update" — can still take its own clicks. */}
+      <Link
+        to={to}
+        aria-label={t('dash.repair.openTicket', { car: plate || car || t('dash.repair.vehicle') })}
+        className="absolute inset-0 z-0 rounded-2xl focus-ring-self"
+      />
+      <div className="pointer-events-none relative z-10">
       {/* Vehicle header */}
       <div className="relative mb-3 flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -271,15 +296,74 @@ function RepairProgressCard({ item }) {
         <KpiCell label={t('dash.repair.expected')} value={fmtDate(e.expected_on) || '—'} />
         <KpiCell label={t('dash.repair.started')} value={fmtDate(e.started_on) || '—'} />
       </dl>
-    </Link>
+      </div>
+
+      {/* File the workshop's progress update from here — the promised date, why it moved, a note and
+          photos. A contract-only car has no ticket yet; the handler links one before opening the form. */}
+      <div className="relative z-10 mt-3 flex justify-end border-t border-slate-100 pt-3">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onCheckpoint?.(item)}
+          className="focus-ring-self inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60"
+        >
+          {busy ? t('dash.repair.opening') : t('dash.repair.fileUpdate')}
+        </button>
+      </div>
+    </div>
   );
 }
 
-function ProactiveFlags({ data, loading }) {
+function ProactiveFlags({ data, loading, onReload }) {
   const { t, isRTL } = useI18n();
+  const toast = useToast();
   const inShop = data?.in_maintenance || { count: 0, items: [] };
   const src = inShop.sources || {};
-  const allItems = inShop.items || [];
+  // Memoised so the ?ticket= focus effect below doesn't re-run on every render.
+  const allItems = useMemo(() => inShop.items || [], [inShop.items]);
+
+  // Filing a progress update from a card. A contract-only row has no ticket until the first
+  // checkpoint is filed, so resolveCheckpointTicket lazily links one (idempotent) before the form opens.
+  const [active, setActive] = useState(null);   // { ticketId, label, sub }
+  const [opening, setOpening] = useState(null); // flagKey of the card currently resolving its ticket
+  const openCheckpoint = useCallback(async (row) => {
+    const label = row.plate || row.car || t('dash.repair.vehicle');
+    if (row.ticket_id) {
+      setActive({ ticketId: row.ticket_id, label, sub: row.garage });
+      return;
+    }
+    setOpening(flagKey(row));
+    try {
+      const ticketId = await resolveCheckpointTicket(row);
+      if (ticketId) setActive({ ticketId, label, sub: row.garage });
+      else toast.error(t('dash.repair.checkpointFailed'));
+    } catch {
+      toast.error(t('dash.repair.checkpointFailed'));
+    } finally {
+      setOpening(null);
+    }
+  }, [t, toast]);
+
+  // A checkpoint reminder deep-links here as /dashboard?ticket=<id>. Scroll that card into view, ring
+  // it, and open its form straight away — the reminder exists to get an update filed on THAT car.
+  const [searchParams, setSearchParams] = useSearchParams();
+  // The ring outlives the URL param: the param is dropped as soon as it is honoured (so a refresh
+  // doesn't reopen the form), but the card stays marked for the rest of the visit.
+  const [focusTicket, setFocusTicket] = useState(null);
+  const consumedFocus = useRef(false);
+  useEffect(() => {
+    const wanted = Number(searchParams.get('ticket')) || null;
+    if (!wanted || consumedFocus.current || !allItems.length) return;
+    const row = allItems.find((it) => Number(it.ticket_id) === wanted);
+    if (!row) return;
+    consumedFocus.current = true;
+    setFocusTicket(wanted);
+    document.getElementById(flagCardId(row))?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    openCheckpoint(row);
+    const next = new URLSearchParams(searchParams);
+    next.delete('ticket');
+    setSearchParams(next, { replace: true });
+  }, [allItems, openCheckpoint, searchParams, setSearchParams]);
 
   // Provenance filter — look at the whole shop, or only the cars we know about from ONE record.
   // 'both' cars (contract AND live ticket) satisfy either single-source filter, since they genuinely
@@ -374,7 +458,15 @@ function ProactiveFlags({ data, loading }) {
                   <p className="py-6 text-center text-xs text-slate-400">{g.empty}</p>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
-                    {g.cardItems.map((it, i) => <RepairProgressCard key={i} item={it} />)}
+                    {g.cardItems.map((it) => (
+                      <RepairProgressCard
+                        key={flagKey(it)}
+                        item={it}
+                        onCheckpoint={openCheckpoint}
+                        busy={opening === flagKey(it)}
+                        highlighted={!!focusTicket && Number(it.ticket_id) === focusTicket}
+                      />
+                    ))}
                   </div>
                 )
               ) : g.rows.length === 0 ? (
@@ -404,6 +496,19 @@ function ProactiveFlags({ data, loading }) {
             </div>
           ))}
         </div>
+      )}
+
+      {/* The checkpoint form — the same one the retired /maintenance-progress queue used. Filing an
+          update refreshes the flags so the card's ETA and "latest checkpoint" line move immediately. */}
+      {active && (
+        <CheckpointModal
+          open={!!active}
+          ticketId={active.ticketId}
+          title={t('dash.repair.checkpointTitle', { label: active.label })}
+          subtitle={active.sub || undefined}
+          onClose={() => setActive(null)}
+          onDone={(msg) => { setActive(null); toast.success(msg || t('dash.repair.checkpointFiled')); onReload?.(); }}
+        />
       )}
     </SectionCard>
   );
@@ -1024,7 +1129,7 @@ export default function Dashboard() {
       billing: billingRes.data.data || emptyBilling,
     };
   }, []);
-  const { data, loading, error } = useFetch(fetcher);
+  const { data, loading, error, reload } = useFetch(fetcher);
 
   const kpis = data?.kpis || {};
   const trends = data?.trends || { cost: [], downtime: [] };
@@ -1150,10 +1255,15 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Proactive Flags — forward-looking conditions (rentals expiring, payments overdue,
-            inspections due) surfaced before they become problems. Same source lists as the
-            notification bell; every row deep-links to its record. */}
-        <ProactiveFlags data={proactive} loading={loading} />
+        {/* Maintenance Pipeline — where every car in the workflow is, which ones have stalled at the
+            garage, and whose desk the open work is sitting on. Self-fetched off the same board the
+            /maintenance-workflow lanes render, so the two can never disagree. */}
+        <PipelinePanel />
+
+        {/* Proactive Flags — every car in the shop right now (from the sheet contract and from the
+            app's own tickets) and how it is tracking against its repair ETA, with the checkpoint form
+            on each card. Same source list as the notification bell; every card opens its ticket. */}
+        <ProactiveFlags data={proactive} loading={loading} onReload={reload} />
 
         {/* Bought Again — the same part fitted to the same car twice inside the window, with the
             approval behind each buy. Self-fetching and permission-gated (renders nothing without
@@ -1171,9 +1281,7 @@ export default function Dashboard() {
           <MostFrequentFaults />
         </div>
 
-        {/* Maintenance Pipeline — the live workshop funnel (stage / severity / garage), the same
-            charts as the /maintenance-workflow board, self-fetched so both stay in sync. */}
-        <MaintenanceWorkflowAnalyticsPanel />
+
 
         {/* Data visualization — maintenance spend per month (bar) and the downtime
             trend (line). Both are bespoke SVG, so they match the gauges and donut. */}

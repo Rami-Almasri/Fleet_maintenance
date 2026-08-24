@@ -28,6 +28,11 @@ export const TYPE_META = {
   parts:          { label: 'Parts',         tone: 'amber',   Icon: Icon.Card },
   approval:       { label: 'Approval',      tone: 'green',   Icon: Icon.Check },
   recommendation: { label: 'Recommendation', tone: 'orange', Icon: Icon.Flag },
+  // The system-check obligation chain: the platform asked for a check, somebody answered it, a
+  // decision followed. Its OWN kind rather than folded into `inspection`, because these rows answer a
+  // question no other event can — whether a car was actually looked at. Filtering to `check` gives an
+  // investigator "every time we asked, and what came back", including the checks nobody ever answered.
+  check:          { label: 'System Check',  tone: 'teal',    Icon: Icon.Shield },
   followup:       { label: 'Follow-up',     tone: 'cyan',    Icon: Icon.Clock },
   accident:       { label: 'Accident',      tone: 'red',     Icon: Icon.XCircle },
   // Reported ABOUT the car rather than performed on it — what the customer said, what the driver noticed.
@@ -75,11 +80,15 @@ const EVENT_KIND = {
   // Recommendations
   recommendation_approved: 'recommendation', recommendation_dismissed: 'recommendation',
   recommendation_scheduled: 'recommendation',
+  // System check requirements — raised → inspected → decided → resolved. Read together they are the
+  // whole story of one obligation, which is why they share a kind and sort next to each other.
+  check_raised: 'check', check_inspected: 'check', check_decided: 'check', check_resolved: 'check',
   // Follow-up (custody / release / resume)
   returned_to_service: 'followup', resumed: 'followup', vehicle_returned: 'followup',
   temp_released: 'followup', temp_returned: 'followup', follow_up: 'followup',
   // Oil recall relay — coordinating a car back from a customer is follow-up, not workshop work.
   oil_recall_sales_confirmed: 'followup', oil_recall_instructed: 'followup',
+  oil_recall_handed_to_supervisor: 'followup',
   // …but the change itself is a completed routine service, alongside service_logged.
   oil_change_recorded: 'routine',
   // Handing the car back to the customer is coordination, not workshop work.

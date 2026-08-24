@@ -378,6 +378,7 @@ class LogisticsDispatchController extends Controller
             $task = $this->service->deliver($logisticsTask, $request->user(), ['odometer' => $data['odometer'] ?? null, 'odometer_note' => $data['odometer_note'] ?? null]);
             $this->maybeStorePhoto($request, $task, 'post');
             $this->notifySupervisorsOfMove($task, 'delivered', $request->user());
+            $this->handOverOilRecall($task, $request->user());
 
             return ResponseHelper::SuccessResponse(LogisticsTaskResource::make($task), 'Marked delivered', 200);
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -415,6 +416,7 @@ class LogisticsDispatchController extends Controller
                 'odometer_note' => $data['odometer_note'] ?? null,
             ]);
             $this->maybeStorePhoto($request, $task, 'post');
+            $this->handOverOilRecall($task, $request->user());
 
             return ResponseHelper::SuccessResponse(LogisticsTaskResource::make($task), 'Marked returned / arrived', 200);
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -432,6 +434,40 @@ class LogisticsDispatchController extends Controller
      * "notify management the moment the driver finishes a pickup/delivery" rule. Best-effort: a failure
      * here never blocks the transition the driver just completed.
      */
+    /**
+     * A recalled car has just been parked — hand it to the Supervisors if nobody else is expecting it.
+     *
+     * The driver's "Arrived" tap is the moment the car becomes physically ours, and for a recall with
+     * NO test that tap is the whole hand-over: there is no inspection request, so no review card and
+     * no Inspector waiting. The oil change opens as a real ticket in the Supervisors' dispatch queue
+     * instead, where reading the dial and picking the garage is what they already do.
+     *
+     * The service decides whether anything is owed (a test, our own parking, an already-handed-over
+     * car all say no). Best-effort: the driver's step has already succeeded and must never be failed
+     * by paperwork behind it.
+     */
+    private function handOverOilRecall(LogisticsTask $task, ?User $actor): void
+    {
+        if (! $task->isCustomerCollection() || ! $task->vehicle_id) {
+            return; // only the leg that brings a car back from a customer can end a recall
+        }
+
+        try {
+            $decision = \App\Models\ContractOilDecision::where('vehicle_id', $task->vehicle_id)
+                ->where('decision', \App\Models\ContractOilDecision::DECISION_RECALL)
+                ->whereNull('settled_at')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($decision?->contract) {
+                app(\App\Services\OilChangeProjectionService::class)
+                    ->handOverAtWorkshop($decision->contract, $actor);
+            }
+        } catch (\Throwable $e) {
+            report($e); // logged — never surfaced, the arrival already succeeded
+        }
+    }
+
     private function notifySupervisorsOfMove(LogisticsTask $task, string $verb, ?User $actor): void
     {
         if (! $task->maintenance_id) {

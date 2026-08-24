@@ -47,7 +47,7 @@ export const MODULES = [
     tone: 'amber',
     tagline: 'The repair pipeline, queues, parts, suppliers and history',
     sections: [
-      { name: 'Car Status', route: '/car-status', permission: 'maintenance.view', icon: Icon.Wrench, desc: 'Live stage board — every car by the exact workflow stage it sits in and who is responsible right now.' },
+      { name: 'Daily Report', route: '/reports/daily-maintenance', permission: 'maintenance.view', icon: Icon.Activity, desc: "The morning report — every car the day touched plus every car still out, with severity, garage, days and the work recorded. Prints straight to PDF." },
       {
         name: 'Maintenance Cycle',
         route: '/maintenance-workflow',
@@ -75,13 +75,13 @@ export const MODULES = [
           { name: 'On-Site Service',       key: 'on_site',                 route: '/maintenance-workflow?stage=on_site',                 tone: '#0d9488' },
         ],
       },
-      { name: 'Maintenance Progress', route: '/maintenance-progress', permission: 'maintenance.view', icon: Icon.Activity, desc: 'Track in-shop progress against each car’s promised completion date, with escalating reminders.' },
       { name: 'My Queue', route: '/my-maintenance-queue', permission: 'maintenance.view', icon: Icon.Check, desc: 'Your role-scoped maintenance work in one place — what needs you, right now.' },
-      { name: 'Inspection Review', route: '/inspection-review', permission: 'maintenance.manage', icon: Icon.Check, desc: 'Controllers vet inspection requests — approve to send on, or reject with a reason.' },
+      // The Controllers' four jobs behind one sidebar: vet requests in, chase mileage on cars still
+      // out, match the bills on cars that came back, and curate the fault vocabulary. The four routes
+      // it absorbed redirect into their section.
+      { name: 'Control Desk', route: '/control-desk', permissionAny: ['maintenance.manage', 'reminders.view', 'maintenance.view'], icon: Icon.Check, desc: 'The Controllers’ day: vet requests to send a car in, chase the oil mileage on cars still out on rental, match each garage’s bill to the work it covers, and keep the fault vocabulary graded.' },
       { name: 'What people report', route: '/field-reports', permission: 'maintenance.view', icon: Icon.Flag, desc: 'Customer complaints with their follow-up timeline, and the handover notes drivers leave — the two ways a problem reaches us from outside the workshop.' },
       { name: 'Repair Records', route: '/repair-records', permission: 'maintenance.view', icon: Icon.Check, desc: 'The signed-off ledger — who, where, what was found and fixed, what it cost — and each car’s workshop history, trip by trip.' },
-      { name: 'Invoice Matching', route: '/invoice-matching', permission: 'maintenance.view', icon: Icon.Invoice, desc: 'The car is back — key each garage’s bill beside the work it covers, and see whether they agree.' },
-      { name: 'Oil Mileage Follow-up', route: '/oil-projection', permission: 'reminders.view', icon: Icon.Clock, desc: 'Cars out on rental heading for their oil limit — call the customer, enter the mileage they report, and the next check recalculates from it.' },
       // Each of these is one page of tabs now; the routes they absorbed redirect into their tab.
       { name: 'Parts', route: '/parts', permission: 'parts.view', icon: Icon.Coins, desc: 'Request, approve, buy and install parts — plus the supplier invoices behind what each part cost, the catalog of part names the app selects from, and the warranty that came with each part.' },
       { name: 'Suppliers', route: '/suppliers', permission: 'maintenance.view', icon: Icon.Cash, desc: 'What we owe suppliers and garages aged by how long it has been outstanding, every payment that has left the account, and the supplier register itself.' },
@@ -117,7 +117,6 @@ export const MODULES = [
     tagline: 'Operational analytics — cost, prediction, faults and utilization',
     sections: [
       { name: 'Fleet Analytics', route: '/fleet-utilization', permission: 'insights.view', icon: Icon.Gauge, desc: 'Per-car split of owned time into rented, in-maintenance and idle days.' },
-      { name: 'Keyword Risk', route: '/finding-keywords', permission: 'maintenance.view', icon: Icon.Flag, desc: 'The fault-keyword library, each graded critical, moderate or routine.' },
       { name: 'Vehicle Locations', route: '/vehicle-locations', permission: 'maintenance.view', icon: Icon.Car, desc: 'Everywhere a fault can be, and which fault types must say where they are.' },
       { name: 'Recurring Faults', route: '/recurring-fault-reviews', permission: 'maintenance.recurring.view', icon: Icon.Refresh, desc: 'Cars back with the same confirmed fault after a repair — for a management ruling.' },
       { name: 'Maintenance Analytics', route: null, permission: 'maintenance.view', icon: Icon.Chart, status: 'soon', desc: 'Deeper trends across repairs, cost and turnaround — coming soon.' },
@@ -199,7 +198,15 @@ export const getModule = (id) => MODULES.find((m) => m.id === id) || null;
 export function sectionReachable(section, can, roles = []) {
   if (section.demoOnly && !DEMO_MODE) return false;
   if (!isFeatureEnabled(section.flag)) return false;
-  if (!can(section.permission)) return false;
+  // A hub whose own sections carry different permissions (the Control Desk: maintenance.manage for
+  // the review gate, reminders.view for the oil chase, maintenance.view for the rest) declares
+  // `permissionAny` instead of one `permission` — holding ANY of them opens the page, and the hub
+  // then filters its own sidebar. Gating such a tile on a single permission would hide it from
+  // someone who can legitimately work in one of its sections.
+  const allowed = section.permissionAny
+    ? section.permissionAny.some((p) => can(p))
+    : can(section.permission);
+  if (!allowed) return false;
   if (section.route && !section.route.startsWith('/apps/') && pathBlockedForRoles(section.route, roles)) return false;
   return true;
 }

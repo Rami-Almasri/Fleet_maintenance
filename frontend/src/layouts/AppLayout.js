@@ -102,8 +102,10 @@ const NAV_SECTIONS = [
     items: [
       { name: 'Maintenance Cycle', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
       { name: 'My Queue', to: '/my-maintenance-queue', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 9 2 2 4-4', desc: 'Your role-scoped maintenance work in one place: Abu Maroof (Inspector) sees pending inspections and final re-inspections; a Supervisor (Dispatcher) sees tickets awaiting a garage + driver assignment; a Driver sees active trips/dispatches and cars waiting on a follow-up.' },
-      { name: 'Inspection Review', to: '/inspection-review', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Controllers (Lin & Marwa) review inspection requests before they reach Abu Maroof — approve to send it on, or reject with a reason.' },
-      { name: 'Oil Mileage Follow-up', to: '/oil-projection', icon: 'M12 3v4m0 10v4m9-9h-4M7 12H3m2.6-6.4 2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8', desc: 'Cars that are OUT on rental and heading for their oil limit. Service Reminders reads the odometer we hold, which stops being true the moment a car drives off; this page projects forward from the mileage recorded at handover at 200 km/day and lists the cars that have probably passed the limit. Controllers (Lin & Marwa) call the customer, enter the odometer they report, and the projection re-anchors on that real number — a customer-reported reading is stored against the contract and never changes the car’s odometer.' },
+      // The Controllers' four jobs are one destination now — Inspection Review, the oil chase,
+      // Invoice Matching and the Keyword Risk library, behind a sidebar. The description names all
+      // four so a search for any of the old page names still lands here.
+      { name: 'Control Desk', to: '/control-desk', permissionAny: ['maintenance.manage', 'reminders.view', 'maintenance.view'], icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The Controllers\' (Lin & Marwa) day in one place. Inspection Review: vet requests to send a car in before they reach Abu Maroof — approve to send on, or reject with a reason. Oil Mileage Follow-up: cars OUT on rental heading for their oil limit — Service Reminders reads the odometer we hold, which stops being true the moment a car drives off, so this projects forward from the handover mileage at 200 km/day; call the customer, enter the odometer they report, and the projection re-anchors on that real number without ever touching the car\'s odometer. Invoice Matching: the car is back — key each garage\'s bill next to the work actually done and see whether they agree. Keyword Risk: the fault-keyword library the inspection picker offers, each graded critical, moderate or routine.' },
     ],
   },
   // Customer Care — the two intake surfaces that feed the pipeline from outside
@@ -125,14 +127,12 @@ const NAV_SECTIONS = [
       // The signed-off ledger and each car's visit history are two readings of the same finished
       // work — one page, two tabs.
       { name: 'Repair Records', to: '/repair-records', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Completed Repairs: the ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost, with the full custody chain behind each row. History: every car that saw the workshop over the chosen window, how often it went in and how long it stayed, opening onto each individual trip.' },
-      { name: 'Invoice Matching', to: '/invoice-matching', icon: 'M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM14 2v6h6M9 13h3M9 17h6M13 12l2 2 4-4', desc: 'The car is back from the garage — key each garage\'s bill next to the work that was actually done to the car, and see at a glance whether they agree. A car worked in two garages comes back with two bills, and each one covers only the faults its garage fixed. Every fault shows whether it is on a bill yet; hovering a bill lights up the faults it covers; and any bill whose printed receipt disagrees with its keyed lines is flagged until someone explains the gap.' },
       { name: 'Workflow Oversight', to: '/oversight', icon: 'M9 12l2 2 4-4m5 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Did the process hold? Five checks in one page: cars that left the garage while the maintenance contract stayed open, the severity QC gate, faults later marked incorrect, transfers where every fault was fixed, and supervisors who never answered the "car is due back" reminder.' },
     ],
   },
   {
     title: 'Maintenance Intelligence',
     items: [
-      { name: 'Keyword Risk', to: '/finding-keywords', icon: 'M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.42.59l7.17 7.17a2 2 0 0 1 0 2.83zM7.5 7.5h.01', desc: 'The fault-keyword library the inspection picker offers, each graded by risk (🔴 critical / 🟡 moderate / 🟢 routine). Add, edit or retire keywords and set how serious each fault type is.' },
       { name: 'Vehicle Locations', to: '/vehicle-locations', icon: 'M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zM12 11.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z', desc: 'Everywhere on a car a fault can be — the places the inspector picks from ("Front Bumper", "Rims", "Engine Bay"), the sections they are grouped into, and which fault types MUST say where they are before the report can be filed. Add, rename, reorder or retire a place, and preview the real picker before anyone else sees the change.' },
       { name: 'Recurring Fault Reviews', to: '/recurring-fault-reviews', icon: 'M3 2v6h6M3 8a9 9 0 1 0 2.6-4.36L3 8', desc: 'Cars that came back with the SAME confirmed fault after a completed repair. Each case shows the previous ticket, garage, parts used, days and distance since the repair, and how many times it recurred — so management can decide whether the earlier repair failed, it is a new failure, workshop responsibility, customer misuse, or needs investigation.' },
       { name: 'Concept Bridge Review', to: '/concept-bridge-review', icon: 'M9 12h6m-3-3v6M5 8V6a2 2 0 0 1 2-2h2M5 16v2a2 2 0 0 0 2 2h2m6-16h2a2 2 0 0 1 2 2v2m-4 12h2a2 2 0 0 0 2-2v-2', desc: 'Teach the system to read workshop language. You are shown one real line from a maintenance note and asked what it means — BEFORE the computer\'s answer is revealed, so your judgement stays independent. Roughly 90 lines, mostly button clicks. The result is the benchmark that decides whether we may translate 26,839 historical tickets into automotive concepts, or need to fix the matching first.' },
@@ -160,7 +160,6 @@ const NAV_SECTIONS = [
     items: [
       { name: 'Driver Dispatch', to: '/driver-dispatch', icon: 'M3 7h11v8H3zM14 10h3.5L21 13v2h-7M6.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', desc: 'Driver Dispatch: send a vehicle between locations (to Deals on Wheels, the garage, …) and track which driver has it and where. Dispatching a car flips it to “In Transit to …” on the grid and drops an Action Required task into the assignee’s My Queue.' },
       { name: 'Fleet Health', to: '/inspections/schedules', icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 15l2 2 4-4', desc: 'The fleet\'s neural center — a unified hub with tabs for Service Due (odometer-based) and Registration & Insurance expiry, consolidating the live per-car health surfaces in one place.' },
-      { name: 'Car Status', to: '/car-status', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M9 12l2 2 4-4', desc: 'The live stage board — every car in the maintenance workflow laid out by the exact stage it\'s in right now (Needs Test Drive → Being Inspected → Needs Dispatch → Awaiting Pickup → En Route → In Workshop → Ready for Pickup → Final QA), each showing who is responsible for it at that stage: the inspector, the supervisor who must dispatch, the driver who holds the car, or the garage. A stage reads “Waiting” until someone takes it, then shows their name. Click any car to open its ticket.' },
       // Component Intelligence (/components) is held back as "Coming Soon" — see the
       // module registry. Kept out of the sidebar so it is never a link to a redirect.
     ],
@@ -256,7 +255,6 @@ const NAV_PERMISSIONS = {
   '/registrations': 'registration.view',
   '/maintenance': 'maintenance.view',
   '/maintenance-hub': 'maintenance.view',
-  '/car-status': 'maintenance.view',
   '/in-garage': 'maintenance.view',
   '/components': 'components.view',
   '/maintenance-workflow': 'maintenance.view',
@@ -322,7 +320,7 @@ function ScrollTop() {
 
 export default function AppLayout() {
   const { user, logout } = useAuth();
-  const { can, roles } = usePermissions();
+  const { can, canAny, roles } = usePermissions();
   const { t, tf } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
@@ -334,8 +332,12 @@ export default function AppLayout() {
   // SHOW_FINANCIALS is off (Financial Decoupling), the money-rollup destinations
   // (Cost Analytics, Net Profit) are also hidden so no financial page is
   // reachable from the UI.
+  // A hub whose sections carry DIFFERENT permissions can't be reduced to one NAV_PERMISSIONS entry —
+  // the Control Desk is reachable on maintenance.manage OR reminders.view OR maintenance.view, and
+  // gating it on any single one would hide it from someone who can legitimately open a section. Such
+  // items declare `permissionAny` instead; the hub itself then filters section by section.
   const navVisible = (i) =>
-    can(NAV_PERMISSIONS[i.to]) &&
+    (i.permissionAny ? canAny(i.permissionAny) : can(NAV_PERMISSIONS[i.to])) &&
     !pathBlockedForRoles(i.to, roles) &&
     (SHOW_FINANCIALS || !i.financial) &&
     (SHOW_FLEET_INTELLIGENCE || !i.intel) &&

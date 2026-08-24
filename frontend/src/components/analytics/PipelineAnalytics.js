@@ -1,15 +1,13 @@
-// The chart strip for the Car Status board. The lanes below already say WHERE every
-// car is; these three charts say how the pipeline is shaped, what's stuck, and whose
-// desk the work is sitting on — the three things a manager asks about a board they
-// aren't going to scroll through car by car.
+// The maintenance pipeline chart strip. Three questions a manager asks about a shop they are not
+// going to scroll through car by car:
 //
 //   1. Pipeline by stage   → the funnel profile, in journey order (not ranked —
 //                            the order IS the process, so it must not be re-sorted)
-//   2. Longest in stage    → the specific cars that have stalled
+//   2. Longest in the workshop → the specific cars that have stalled at the garage
 //   3. Who's holding it    → load per responsible role
 //
-// Everything derives from the same lanes the board renders, so the charts move with
-// the search box and can never disagree with the columns underneath.
+// Everything derives from the lanes it is handed, so it can never disagree with the board those
+// lanes came from. Rendered on the Dashboard by PipelinePanel.
 
 import { useMemo } from 'react';
 import { SectionCard } from '../ui/Table';
@@ -40,7 +38,7 @@ const ROLE_LABEL = {
 // which is stable; the lane's display name is not.
 const WORKSHOP_LANE = 'under_repair';
 
-export default function CarStatusAnalytics({ lanes = [] }) {
+export default function PipelineAnalytics({ lanes = [] }) {
   const { t } = useI18n();
 
   // The funnel profile — kept in the lanes' own order, because that order is the

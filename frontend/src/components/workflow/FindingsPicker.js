@@ -55,7 +55,41 @@ const CONDITION_FOR_KEYWORD = {
   'tire change':         'tyres',
 };
 
-function Chip({ label, tone, active, locked, lockedTitle, required, requiredTitle, onClick }) {
+/**
+ * WHAT KIND OF WORK THIS WORD IS — service, fault, damage, or nothing the catalogs recognise.
+ *
+ * Shown on the word ITSELF, at the moment of picking, because the distinction is real work and not a
+ * label: a service is planned upkeep falling due, a fault is a claim the car failed, and only the
+ * fault feeds Top Faults, recurrence and the health score. "Oil Change" and "Engine noise" used to
+ * look identical on this screen while going to completely different places.
+ *
+ * `null` renders as "unclassified" rather than being hidden. A keyword neither catalog recognises is
+ * promoted by the legacy shield, which defaults it to `fault` — so leaving the badge off would let a
+ * word quietly become a fault while looking like a considered choice. 21 of the catalog's 95 words
+ * are in exactly that state today; the badge is how anyone finds out.
+ */
+const KIND_STYLE = {
+  service: 'bg-blue-100 text-blue-700 ring-blue-600/20',
+  fault:   'bg-red-100 text-red-700 ring-red-600/20',
+  damage:  'bg-purple-100 text-purple-700 ring-purple-600/20',
+  unknown: 'bg-slate-100 text-slate-500 ring-slate-400/20',
+};
+
+function KindBadge({ kind, label, t, className = '' }) {
+  const style = KIND_STYLE[kind || 'unknown'] || KIND_STYLE.unknown;
+  const text  = kind ? (label || kind) : t('findingsPicker.kind.unclassified');
+
+  return (
+    <span
+      title={kind ? t('findingsPicker.kind.hint', { kind: text }) : t('findingsPicker.kind.unclassifiedHint')}
+      className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ring-1 ring-inset ${style} ${className}`}
+    >
+      {text}
+    </span>
+  );
+}
+
+function Chip({ label, tone, kind, kindLabel, t, active, locked, lockedTitle, required, requiredTitle, onClick }) {
   const dot = tone && RISK_DOT[tone] && !active ? <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${RISK_DOT[tone]}`} /> : null;
 
   // REQUIRED is the opposite of locked, and must not look like it. Locked means "already reported,
@@ -93,6 +127,7 @@ function Chip({ label, tone, active, locked, lockedTitle, required, requiredTitl
     >
       {dot}
       {label}
+      <KindBadge kind={kind} label={kindLabel} t={t} className={active ? 'opacity-90' : ''} />
     </button>
   );
 }
@@ -140,6 +175,10 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
   const kwLabel = (k) => (lang === 'ar' ? keywordMeta[k]?.ar || k : k);
   const catLabel = (c) => (lang === 'ar' ? c.label_ar || c.label : c.label);
   const kwTone = (k) => keywordMeta[k]?.tone;
+  // Service | Fault | Damage | unclassified — resolved server-side by the SAME classifier that will
+  // type the MaintenanceTask, so the badge can never disagree with what actually gets created.
+  const kwKind  = (k) => keywordMeta[k]?.kind ?? null;
+  const kwKindLabel = (k) => keywordMeta[k]?.kind_label ?? null;
 
   // Already on the ticket → locked. Matched case-insensitively so "Engine noise" and "engine noise"
   // are treated as the same issue.
@@ -376,13 +415,31 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
       {/* Pinned selection tray — every pick stays visible (and removable) with all categories closed. */}
       {value.length > 0 && (
         <div className="rounded-xl bg-indigo-50/60 p-2.5 ring-1 ring-inset ring-indigo-200">
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
-            {t('findingsPicker.selectedTitle')}
-          </p>
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
+              {t('findingsPicker.selectedTitle')}
+            </p>
+            {/* THE SPLIT, COUNTED. What is about to be raised as planned upkeep vs. as something
+                wrong with the car — the one number a supervisor scanning this tray actually wants,
+                and previously had to work out by reading every word. Unclassified is called out
+                separately rather than folded into either side. */}
+            <span className="flex flex-wrap items-center gap-1">
+              {['service', 'fault', 'damage'].map((kind) => {
+                const picked = value.filter((k) => kwKind(k) === kind);
+                return picked.length > 0 ? (
+                  <KindBadge key={kind} kind={kind} label={`${picked.length} ${kwKindLabel(picked[0]) || kind}`} t={t} />
+                ) : null;
+              })}
+              {value.filter((k) => !kwKind(k)).length > 0 && (
+                <KindBadge kind={null} t={t} />
+              )}
+            </span>
+          </div>
           <div className="flex flex-wrap gap-1.5">
             {value.map((k) => (
               <span key={`sel-${k}`} className="inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white">
                 {kwLabel(k)}
+                <KindBadge kind={kwKind(k)} label={kwKindLabel(k)} t={t} />
                 <button
                   type="button"
                   onClick={() => toggle(k)}
@@ -463,6 +520,9 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
                       key={k}
                       label={kwLabel(k)}
                       tone={kwTone(k)}
+                      kind={kwKind(k)}
+                      kindLabel={kwKindLabel(k)}
+                      t={t}
                       active={has(k)}
                       locked={isLocked(k)}
                       lockedTitle={t('findingsPicker.alreadyReported')}

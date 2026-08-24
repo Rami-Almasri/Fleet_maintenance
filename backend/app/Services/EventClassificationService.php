@@ -42,6 +42,7 @@ class EventClassificationService
     private ?array $faultMap = null;     // normalized name|slug => fault_catalog_id
     private ?array $damageMap = null;    // normalized name|slug => damage_catalog_id (null when config-only)
     private ?array $labelMap = null;     // normalized legacy sheet label => service|context|damage
+    private ?array $aliasMap = null;     // normalized second wording => ['kind' =>, 'id' =>]
     private ?array $faultReasonIds = null; // maintenance_reasons ids whose name is a fault
 
     /**
@@ -124,7 +125,95 @@ class EventClassificationService
             return $this->attributes(MaintenanceTask::KIND_FAULT, $this->faultMap()[$text], MaintenanceTask::CLS_CATALOG);
         }
 
+        // SECOND WORDINGS, checked LAST so a real catalog name always wins. One concept written two
+        // ways ("Tire Rotation" here, "Tyre Rotation" in the service catalog) used to classify as
+        // nothing and be filed as a fault by the shield below. An alias resolves it to the EXISTING
+        // row — never a new one, because a second row for one concept forks its whole history.
+        // See config/catalog_aliases.php.
+        if ($alias = $this->aliasMap()[$text] ?? null) {
+            return $this->attributes($alias['kind'], $alias['id'], MaintenanceTask::CLS_CATALOG);
+        }
+
         return null;
+    }
+
+    /**
+     * normalised alternative wording => ['kind' => …, 'id' => catalog id].
+     *
+     * Resolved against the SAME maps the exact-match branch uses, so an alias can only ever point at a
+     * row that genuinely exists; an entry naming a slug nothing defines is skipped rather than
+     * producing a kind with no catalog behind it. `catalog:aliases-check` asserts none are skipped.
+     *
+     * @return array<string,array{kind:string,id:?int}>
+     */
+    private function aliasMap(): array
+    {
+        if ($this->aliasMap !== null) {
+            return $this->aliasMap;
+        }
+
+        $this->aliasMap = [];
+
+        $targets = [
+            MaintenanceTask::KIND_SERVICE => $this->serviceMap(),
+            MaintenanceTask::KIND_FAULT   => $this->faultMap(),
+            MaintenanceTask::KIND_DAMAGE  => $this->damageMap(),
+        ];
+
+        foreach ((array) config('catalog_aliases', []) as $kind => $entries) {
+            $map = $targets[$kind] ?? null;
+            if ($map === null) {
+                continue;
+            }
+
+            foreach ((array) $entries as $wording => $slug) {
+                $key  = $this->norm($wording);
+                $slugKey = $this->norm($slug);
+
+                if ($key === '' || ! array_key_exists($slugKey, $map)) {
+                    continue;   // alias points at nothing — surfaced by the check command, never guessed
+                }
+
+                $this->aliasMap[$key] = ['kind' => $kind, 'id' => $map[$slugKey]];
+            }
+        }
+
+        return $this->aliasMap;
+    }
+
+    /**
+     * Aliases that name a catalog slug nothing defines — the one way this file can rot silently.
+     *
+     * @return array<int,string> "kind → wording → slug" for each broken entry; empty means healthy
+     */
+    public function aliasViolations(): array
+    {
+        $targets = [
+            MaintenanceTask::KIND_SERVICE => $this->serviceMap(),
+            MaintenanceTask::KIND_FAULT   => $this->faultMap(),
+            MaintenanceTask::KIND_DAMAGE  => $this->damageMap(),
+        ];
+
+        $broken = [];
+
+        foreach ((array) config('catalog_aliases', []) as $kind => $entries) {
+            foreach ((array) $entries as $wording => $slug) {
+                if (! isset($targets[$kind])) {
+                    $broken[] = "$kind is not a catalog kind (alias “$wording”)";
+                    continue;
+                }
+                if (! array_key_exists($this->norm($slug), $targets[$kind])) {
+                    $broken[] = "$kind → “$wording” → “$slug” names no catalog row";
+                }
+                // An alias must never shadow a REAL name — that would mean the concept has two rows
+                // after all, and the alias is hiding it rather than fixing it.
+                if (array_key_exists($this->norm($wording), $targets[$kind])) {
+                    $broken[] = "$kind → “$wording” is already a real catalog name; the alias is redundant";
+                }
+            }
+        }
+
+        return $broken;
     }
 
     /**

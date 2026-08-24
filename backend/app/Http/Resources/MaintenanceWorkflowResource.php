@@ -150,14 +150,33 @@ class MaintenanceWorkflowResource extends JsonResource
             // out-leg carries who/why/when + odometer OUT; the history lists every out→in round trip with
             // the distance driven while out. Present when eager-loaded (board/show).
             'temporarily_released'     => $t->isTemporarilyReleased(),
+            // `release_stage` is deliberately a TOP-LEVEL field, not just a nested one: it is what every
+            // ticket surface keys its action + lane off while the car is out, and those surfaces read the
+            // slim board payload where the relation isn't always hydrated.
+            'release_stage'            => $t->activeTemporaryRelease?->stage,
+            'release_lane'             => $t->activeTemporaryRelease?->laneKey(),
             'active_temporary_release' => $this->whenLoaded('activeTemporaryRelease', fn () => $t->activeTemporaryRelease ? [
-                'id'           => $t->activeTemporaryRelease->id,
-                'reason'       => $t->activeTemporaryRelease->reason,
-                'reason_label' => $t->activeTemporaryRelease->reasonLabel(),
-                'reason_note'  => $t->activeTemporaryRelease->reason_note,
-                'taken_by'     => $t->activeTemporaryRelease->taken_by,
-                'released_at'  => optional($t->activeTemporaryRelease->released_at)->toIso8601String(),
-                'odometer_out' => $t->activeTemporaryRelease->odometer_out,
+                'id'                 => $t->activeTemporaryRelease->id,
+                'reason'             => $t->activeTemporaryRelease->reason,
+                'reason_label'       => $t->activeTemporaryRelease->reasonLabel(),
+                'reason_note'        => $t->activeTemporaryRelease->reason_note,
+                'taken_by'           => $t->activeTemporaryRelease->taken_by,
+                'released_at'        => optional($t->activeTemporaryRelease->released_at)->toIso8601String(),
+                'odometer_out'       => $t->activeTemporaryRelease->odometer_out,
+                // The round trip: where it stands, where it went, and which garage it belongs back at.
+                'stage'              => $t->activeTemporaryRelease->stage,
+                'stage_label'        => $t->activeTemporaryRelease->stageLabel(),
+                'lane'               => $t->activeTemporaryRelease->laneKey(),
+                'destination'        => $t->activeTemporaryRelease->destination,
+                'garage_snapshot'    => $t->activeTemporaryRelease->garage_snapshot,
+                'vendor_id_snapshot' => $t->activeTemporaryRelease->vendor_id_snapshot,
+                'return_garage'      => $t->activeTemporaryRelease->returnGarageLabel(),
+                'return_vendor_id'   => $t->activeTemporaryRelease->returnVendorId(),
+                'out_driver_id'      => $t->activeTemporaryRelease->out_driver_id,
+                'out_driver_name'    => $t->activeTemporaryRelease->outDriver?->name,
+                'return_driver_id'   => $t->activeTemporaryRelease->return_driver_id,
+                'return_driver_name' => $t->activeTemporaryRelease->returnDriver?->name,
+                'arrived_at'         => optional($t->activeTemporaryRelease->arrived_at)->toIso8601String(),
             ] : null),
             'temporary_releases'       => $this->whenLoaded('temporaryReleases', fn () => $t->temporaryReleases->map(fn ($r) => [
                 'id'           => $r->id,
@@ -167,11 +186,14 @@ class MaintenanceWorkflowResource extends JsonResource
                 'taken_by'     => $r->taken_by,
                 'released_at'  => optional($r->released_at)->toIso8601String(),
                 'odometer_out' => $r->odometer_out,
+                'destination'  => $r->destination,
                 'returned_at'  => optional($r->returned_at)->toIso8601String(),
                 'odometer_in'  => $r->odometer_in,
                 'distance_km'  => $r->distance_km,
                 'return_note'  => $r->return_note,
                 'is_open'      => $r->isOpen(),
+                'stage'        => $r->stage,
+                'stage_label'  => $r->stageLabel(),
             ])->values()),
 
             // LIVE POSITION — the single, unified "where is the car / what's happening to it", fused from
@@ -183,6 +205,28 @@ class MaintenanceWorkflowResource extends JsonResource
             // Contract link (materialises at dispatch)
             'linked_contract_id' => $t->linked_contract_id,
             'linked_contract_no' => $t->linkedContract?->contract_no,
+
+            // THE MAINTENANCE CONTRACT THIS VISIT WAS OPENED UNDER — the office's own record of the same
+            // visit (OfficeManager type-U, synced through the N-Maintenance sheet). The ticket is what the
+            // workshop did; this is what the office wrote down. A reader asking "what happened on this
+            // contract?" gets the header here and the events themselves from the car's activity feed,
+            // bounded by the window below — so the two records are read side by side, never conflated.
+            'contract_id'        => $t->contract_id,
+            'contract'           => $this->whenLoaded('contract', fn () => $t->contract ? [
+                'id'          => $t->contract->id,
+                'contract_no' => $t->contract->contract_no,
+                'type'        => $t->contract->contract_type,
+                'state'       => $t->contract->state,
+                'customer_id' => $t->contract->customer_id,
+                'customer'    => $t->contract->customer?->name_en ?: $t->contract->customer?->name_ar,
+                'out_date'    => optional($t->contract->out_date)->toDateString(),
+                'in_date'     => optional($t->contract->in_date)->toDateString(),
+                'out_milage'  => $t->contract->out_milage,
+                'in_milage'   => $t->contract->in_milage,
+                'debit'       => $t->contract->contract_debit,
+                'credit'      => $t->contract->contract_credit,
+                'balance'     => $t->contract->contract_balance,
+            ] : null),
 
             // Why it exists + what the inspector found
             'trigger_reason'        => $t->trigger_reason,
@@ -235,6 +279,16 @@ class MaintenanceWorkflowResource extends JsonResource
             // at detection. Null for human-raised requests. The Inspection Review Queue renders this so a
             // machine request explains itself (see MaintenanceWorkflowService::buildTriggerDetail).
             'trigger_detail'        => $t->trigger_detail ?: null,
+            // SYSTEM CHECKS — the obligations this inspection must answer, each with its exact result
+            // and decision options so the Decide step renders radios and needs no round trip.
+            //
+            // trigger_detail above says WHY the request exists as one frozen blob; this is the same
+            // information as addressable rows a human has to resolve one by one. Present only when
+            // the relation was loaded — the 141-card board must not pay for option lists nobody
+            // renders there (same rule as Suggested Checks; see the note above).
+            'required_checks'       => $t->relationLoaded('checkRequirements')
+                ? $t->checkRequirements->map(fn ($c) => app(\App\Services\VehicleCheckService::class)->present($c))->values()->all()
+                : null,
             // Oil follow-up context for a request raised by an oil recall/defer decision. LIVE by
             // construction: resolved decision → contract → projection on every read, so a fresh
             // odometer reading changes these figures everywhere at once — the at-decision snapshot

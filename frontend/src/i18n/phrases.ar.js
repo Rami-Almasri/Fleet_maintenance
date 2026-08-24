@@ -5084,6 +5084,16 @@ const phrasesAr = {
   'damage': 'ضرر',
   'No work recorded on this ticket.': 'لا يوجد عمل مسجّل على هذه التذكرة.',
   '{n} work items are on no bill: {list}': '{n} من الأعمال ليست على أي فاتورة: {list}',
+  // ── Control Desk (/control-desk) — the sidebar hub that holds the Controllers' four jobs. The
+  // four section LABELS are already translated elsewhere in this file (Inspection Review, Oil
+  // Mileage Follow-up, Invoice Matching, Keyword Risk); these are the hub's own strings.
+  'Control Desk': 'مكتب الضبط',
+  'Control Desk sections': 'أقسام مكتب الضبط',
+  'Requests in, mileage chased, bills matched, vocabulary kept honest.': 'الطلبات الواردة، ومتابعة الكيلومترات، ومطابقة الفواتير، وضبط مفردات الأعطال.',
+  'Approve or reject requests to send a car in': 'وافق على طلبات إدخال السيارة أو ارفضها',
+  'Cars out on rental nearing their oil limit': 'سيارات مؤجَّرة تقترب من حدّ تغيير الزيت',
+  'Key each garage’s bill beside the work it covers': 'أدخل فاتورة كل كراج بجانب العمل الذي تغطّيه',
+  'The fault vocabulary, graded by how serious it is': 'مفردات الأعطال، مصنّفة حسب خطورتها',
   'Every line on the paper': 'كل بند في الورق',
   'Labor': 'أجور عمل',
   'Invoice Matching': 'مطابقة الفواتير',

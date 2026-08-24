@@ -198,6 +198,14 @@ Schedule::command('inspections:generate-tasks')
     ->dailyAt('07:30')
     ->withoutOverlapping();
 
+// Retire system check requirements nobody ever answered, once the evidence behind them is too old to
+// act on. Runs after the monitor so a check raised this morning is never a candidate on the same day.
+// Expiry KEEPS the row (status `expired`) — "raised in May, never looked at" is the finding, and
+// deleting it would restore the blindness the check layer exists to remove. See [[VehicleCheckService]].
+Schedule::command('checks:expire-stale')
+    ->dailyAt('07:50')
+    ->withoutOverlapping();
+
 // Hourly: raise the oil-change ticket for rentals that have come back owing one — a controller's
 // mid-rental "do it on return" / "recall now" call, or simply a car that returned past its oil
 // limit. Hourly rather than daily because the trigger is a physical return: the car is standing in

@@ -1583,12 +1583,28 @@ class Maintenance extends Model
         if ($this->isTemporarilyReleased()) {
             $rel    = $this->activeTemporaryRelease;
             $reason = $rel?->reasonLabel();
+            // Where the car actually is right now, spelled out per leg — a release is a round trip
+            // (out to a parking spot / office, then back to a garage), so "temporarily released" alone
+            // no longer answers "where is it?". See MaintenanceTemporaryRelease::STAGES.
+            $where = match ($rel?->stage) {
+                MaintenanceTemporaryRelease::STAGE_OUT_DISPATCH    => 'Still at ' . ($this->vendor?->name ?: ($this->garage ?: 'the garage')) . ' — waiting to be sent out',
+                MaintenanceTemporaryRelease::STAGE_OUT_ASSIGNED    => 'Still at ' . ($this->vendor?->name ?: ($this->garage ?: 'the garage')) . ' — awaiting pickup for ' . ($rel?->destination ?: 'its destination'),
+                MaintenanceTemporaryRelease::STAGE_OUT_TRANSIT     => 'On the way to ' . ($rel?->destination ?: 'its destination'),
+                MaintenanceTemporaryRelease::STAGE_AT_DESTINATION  => 'Parked at ' . ($rel?->destination ?: 'its destination'),
+                MaintenanceTemporaryRelease::STAGE_RETURN_DISPATCH,
+                MaintenanceTemporaryRelease::STAGE_RETURN_ASSIGNED => 'At ' . ($rel?->destination ?: 'its destination') . ' — waiting to be taken back to ' . ($rel?->returnGarageLabel() ?: 'the garage'),
+                MaintenanceTemporaryRelease::STAGE_RETURN_TRANSIT  => 'On the way back to ' . ($rel?->returnGarageLabel() ?: 'the garage'),
+                default                                            => 'Out of the workshop',
+            };
             return $base('temporarily_released', 'Temporarily Released', 'amber',
-                'Out of the workshop' . ($reason ? ' · ' . $reason : '') . ' — repair still open, resumes on return',
+                $where . ($reason ? ' · ' . $reason : '') . ' — repair still open, resumes on return',
                 [
-                    'garage'    => $this->vendor?->name ?: ($this->garage ?: null),
-                    'since'     => optional($rel?->released_at)->toIso8601String(),
-                    'taken_by'  => $rel?->taken_by,
+                    'garage'      => $this->vendor?->name ?: ($this->garage ?: null),
+                    'since'       => optional($rel?->released_at)->toIso8601String(),
+                    'taken_by'    => $rel?->taken_by,
+                    'stage'       => $rel?->stage,
+                    'stage_label' => $rel?->stageLabel(),
+                    'destination' => $rel?->destination,
                 ]);
         }
 
@@ -1753,6 +1769,23 @@ class Maintenance extends Model
     public function tasks(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(MaintenanceTask::class, 'maintenance_id');
+    }
+
+    /**
+     * The system checks this inspection must answer ([[VehicleCheckRequirement]]).
+     *
+     * Not a fault list and not a suggestion list — obligations. Worst severity first so the Decide
+     * step asks the important question at the top. Deliberately NOT eager-loaded on the board: the
+     * queue renders 141 cards and none of them needs the option lists, whereas the one ticket being
+     * worked on needs all of them.
+     */
+    public function checkRequirements(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(VehicleCheckRequirement::class, 'maintenance_id')
+            // CASE rather than MySQL's FIELD(): the same ordering has to hold on the sqlite the unit
+            // suite runs against, and a portable expression is cheaper than two code paths.
+            ->orderByRaw("CASE severity WHEN 'critical' THEN 0 WHEN 'moderate' THEN 1 ELSE 2 END")
+            ->orderBy('id');
     }
 
     /**
