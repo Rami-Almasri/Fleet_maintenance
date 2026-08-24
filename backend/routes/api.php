@@ -114,6 +114,18 @@ Route::middleware('auth:sanctum')->prefix('Vehicle')->controller(VehicleControll
     Route::delete('/{vehicle}', 'destroy')->middleware('permission:vehicles.manage');
 });
 
+// SYSTEM CHECK REQUIREMENTS — the obligation layer ([[VehicleCheckRequirement]]).
+// A check is RESOLVED only on the inspection report (Decide step), never here: there is exactly one
+// place a check can be answered, and it is the same transaction that files the report answering it.
+// These routes read the obligation trail and offer the one narrow write, `cancel`.
+Route::middleware('auth:sanctum')->prefix('vehicle-checks')
+    ->controller(\App\Http\Controllers\VehicleCheckController::class)->group(function () {
+        Route::get('/analytics', 'analytics')->middleware('permission:insights.view');            // raised / looked at / overridden / fixed, + lead times (static — must precede /{requirement})
+        Route::get('/vehicle/{vehicle}', 'forVehicle')->middleware('permission:maintenance.view'); // everything ever asked of one car
+        Route::get('/{requirement}/history', 'history')->middleware('permission:maintenance.view'); // the append-only chain for one obligation
+        Route::post('/{requirement}/cancel', 'cancel')->middleware('permission:maintenance.manage'); // withdraw for a stated SYSTEM reason
+    });
+
 // Activity Audit Trail — the "total transparency" read layer. One unified, newest-first timeline per
 // car (every action: inspection / cleaning / readiness / condition / maintenance / movement) plus the
 // fleet-wide manager feed with action-category + time-window filters. Pure reads over
@@ -754,6 +766,18 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // external inspection / storage) WITHOUT pausing: the ticket stays open at its stage. Releasing it is
     // the controllers' call; bringing it back may also be done by a supervisor or the driver/claim role.
     Route::post('/{ticket}/temporary-release', 'temporarilyRelease')->middleware('permission:maintenance.manage');
+    // The release's movement legs. Taking a car out is a real trip — it walks the same lanes a garage run
+    // does (Needs Dispatch → Awaiting Pickup → En Route → parked, then the same again coming back), so the
+    // authorities mirror the garage flow exactly: supervisors dispatch, drivers move.
+    Route::post('/{ticket}/temporary-release/assign', 'assignReleaseMove')->middleware('permission:maintenance.delegate|maintenance.manage');
+    Route::post('/{ticket}/temporary-release/pickup', 'startReleaseMove')->middleware('permission:maintenance.logistics|maintenance.delegate');
+    Route::post('/{ticket}/temporary-release/arrive', 'arriveAtReleaseDestination')->middleware('permission:maintenance.logistics|maintenance.delegate');
+    // Taking the decision back, only while the car is still sitting in the garage. Same authority that
+    // raised the release; once it has physically left, the way back is the return leg, not a cancel.
+    Route::post('/{ticket}/temporary-release/cancel', 'cancelTemporaryRelease')->middleware('permission:maintenance.manage');
+    Route::post('/{ticket}/temporary-release/request-return', 'requestReleaseReturn')->middleware('permission:maintenance.manage|maintenance.delegate');
+    Route::post('/{ticket}/temporary-release/assign-return', 'assignReleaseReturn')->middleware('permission:maintenance.delegate|maintenance.manage');
+    Route::post('/{ticket}/temporary-release/return-pickup', 'startReleaseReturn')->middleware('permission:maintenance.logistics|maintenance.delegate');
     Route::post('/{ticket}/return-from-release', 'returnFromTemporaryRelease')->middleware('permission:maintenance.manage|maintenance.delegate|logistics.claim');
     // Acknowledge a flagged handover discrepancy (Incident) — clears the gate and finalizes the resume
     // that was held pending it. Controller authority only.
@@ -1183,6 +1207,15 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('Ov
 Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->prefix('car-status')->controller(\App\Http\Controllers\CarStatusController::class)->group(function () {
     Route::get('/', 'dashboard');
     Route::get('/vehicle/{vehicle}', 'vehicle');
+});
+
+// Management reports — the daily workshop file read back as a report, and one car's whole history on one
+// system (engine, brakes, …). Both are read-only views over records a person already entered: every field
+// is reproduced from the log, and the only derived numbers (risk / health) print their own arithmetic.
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->prefix('reports')->controller(\App\Http\Controllers\FleetIntelligenceReportController::class)->group(function () {
+    Route::get('/daily-maintenance', 'dailyMaintenance');
+    Route::get('/systems', 'systems');
+    Route::get('/vehicle-system/{vehicle}', 'vehicleSystem');
 });
 
 // Event Type layer — Classification Review queue: the human-in-the-loop for maintenance events the resolver

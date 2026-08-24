@@ -112,6 +112,12 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_TASK_MARKED_INCORRECT => 'Fault marked incorrect',
         VehicleLogEvent::EVENT_TASK_LABOR_CORRECTED  => 'Labor time corrected',
         VehicleLogEvent::EVENT_SERVICE_LOGGED       => 'Routine service performed',
+        // The system-check obligation chain. Worded so the four rows read as one story on the feed:
+        // asked → looked → decided → done.
+        VehicleLogEvent::EVENT_CHECK_RAISED         => 'System check required',
+        VehicleLogEvent::EVENT_CHECK_INSPECTED      => 'Check performed',
+        VehicleLogEvent::EVENT_CHECK_DECIDED        => 'Check decision',
+        VehicleLogEvent::EVENT_CHECK_RESOLVED       => 'Check resolved',
         VehicleLogEvent::EVENT_REVIEW_APPROVED      => 'Inspection review approved',
         VehicleLogEvent::EVENT_REVIEW_REJECTED      => 'Inspection review rejected',
         VehicleLogEvent::EVENT_RECOMMENDATION_APPROVED  => 'Recommendation approved',
@@ -135,6 +141,7 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_INCIDENT_ACKNOWLEDGED => 'Incident acknowledged',
         VehicleLogEvent::EVENT_TEMP_RELEASED        => 'Temporarily released',
         VehicleLogEvent::EVENT_TEMP_RETURNED        => 'Returned from release',
+        VehicleLogEvent::EVENT_TEMP_MOVE            => 'Release movement',
         VehicleLogEvent::EVENT_ODOMETER_CORRECTED   => 'Odometer corrected',
         // Asset Layer — the physical configuration of the car changing. Without these four the
         // component_events mirror written by ComponentService lands in vehicle_log_events but is

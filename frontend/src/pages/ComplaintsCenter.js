@@ -142,7 +142,7 @@ export default function ComplaintsCenter() {
       header: t('Vehicle'),
       render: (r) => (
         <div className="min-w-0">
-          <Link to={`/car-status/${r.vehicle_id}`} onClick={(e) => e.stopPropagation()} className="font-mono text-sm font-bold text-slate-800 hover:text-indigo-600">
+          <Link to={`/vehicles/${r.vehicle_id}`} onClick={(e) => e.stopPropagation()} className="font-mono text-sm font-bold text-slate-800 hover:text-indigo-600">
             {r.plate || `#${r.vehicle_id}`}
           </Link>
           {r.car && <p className="truncate text-xs text-slate-400">{r.car}</p>}

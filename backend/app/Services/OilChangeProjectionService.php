@@ -1062,9 +1062,11 @@ class OilChangeProjectionService
     {
         $row = $this->latestDecision($contract);
 
-        if (! $row || ! $row->isOilChanged()) {
+        // Either hand: our own recorded change, or a garage ticket that has closed (oilWorkDone).
+        if (! $row || ! $row->oilWorkDone()) {
             throw ValidationException::withMessages([
-                'return' => 'There is nothing to hand back yet — the oil change has not been recorded.',
+                'return' => 'There is nothing to hand back yet — the oil change has not been recorded'
+                          . ' and its ticket is still open.',
             ]);
         }
 
@@ -1111,10 +1113,16 @@ class OilChangeProjectionService
         $rung    = 0;
 
         ContractOilDecision::query()
-            ->whereNotNull('oil_changed_at')
+            // Done by EITHER hand: recorded here, or the garage's ticket closed (see oilWorkDone).
+            // Scoped to recalls — a defer's ticket is raised after the rental has already ended, so
+            // there is no customer standing without a car to chase about.
+            ->where('decision', ContractOilDecision::DECISION_RECALL)
+            ->where(fn ($q) => $q
+                ->whereNotNull('oil_changed_at')
+                ->orWhereHas('settledTicket', fn ($t) => $t->whereIn('workflow_status', Maintenance::WF_TERMINAL)))
             ->whereNull('returned_to_customer_at')
             ->where(fn ($q) => $q->whereNull('return_reminder_at')->orWhere('return_reminder_at', '<=', $window))
-            ->with(['contract.customer', 'vehicle'])
+            ->with(['contract.customer', 'vehicle', 'settledTicket'])
             ->orderBy('oil_changed_at')
             ->limit(100)
             ->get()
@@ -1299,6 +1307,21 @@ class OilChangeProjectionService
      * there is no request shape, honest or crafted, that can turn it off. A recall that came from
      * the oil projection owes an oil change by definition; see ContractOilDecision::requiredActions().
      *
+     * ── The answer is a ROUTE, not a checkbox ────────────────────────────────────────────────────
+     * It used to rewrite a driver's brief and nothing else, which meant a recalled car arrived with
+     * whatever hand-off the ORIGINAL decision happened to file — tick the box afterwards and no test
+     * request was ever raised; untick it and a card kept sitting in the review queue asking a
+     * Controller to approve an inspection nobody wanted. So the two answers now each name their own
+     * next pair of hands:
+     *
+     *   TEST     → the inspection request exists (raised or adopted), waits in /inspection-review,
+     *              and approving it on arrival hands the car to the Inspector and starts the
+     *              workflow. He tests it; the oil change rides on that same visit.
+     *   NO TEST  → there is nothing to inspect and nobody to review, so the car goes to the
+     *              SUPERVISORS: on arrival it opens as a real ticket in their dispatch queue, where
+     *              they read the dial and pick the garage. If the car is already standing here when
+     *              the box is unticked, that hand-over happens immediately.
+     *
      * @throws ValidationException when there is no open recall to instruct
      */
     public function setCollectionInstructions(Contract $contract, bool $testRequired, User $actor): ContractOilDecision
@@ -1311,29 +1334,359 @@ class OilChangeProjectionService
             ]);
         }
 
-        return DB::transaction(function () use ($contract, $row, $testRequired, $actor) {
+        $row = DB::transaction(function () use ($contract, $row, $testRequired, $actor) {
             $row->forceFill(['test_required' => $testRequired])->save();
+
+            // The routing half — make the world match the answer that was just given.
+            $routed = $testRequired
+                ? $this->openTestRequestForRecall($contract, $row, $actor)
+                : $this->retireTestRequestForRecall($contract, $row, $actor);
 
             // Rewrite the driver's brief so the person doing the collecting reads the same required
             // work the workshop will read. The task is the driver's copy; this row is the record.
             $task = $row->collectionTask;
             if ($task && $task->isActive()) {
-                $task->notes = $this->collectionBrief($contract, $row);
+                $task->notes = $this->collectionBrief($contract, $row->fresh());
                 $task->save();
             }
 
             $this->logRecallEvent($row, VehicleLogEvent::EVENT_OIL_RECALL_INSTRUCTED, $actor, [
                 'description' => 'After collection: ' . ($testRequired ? 'inspection/test + ' : '')
-                               . 'oil change (required — this recall came from the oil projection).',
+                               . 'oil change (required — this recall came from the oil projection). '
+                               . ($testRequired
+                                    ? 'The Inspector takes the car when it arrives.'
+                                    : 'No test — the Supervisors take the car when it arrives: they read the odometer and pick the garage.'),
                 'meta' => [
                     'contract_id'      => $contract->id,
                     'oil_decision_id'  => $row->id,
-                    'required_actions' => $row->requiredActions(),
+                    'required_actions' => $row->fresh()->requiredActions(),
+                    'routing'          => $testRequired ? 'inspector' : 'supervisor',
+                    'request_change'   => $routed,
                 ],
             ]);
 
             return $row->fresh();
         });
+
+        // The car may already be standing in the yard when the test is called off — in which case the
+        // hand-off is not a future arrangement, it is owed right now. Outside the transaction above:
+        // this opens a workflow ticket of its own and must never be able to roll the instruction back.
+        if (! $testRequired) {
+            $this->handOverAtWorkshop($contract, $actor);
+        }
+
+        return $this->latestDecision($contract) ?? $row;
+    }
+
+    /**
+     * "Yes, test it too" — make sure the inspection request this recall rides on actually exists.
+     *
+     * Idempotent and deliberately conservative: a request that is already live (waiting in review, or
+     * released to the Inspector) is left exactly as it is. Only when there is none — never filed, or
+     * withdrawn when the test was called off earlier — does it file/adopt one, which is what puts the
+     * car back in front of a reviewer and, on approval, in front of Abu Maroof.
+     *
+     * @return string what happened, for the audit line
+     */
+    private function openTestRequestForRecall(Contract $contract, ContractOilDecision $row, ?User $actor): string
+    {
+        $existing = $row->inspection_ticket_id ? Maintenance::find($row->inspection_ticket_id) : null;
+        if ($existing && ! in_array($existing->workflow_status, Maintenance::WF_TERMINAL, true)) {
+            return 'kept #' . $existing->id;
+        }
+
+        // Nothing live: file one (or adopt the request the fleet already has open on this car, which
+        // is what stops two cards for one car landing in the same queue on the same day).
+        $ticket = $this->syncInspectionFollowUp(
+            $contract,
+            $this->project($contract),
+            $row->decision,
+            $actor,
+            $row,
+            $this->pendingTestRequest($contract->vehicle_id, $row->inspection_ticket_id),
+        );
+
+        return $ticket ? 'raised #' . $ticket->id : 'none';
+    }
+
+    /**
+     * "No test after all" — take the request back out of the queue.
+     *
+     * Two things are never touched, and both for the same reason: they are not ours to cancel.
+     *
+     *   • an ADOPTED request — the system's own routine check, which the oil change merely joined.
+     *     The check still stands on its own merits; the oil layer only ever added a line to it.
+     *   • a request a Controller has ALREADY released — the Inspector is holding it, the test is
+     *     happening. Unticking a box in the office does not reach into a job already in someone's
+     *     hands; the card simply records that the oil half no longer needs him.
+     *
+     * @return string what happened, for the audit line
+     */
+    private function retireTestRequestForRecall(Contract $contract, ContractOilDecision $row, ?User $actor): string
+    {
+        $ticket = $row->inspection_ticket_id ? Maintenance::find($row->inspection_ticket_id) : null;
+        if (! $ticket) {
+            return 'none';
+        }
+
+        if ($row->hasAdoptedRequest()) {
+            $this->annotateInspectionFollowUp($contract,
+                'The oil recall no longer includes a test — the oil change is going straight to a garage.'
+                . ' This request stands on its own reason.');
+
+            return 'adopted #' . $ticket->id . ' left standing';
+        }
+
+        if ($ticket->workflow_status !== Maintenance::WF_PENDING_REVIEW) {
+            $this->annotateInspectionFollowUp($contract,
+                'The oil recall no longer asks for a test, but this request has already been released — it stands.');
+
+            return 'released #' . $ticket->id . ' left standing';
+        }
+
+        $withdrawn = app(MaintenanceWorkflowService::class)->withdrawOilFollowUpRequest(
+            $ticket,
+            'The oil recall on contract ' . ($contract->contract_no ?: '#' . $contract->id)
+            . ' is no longer having a test — the car goes to the Supervisors for the oil change alone.',
+            [
+                'contract_id'     => $contract->id,
+                'contract_no'     => $contract->contract_no,
+                'oil_decision_id' => $row->id,
+                'decided_by'      => $actor?->name,
+            ],
+        );
+
+        // The link is deliberately KEPT. A withdrawn request is still the request this recall raised,
+        // and the trail reads worse without it; openTestRequestForRecall() looks at the ticket's
+        // STATUS rather than the mere existence of a link, so a later "actually, test it" files a
+        // fresh one instead of pointing at a card nobody can act on.
+        return $withdrawn ? 'withdrawn #' . $ticket->id : 'kept #' . $ticket->id;
+    }
+
+    /**
+     * THE CAR HAS LANDED AND NOBODY IS EXPECTING IT — hand it to the Supervisors.
+     *
+     * A recalled car with a test announces itself: the inspection request sits in /inspection-review,
+     * a Controller approves it when the car arrives, and the Inspector takes it from there. A recall
+     * with NO test has none of that. The driver parks it, presses "Arrived", and the only record that
+     * this car owes an oil change is a row on the oil board that nobody in the workshop reads.
+     *
+     * So this is the hand-over. It opens the oil change as a REAL ticket in the state the Supervisors
+     * already work from — WF_INSPECTION_PENDING, "assign a garage" — which is exactly the two things
+     * the job needs from them: the odometer (captured at dispatch) and the garage. Nothing new is
+     * invented; the car simply joins the queue it would have joined anyway, a week earlier and with
+     * the customer still on hire.
+     *
+     * Guards, in order, each one a case where somebody else already owns the car:
+     *   • not a live recall, or the oil is already done            → nothing owed
+     *   • a hand-over already happened (settled_ticket_id)         → idempotent, returns null
+     *   • a test was asked for                                     → the Inspector's path owns it
+     *   • a live inspection request exists                         → same, whatever the flag says
+     *   • the change is happening in our parking                   → Abu Maroof does it; no garage to pick
+     *   • the car is not physically here yet                       → nothing to hand over
+     *
+     * ── The Supervisor's two answers ─────────────────────────────────────────────────────────────
+     * `$opts` carries them when a Supervisor is doing this himself rather than the driver's tap
+     * doing it for him: `odometer` (what the dial says now the car is standing here) and `vendor_id`
+     * (which garage), plus an optional `driver_id` for the leg out. Both are optional because the
+     * automatic hand-over has neither — a driver arriving at 9pm knows the reading but not the shop.
+     * Given them, this is the whole job in one step: the reading is stored as a real staff-captured
+     * mileage (so the projection re-anchors on a fact), and the ticket goes out already carrying its
+     * garage instead of waiting in a lane for somebody to notice it.
+     *
+     * Best-effort by design: it is called from the driver's arrival step, and a workflow that refuses
+     * (car sold, no attributable actor) must never fail the driver's tap. The one exception is a
+     * reading that cannot be true — that is refused loudly, because a bad number here becomes the
+     * car's service anchor.
+     *
+     * @param array{odometer?:?int, vendor_id?:?int, driver_id?:?int} $opts
+     *
+     * @throws ValidationException when the odometer given cannot be a real reading
+     */
+    public function handOverAtWorkshop(Contract $contract, ?User $actor = null, array $opts = []): ?Maintenance
+    {
+        $row = $this->latestDecision($contract);
+        if (! $row) {
+            return null;
+        }
+
+        // The hand-over may ALREADY have happened — the driver's arrival tap does it automatically,
+        // and it opens the ticket with no garage on it because a driver parking a car at 9pm has no
+        // business choosing the shop. That leaves the Supervisor's actual decision still outstanding,
+        // so this method answers BOTH shapes of the same question: open it, or finish it. Without
+        // this second door the automatic hand-over would silently take the choice away from him — the
+        // ticket would exist, the panel would vanish, and picking a garage would mean going to find
+        // the card on another board.
+        $open        = $row->settled_ticket_id ? $row->settledTicket : null;
+        $needsGarage = $open !== null && $open->workflow_status === Maintenance::WF_INSPECTION_PENDING;
+
+        if (! $row->awaitsSupervisorHandOver() && ! $needsGarage) {
+            return null;
+        }
+
+        $vehicle = $contract->vehicle;
+        if (! $vehicle) {
+            return null;
+        }
+
+        // The reading, checked BEFORE anything is opened. Same discipline as every other capture
+        // point: mileage does not run backwards, and a placeholder is not a reading.
+        $entered = isset($opts['odometer']) && $opts['odometer'] !== null ? (int) $opts['odometer'] : null;
+        if ($entered !== null) {
+            $prior = $this->anchor($contract);
+            if ($entered <= self::PLACEHOLDER_MAX) {
+                throw ValidationException::withMessages([
+                    'odometer' => 'Enter the odometer reading off the dashboard.',
+                ]);
+            }
+            if ($prior && $entered < $prior['odometer']) {
+                throw ValidationException::withMessages([
+                    'odometer' => 'The reading is below the last known odometer ('
+                                . number_format($prior['odometer']) . ' km). Check the number.',
+                ]);
+            }
+        }
+
+        $actor ??= $this->settleActor($row);
+        if (! $actor) {
+            Log::warning('Oil recall hand-over: no actor available to open the service ticket', [
+                'contract_id' => $contract->id,
+                'vehicle_id'  => $vehicle->id,
+            ]);
+
+            return null;
+        }
+
+        // The reading the Supervisor just took off the dial beats everything — the car is standing in
+        // front of him. Stored as a real capture (source STAFF, like the workshop's reading at the oil
+        // change) so the projection re-anchors on it and the board stops guessing at 200 km/day.
+        if ($entered !== null) {
+            ContractMileageReading::create([
+                'contract_id' => $contract->id,
+                'vehicle_id'  => $vehicle->id,
+                'odometer'    => $entered,
+                'reported_on' => Carbon::now()->toDateString(),
+                'recorded_by' => $actor->id,
+                'reported_by' => $actor->name ?: $actor->email,
+                'source'      => ContractMileageReading::SOURCE_STAFF,
+                'note'        => 'Odometer read on arrival — oil recall, before the car went to a garage',
+            ]);
+        }
+
+        // Failing that, the freshest number we actually HOLD — the reading the chase collected by
+        // phone, or the stored odometer. Not the projection: a ticket carries facts, and 200 km/day
+        // is a guess.
+        $anchor = $entered === null ? $this->anchor($contract) : null;
+        $km     = $entered
+            ?? ($anchor && ($anchor['odometer'] ?? 0) > self::PLACEHOLDER_MAX
+                ? (int) $anchor['odometer']
+                : ($vehicle->odometer ?: null));
+
+        if ($needsGarage) {
+            // The ticket is already open and waiting on the one thing only he can answer. Nothing to
+            // raise, nothing to re-link — the reading above is stored either way, and the garage is
+            // assigned below.
+            $ticket = $open;
+        } else {
+            try {
+                $ticket = app(MaintenanceWorkflowService::class)
+                    ->openServiceTicket($vehicle, 'Oil Change', $km, $actor);
+            } catch (\Throwable $e) {
+                Log::warning('Oil recall hand-over: could not open the service ticket', [
+                    'contract_id' => $contract->id,
+                    'vehicle_id'  => $vehicle->id,
+                    'error'       => $e->getMessage(),
+                ]);
+
+                return null;
+            }
+
+            $ticket = DB::transaction(function () use ($contract, $row, $ticket, $km, $actor) {
+                // The story reference — the ticket must be able to say which recall produced it.
+                $oilDetail = [
+                    'source'                   => 'oil_projection',
+                    'contract_oil_decision_id' => $row->id,
+                    'contract_id'              => $contract->id,
+                    'contract_no'              => $contract->contract_no,
+                    'decision'                 => $row->decision,
+                    'handed_over'              => 'supervisor',
+                    'oil_limit'                => $row->oil_limit,
+                    'allowed_max'              => $row->allowed_max,
+                ];
+
+                // openServiceTicket() may have APPENDED the oil change to a ticket this car already
+                // had open, rather than raising a new one. That ticket has its own reason for
+                // existing, and its own captured mileage — neither is ours to overwrite. So we add
+                // the oil layer ALONGSIDE, under its own key, exactly as the inspection follow-up
+                // does when it adopts somebody else's request.
+                $existing = is_array($ticket->trigger_detail) ? $ticket->trigger_detail : [];
+                $joined   = ($existing['source'] ?? null) !== null && ($existing['source'] ?? null) !== 'oil_projection';
+
+                $ticket->trigger_detail = $joined
+                    ? $existing + ['oil_projection' => $oilDetail]
+                    : $oilDetail;
+
+                // The continuity anchor for the Supervisor's dispatch reading. `vehicles.odometer` on
+                // a car that is still out was last refreshed at handover, so it is a whole rental
+                // stale — leaving it as the anchor would meet the honest dial reading with "this is
+                // thousands of km above the previous stage". The freshest reading we hold is the fair
+                // thing to check against, and it is the number the board has been working from all
+                // along. Never written over a reading somebody actually took: theirs is an
+                // observation, ours is the best number on file.
+                if ($km && $ticket->report_odometer === null) {
+                    $ticket->report_odometer = $km;
+                }
+                $ticket->save();
+
+                // Linked, but NOT settled: `settled_at` is what says the follow-up is finished, and
+                // it is not — the oil has not been changed yet. The link alone moves the relay on.
+                $row->forceFill(['settled_ticket_id' => $ticket->id])->save();
+
+                $this->logRecallEvent($row, VehicleLogEvent::EVENT_OIL_RECALL_HANDED_TO_SUPERVISOR, $actor, [
+                    'description' => 'Car arrived with no test asked for — oil change opened as ticket #'
+                                   . $ticket->id . ' for the Supervisors: read the odometer and pick the garage'
+                                   . ($km ? ' (last known ' . number_format((int) $km) . ' km).' : '.'),
+                    'meta' => [
+                        'contract_id'     => $contract->id,
+                        'contract_no'     => $contract->contract_no,
+                        'oil_decision_id' => $row->id,
+                        'ticket_id'       => $ticket->id,
+                        'last_known_km'   => $km,
+                    ],
+                ]);
+
+                return $ticket;
+            });
+        }
+
+        // THE GARAGE. When the Supervisor named one, the ticket leaves with it — same call the
+        // dispatch board makes, so the garage, the optional driver and the audit trail are identical
+        // whichever door was used. Without one the ticket simply waits in his lane, which is where he
+        // picks it. Deliberately outside the transaction above: the hand-over is already a fact, and a
+        // garage that no longer exists must not undo it — it just leaves the ticket to be assigned.
+        $vendorId = isset($opts['vendor_id']) && $opts['vendor_id'] ? (int) $opts['vendor_id'] : null;
+        if ($vendorId) {
+            try {
+                app(MaintenanceWorkflowService::class)->assignDispatch($ticket, [
+                    'vendor_id' => $vendorId,
+                    'driver_id' => isset($opts['driver_id']) && $opts['driver_id'] ? (int) $opts['driver_id'] : null,
+                ], $actor);
+            } catch (\Throwable $e) {
+                Log::warning('Oil recall hand-over: garage could not be assigned', [
+                    'contract_id' => $contract->id,
+                    'ticket_id'   => $ticket->id,
+                    'vendor_id'   => $vendorId,
+                    'error'       => $e->getMessage(),
+                ]);
+
+                throw ValidationException::withMessages([
+                    'vendor_id' => 'The oil change is open as ticket #' . $ticket->id
+                                 . ', but that garage could not be assigned: ' . $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $ticket->fresh();
     }
 
     // ── The far end: the oil was actually changed ────────────────────────────────────────────
@@ -1519,9 +1872,13 @@ class OilChangeProjectionService
             'over_tolerance_km' => (int) $row->expected_return_odometer - (int) $row->allowed_max,
         ];
 
+        // What the car owes, and — because the two answers hand it to different people — who is
+        // waiting for it. The driver reads this line and knows where to leave the keys.
         $required = $row->test_required
-            ? 'Inspection/test + OIL CHANGE (required)'
-            : 'OIL CHANGE (required)';
+            ? 'Inspection/test + OIL CHANGE (required) — the Inspector takes it on arrival'
+            : ($row->serviceLocation() === ContractOilDecision::LOCATION_PARKING
+                ? 'OIL CHANGE (required) — Abu Maroof does it here'
+                : 'OIL CHANGE (required), no test — the Supervisors take it on arrival and send it to a garage');
 
         return sprintf(
             'Oil recall — collect from customer %s (contract %s) and bring it to %s.'
@@ -1744,6 +2101,12 @@ class OilChangeProjectionService
         $stage = $row->recallStage();
         $task  = $row->collectionTask;
 
+        // The oil ticket, once one exists — the Supervisors' copy of this job. Read so the card can
+        // say WHICH step of theirs it is sitting on: still waiting for a garage to be picked, or
+        // already on its way there. "Oil change" alone would hide the one action anybody can take.
+        $service = $row->settled_ticket_id ? $row->settledTicket : null;
+        $awaitingGarage = $service && $service->workflow_status === Maintenance::WF_INSPECTION_PENDING;
+
         return [
             'decision_id' => $row->id,
             'stage'       => $stage,
@@ -1753,9 +2116,14 @@ class OilChangeProjectionService
                 ContractOilDecision::STAGE_READY_FOR_DRIVER  => 'supervisor',
                 ContractOilDecision::STAGE_DRIVER_ASSIGNED,
                 ContractOilDecision::STAGE_VEHICLE_COLLECTED => 'driver',
-                ContractOilDecision::STAGE_AT_WORKSHOP       => 'controller',
+                // A car that has landed with no test asked for is not waiting on a Controller to
+                // review anything — there is nothing in the review queue. It is waiting on the
+                // Supervisors to take it, which is what the hand-over does the moment it arrives.
+                ContractOilDecision::STAGE_AT_WORKSHOP       => $row->awaitsSupervisorHandOver() ? 'supervisor' : 'controller',
                 ContractOilDecision::STAGE_INSPECTION        => 'inspector',
-                ContractOilDecision::STAGE_OIL_SERVICE       => 'workshop',
+                // "Oil change" covers two different people: the Supervisor who still has to pick the
+                // garage, and the workshop once the car is on its way there.
+                ContractOilDecision::STAGE_OIL_SERVICE       => $awaitingGarage ? 'supervisor' : 'workshop',
                 default                                      => null,
             },
             'awaiting_sales'    => $row->isAwaitingSalesConfirmation(),
@@ -1778,6 +2146,17 @@ class OilChangeProjectionService
             'required_actions'    => $row->requiredActions(),
             'inspection_ticket_id' => $row->inspection_ticket_id,
             'service_ticket_id'    => $row->settled_ticket_id,
+            // The Supervisors' ticket in their own words — what state it is in, and whether the one
+            // thing they owe (a garage) is still outstanding.
+            'service_ticket'       => $service ? [
+                'id'              => $service->id,
+                'workflow_status' => $service->workflow_status,
+                'garage'          => $service->garage,
+                'awaiting_garage' => $awaitingGarage,
+            ] : null,
+            // A landed car nobody is expecting: the hand-over is owed right now. Published so the
+            // board can say so out loud instead of showing a car sitting at "At the workshop".
+            'awaiting_supervisor'  => $row->awaitsSupervisorHandOver(),
             // WHERE the change happens, and therefore who owns it. Published so no consumer has to
             // re-derive the routing rule that decided who was told.
             'service_location'    => $row->serviceLocation(),

@@ -58,10 +58,18 @@ const SECTIONS = [
   // (Duplicating one key across two tabs is the existing pattern — see final_reinspections.)
   { key: 'assigned_to_me',             role: 'dispatcher', tone: '#2563eb', supplementary: true },
   { key: 'awaiting_dispatch_decision', role: 'dispatcher', tone: '#a855f7' },
+  // Temporary Vehicle Release — a car being taken out of the workshop (or brought back) needs the same
+  // two decisions a garage run does: where does it go, and who drives it. Its own section because the
+  // repair behind it is frozen: nothing on that ticket can move until the car does.
+  { key: 'release_dispatch',           role: 'dispatcher', tone: '#f59e0b' },
+  { key: 'released_parked',            role: 'dispatcher', tone: '#f97316' },
   { key: 'reinspection_failed',        role: 'dispatcher', tone: '#dc2626' },
   { key: 'final_reinspections',        role: 'dispatcher', tone: '#10b981' },
   { key: 'assigned_to_me',             role: 'driver',     tone: '#2563eb', supplementary: true },
   { key: 'active_dispatches',          role: 'driver',     tone: '#3b82f6' },
+  // The release legs open to this driver — collect a released car and take it where it's going, or
+  // collect it from there and bring it home.
+  { key: 'release_moves',              role: 'driver',     tone: '#f59e0b' },
   { key: 'waiting_followup',           role: 'driver',     tone: '#f97316' },
   { key: 'return_to_base',             role: 'driver',     tone: '#0ea5e9' },
   { key: 'back_from_garage',           role: 'driver',     tone: '#10b981', readonly: true },

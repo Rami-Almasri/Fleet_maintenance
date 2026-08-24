@@ -17,6 +17,9 @@ const TONES = {
   indigo: 'bg-indigo-100 text-indigo-700 ring-indigo-600/20',
   orange: 'bg-orange-100 text-orange-700 ring-orange-600/20',
   yellow: 'bg-yellow-100 text-yellow-800 ring-yellow-600/20',
+  // System checks — the obligation layer. Its own hue because it is neither an inspection finding
+  // (blue) nor a completed routine (emerald): it is the platform asking, and someone answering.
+  teal: 'bg-teal-100 text-teal-700 ring-teal-600/20',
 };
 
 // Solid dot colour per tone — the enterprise status affordance that replaces the
@@ -25,6 +28,7 @@ const DOTS = {
   gray: 'bg-slate-400', slate: 'bg-slate-400', green: 'bg-emerald-500', emerald: 'bg-emerald-500',
   red: 'bg-red-500', amber: 'bg-amber-500', blue: 'bg-blue-500', violet: 'bg-violet-500',
   cyan: 'bg-cyan-500', indigo: 'bg-indigo-500', orange: 'bg-orange-500', yellow: 'bg-yellow-500',
+  teal: 'bg-teal-500',
 };
 
 export default function Badge({ tone = 'gray', dot = false, children, className = '' }) {

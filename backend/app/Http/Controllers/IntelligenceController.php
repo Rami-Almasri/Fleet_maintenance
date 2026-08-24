@@ -34,8 +34,22 @@ class IntelligenceController extends Controller
             $from = $request->query('from');
             $to   = $request->query('to');
 
+            $payload = $cost->fleet(is_string($from) ? $from : null, is_string($to) ? $to : null);
+
+            // ?vehicle_id= narrows the per-car list to ONE car — what the vehicle profile's Cost
+            // Intelligence panel asks for. The `summary` (the fleet figures) is deliberately left whole:
+            // the panel's whole point is reading this car's cost/km against the fleet's, and a fleet
+            // figure computed from one car is not a comparison. Filtered here rather than in the service
+            // so both surfaces keep answering from the same computation.
+            if ($vehicleId = (int) $request->query('vehicle_id')) {
+                $payload['vehicles'] = array_values(array_filter(
+                    $payload['vehicles'] ?? [],
+                    fn ($r) => (int) ($r['vehicle_id'] ?? 0) === $vehicleId,
+                ));
+            }
+
             return ResponseHelper::SuccessResponse(
-                $cost->fleet(is_string($from) ? $from : null, is_string($to) ? $to : null),
+                $payload,
                 'Cost intelligence retrieved successfully',
                 200,
             );

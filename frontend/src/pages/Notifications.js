@@ -59,10 +59,11 @@ export default function Notifications() {
   const toast = useToast();
   const { t } = useI18n();
 
-  // Maintenance Progress checkpoints (Waleed & Abdullah's lane): a `maint_checkpoint` reminder is
-  // answered by FILING the update, not by reading a page — so its action opens the very same
-  // CheckpointModal /maintenance-progress uses, right here on the card. The alert carries the ticket
-  // in `meta.ticket_id`; without it (or without the permission to file) we fall back to the deep link.
+  // Progress checkpoints (Waleed & Abdullah's lane): a `maint_checkpoint` reminder is answered by
+  // FILING the update, not by reading a page — so its action opens the very same CheckpointModal the
+  // Dashboard's Proactive Flags cards use, right here on the card. The alert carries the ticket in
+  // `meta.ticket_id`; without it (or without the permission to file) we fall back to the deep link,
+  // which lands on /dashboard?ticket=<id> — that car's own card, with the form already open.
   const [checkpointTicket, setCheckpointTicket] = useState(null);
   const canCheckpoint = can('maintenance.checkpoint.create');
 

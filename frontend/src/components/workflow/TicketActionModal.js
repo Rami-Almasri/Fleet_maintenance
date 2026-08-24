@@ -30,6 +30,7 @@ import { Input, Textarea, Select } from '../ui/Field';
 import FindingsList from './FindingsList';
 import FindingsPicker from './FindingsPicker';
 import FaultDetailPicker from './FaultDetailPicker';
+import SystemChecks, { buildCheckResults, checkFindings } from './SystemChecks';
 import { buildDetails, findingsMissingLocation, withDetails } from '../../lib/faultLocations';
 import RequiredPartsEditor, { cleanRequiredParts } from './RequiredPartsEditor';
 import DispatchPlan from './DispatchPlan';
@@ -60,6 +61,11 @@ const DAMAGE_SEVERITY = ['routine', 'moderate', 'critical']; // reuses App\Model
 // Temporary Vehicle Release — why the car left the shop mid-repair. CONTRACT with
 // App\Models\MaintenanceTemporaryRelease::REASONS; visible labels resolve from the i18n catalog.
 const TEMP_RELEASE_REASONS = ['road_test', 'customer_test', 'external_inspection', 'other'];
+
+// Where a released car is usually sent. Quick-picks only — the destination is free text, because a car
+// can go anywhere (a customer's address, a body shop, someone's house). CONTRACT with
+// App\Models\LogisticsTask::COMMON_DESTINATIONS.
+const RELEASE_DESTINATIONS = ['Parking Yard', 'Office', 'Showroom', 'Deals on Wheels'];
 
 // The car's last known odometer reading for a ticket — the highest of the vehicle's authoritative
 // odometer and every reading captured on the ticket's mileage chain (readings only go forward). Used to
@@ -164,7 +170,7 @@ const FAULT_SEVERITY_OPTS = [
 // "2.5" / "3" — one decimal at most, trailing ".0" dropped, for the hours totals on the ready screen.
 const round1 = (n) => String(Math.round(Number(n) * 10) / 10);
 
-const baseTone = (action) => (['ready', 'serviced'].includes(action) ? 'success'
+const baseTone = (action) => (['ready', 'serviced', 'arriveAtDestination', 'returnFromRelease'].includes(action) ? 'success'
   : 'primary');
 
 // Compact "who/when" timestamp for the follow-up log: relative for recent notes, an absolute
@@ -630,6 +636,26 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [err, setErr] = useState('');
   const [stale, setStale] = useState(false); // the ticket moved on under us (concurrent edit) → offer a refresh, not a red error
 
+  // SYSTEM CHECKS carried by a ticket that did not arrive hydrated (opened from the board). See the
+  // long note beside `requiredChecks` below for why this fallback has to exist at all.
+  // `null` = still loading, `[]` = loaded and there are none.
+  const [hydratedChecks, setHydratedChecks] = useState(null);
+  const checksReady = Array.isArray(ticket?.required_checks) || hydratedChecks !== null;
+
+  useEffect(() => {
+    if (action !== 'decide' || !ticket?.id) return undefined;
+    if (Array.isArray(ticket.required_checks)) return undefined;   // already hydrated by the caller
+
+    let alive = true;
+    api.get(`/maintenance-tickets/${ticket.id}`)
+      .then((r) => { if (alive) setHydratedChecks(r.data?.data?.required_checks || []); })
+      // A failed hydrate must NOT silently become "no checks" — that is the dead end this exists to
+      // close. Leaving it null keeps submit disabled and shows the blocker below, so the inspector is
+      // told the screen is incomplete rather than discovering it from a rejected report.
+      .catch(() => { if (alive) setHydratedChecks(null); });
+    return () => { alive = false; };
+  }, [action, ticket?.id, ticket?.required_checks]);
+
   // Never dismiss the modal (backdrop / ESC / X) while a request is in flight: closing mid-submit lets
   // the operator reopen and fire the same non-idempotent action again (duplicate dispatch / notification).
   const guardedClose = () => { if (!busy) onClose?.(); };
@@ -717,6 +743,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // alongside trigger_reason = customer_reported, but that reason is no longer offered anywhere in this
   // modal (INSPECTION_TRIGGER_REASONS is test_drive | periodic) — a customer issue is a Complaint now.
   const [symptoms, setSymptoms] = useState([]); // selected finding tags (library picks + custom)
+  // SYSTEM CHECKS — the inspector's structured answer to each obligation the platform raised on this
+  // car: { [requirementId]: { result_code, decision_code, finding_keyword } }. Radios only; there is
+  // deliberately nothing here he has to type. See [[SystemChecks]] and VehicleCheckRequirement.
+  const [checkAnswers, setCheckAnswers] = useState({});
   // Symptom → Root-Cause diagnosis: { [symptomText]: { root_cause, root_cause_id } }. Shared by the
   // 'decide' (inspector symptoms) and 'finding' (garage tags) steps — only one action is live at a time.
   const [causes, setCauses] = useState({});
@@ -734,15 +764,26 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [requiresParts, setRequiresParts] = useState(false);
   const [requiredParts, setRequiredParts] = useState([]);
   const [notes, setNotes] = useState('');
-  // Pre-fill the reading for a Temporary Vehicle Release with the car's last known odometer (editable).
+  // Pre-fill the reading for the release legs that take one (the pickup out, the arrival back) with the
+  // car's last known odometer — the operator sees it and edits it rather than typing from scratch.
   const [odometer, setOdometer] = useState(() => {
-    if (action === 'temporarilyRelease') {
+    if (action === 'startReleaseMove' || action === 'returnFromRelease') {
       const last = lastKnownOdometer(ticket);
       return last != null ? String(last) : '';
     }
     return '';
   });
-  const [vendorId, setVendorId] = useState(ticket?.vendor_id ? String(ticket.vendor_id) : '');
+  // Temporary release, out dispatch — WHERE the car is going (free text + quick-picks).
+  const [releaseDestination, setReleaseDestination] = useState('');
+  // The return dispatch defaults to the garage the car LEFT — the supervisor confirms it or points the
+  // car at a different shop. Everything else about the repair stays exactly where it was.
+  const [vendorId, setVendorId] = useState(() => {
+    if (action === 'assignReleaseReturn') {
+      const back = ticket?.active_temporary_release?.return_vendor_id ?? ticket?.active_temporary_release?.vendor_id_snapshot;
+      if (back) return String(back);
+    }
+    return ticket?.vendor_id ? String(ticket.vendor_id) : '';
+  });
   const [onsiteVendor, setOnsiteVendor] = useState(''); // serviced: free-text on-site vendor/mechanic (NOT a garage from the list)
   const [assignNote, setAssignNote] = useState(''); // assign: supervisor's reason/note when (re)assigning the garage
   const [recoveryUnit, setRecoveryUnit] = useState('');  // recovery: towing unit name/ID
@@ -1090,7 +1131,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'typechange':
         return { url: `${base}/${ticket.id}/type`, body: { maintenance_type: maintType }, method: 'patch' };
       case 'decide':
-        return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), details: buildDetails(symptoms, details, locationCatalog.policy), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null, required_parts: requiresMaintenance && requiresParts ? cleanRequiredParts(requiredParts) : null } };
+        return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), details: buildDetails(symptoms, details, locationCatalog.policy), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null, required_parts: requiresMaintenance && requiresParts ? cleanRequiredParts(requiredParts) : null, check_results: checkPlan.rows } };
       case 'delegate':
         // No task is sent — the backend derives pick-up vs drop-off from where the car physically is.
         return { url: `${base}/${ticket.id}/delegate`, body: { driver_id: Number(driverId) } };
@@ -1188,11 +1229,33 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         // Vehicle Physically Returned — a light checkpoint, no odometer/handover required.
         return { url: `${base}/${ticket.id}/mark-returned`, body: { note: notes.trim() || null } };
       case 'temporarilyRelease':
-        // Temporary Vehicle Release — take the car OUT mid-repair (ticket stays at its stage). JSON:
-        // reason + who took it + odometer OUT; `notes` carries the free-text detail (required for "other").
-        return { url: `${base}/${ticket.id}/temporary-release`, body: { reason: releaseReason, reason_note: notes.trim() || null, taken_by: takenBy.trim(), release_odometer: Number(odometer) } };
+        // Temporary Vehicle Release — the DECISION to let the car leave mid-repair (the ticket stays at
+        // its stage). Nothing moves yet: reason + who it's for. `notes` carries the free-text detail
+        // (required for "other"). The trip's legs are the six cases below.
+        return { url: `${base}/${ticket.id}/temporary-release`, body: { reason: releaseReason, reason_note: notes.trim() || null, taken_by: takenBy.trim() } };
+      case 'cancelRelease':
+        // Taking the release back before the car ever moved — an optional word on why.
+        return { url: `${base}/${ticket.id}/temporary-release/cancel`, body: { reason: notes.trim() || null } };
+      case 'assignReleaseMove':
+        // Out dispatch — where the car goes, and who drives it (blank = open to the driver pool).
+        return { url: `${base}/${ticket.id}/temporary-release/assign`, body: { destination: releaseDestination.trim(), driver_id: driverId ? Number(driverId) : null, note: notes.trim() || null } };
+      case 'startReleaseMove':
+        // Out pickup — the car physically leaves the garage now, so THIS is where the OUT reading is taken.
+        return { url: `${base}/${ticket.id}/temporary-release/pickup`, body: { release_odometer: Number(odometer) } };
+      case 'arriveAtDestination':
+        // Out arrival — parked at the destination; the ticket waits there until it's called back.
+        return { url: `${base}/${ticket.id}/temporary-release/arrive`, body: { note: notes.trim() || null } };
+      case 'requestReleaseReturn':
+        // Call it back — re-opens the dispatch queue for the return leg. No fields.
+        return { url: `${base}/${ticket.id}/temporary-release/request-return`, body: {} };
+      case 'assignReleaseReturn':
+        // Return dispatch — confirm or change the garage the car goes back to, and pick a driver.
+        return { url: `${base}/${ticket.id}/temporary-release/assign-return`, body: { vendor_id: vendorId ? Number(vendorId) : null, driver_id: driverId ? Number(driverId) : null, note: notes.trim() || null } };
+      case 'startReleaseReturn':
+        // Return pickup — collected from where it was parked, heading to the garage. No fields.
+        return { url: `${base}/${ticket.id}/temporary-release/return-pickup`, body: {} };
       case 'returnFromRelease':
-        // Return Vehicle to Workshop — the odometer IN (distance is computed server-side) + an optional note.
+        // Back in the workshop — the odometer IN (distance is computed server-side) + an optional note.
         return { url: `${base}/${ticket.id}/return-from-release`, body: { return_odometer: Number(odometer), return_note: notes.trim() || null } };
       case 'approveRepair':
         // Supervisor Video-Review — APPROVE (video reviewed) → advance to re-inspection. No fields.
@@ -1277,7 +1340,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // is no longer gated here — it can be set later. The end-of-test-drive odometer is OPTIONAL here
     // (the inspector may record it), but if entered it must clear the same continuity/>10 km note gate
     // as every other capture (odoGateBlocked is false when blank).
-    if (action === 'decide') return (requiresMaintenance && (!faultSeverity || !rootCausesComplete(symptoms, faultCausesCatalog, causes) || missingLocations.length > 0)) || clearanceWithFindings || odoGateBlocked;
+    // …and every system check the platform raised must carry an explicit result. This is the client
+    // half of the rule that "nobody looked" stops being a possible outcome — the server refuses the
+    // same report independently (planCheckAnswers), so the two cannot drift apart silently.
+    // `!checksReady` — we do not yet know whether this ticket owes any system checks. Submitting
+    // blind is exactly how a report gets rejected by the server-side gate with nothing on screen to
+    // fix, so hold the button until the answer is in.
+    if (action === 'decide') return !checksReady || (requiresMaintenance && (!faultSeverity || !rootCausesComplete(symptoms, faultCausesCatalog, causes) || missingLocations.length > 0)) || clearanceWithFindings || odoGateBlocked || checkPlan.unanswered.length > 0 || (!requiresMaintenance && checkBornFindings.length > 0);
     if (action === 'followup') return !followNote.trim();
     if (action === 'dispatch') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
     // Recovery (towing): the odometer + its photo AND the recovery unit name are all mandatory (the
@@ -1320,13 +1389,20 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         || !fuelLevel || !exteriorCondition.trim() || !interiorCondition.trim()
         || !signatureReady;
     }
-    // Temporary release: a reason + the OUT odometer are mandatory; "Other" needs a detail. `taken_by`
-    // is NOT gated — it defaults to the signed-in user server-side when left blank.
+    // Temporary release: a reason is mandatory and "Other" needs a detail. Nothing else — the car hasn't
+    // moved yet, so there is no reading to take. `taken_by` is NOT gated (it defaults to the signed-in
+    // user server-side when left blank).
     if (action === 'temporarilyRelease') {
-      return !releaseReason || !odometer || Number(odometer) < 1
-        || (releaseReason === 'other' && !notes.trim());
+      return !releaseReason || (releaseReason === 'other' && !notes.trim());
     }
-    // Return to workshop: the IN odometer is mandatory and can't be below the recorded OUT reading.
+    // Out dispatch: a destination is mandatory (the driver has to be told where to go); the driver is
+    // optional — leaving it blank opens the pickup to the whole pool, like a garage dispatch.
+    if (action === 'assignReleaseMove') return !releaseDestination.trim();
+    // Out pickup: the reading as the car leaves the garage is the trip's start anchor.
+    if (action === 'startReleaseMove') return !odometer || Number(odometer) < 1;
+    // Return dispatch: a garage is mandatory (it defaults to the one the car left).
+    if (action === 'assignReleaseReturn') return !vendorId;
+    // Back in the workshop: the IN odometer is mandatory and can't be below the recorded OUT reading.
     if (action === 'returnFromRelease') {
       const outKm = ticket?.active_temporary_release?.odometer_out;
       return !odometer || Number(odometer) < 1 || (outKm != null && Number(odometer) < Number(outKm));
@@ -1460,6 +1536,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             if (c.root_cause) fd.append(`causes[${i}][root_cause]`, c.root_cause);
             if (c.root_cause_id != null) fd.append(`causes[${i}][root_cause_id]`, String(c.root_cause_id));
           });
+          // SYSTEM CHECKS — carried on the multipart path too. A report filed WITH an odometer photo
+          // must answer the same obligations as one filed without; the server refuses either way, and
+          // dropping them here would surface that refusal as a mysterious 422 on the photo branch only.
+          checkPlan.rows.forEach((c, i) => {
+            fd.append(`check_results[${i}][id]`, String(c.id));
+            fd.append(`check_results[${i}][result_code]`, c.result_code);
+            if (c.decision_code) fd.append(`check_results[${i}][decision_code]`, c.decision_code);
+            if (c.finding_keyword) fd.append(`check_results[${i}][finding_keyword]`, c.finding_keyword);
+          });
           if (requiresMaintenance && faultSeverity) fd.append('fault_severity', faultSeverity);
           if (recommended) fd.append('recommended_action', recommended);
           if (notes) fd.append('notes', notes);
@@ -1563,6 +1648,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'resume': return t('workflow.success.resume', { who });
       case 'markReturned': return t('workflow.success.markReturned', { who });
       case 'temporarilyRelease': return t('workflow.success.temporarilyRelease', { who });
+      // Every leg of the release round trip confirms itself — a step that closes silently reads as a
+      // step that didn't happen, and this trip has seven of them.
+      case 'assignReleaseMove': return t('workflow.success.assignReleaseMove', { who });
+      case 'startReleaseMove': return t('workflow.success.startReleaseMove', { who });
+      case 'arriveAtDestination': return t('workflow.success.arriveAtDestination', { who });
+      case 'requestReleaseReturn': return t('workflow.success.requestReleaseReturn', { who });
+      case 'assignReleaseReturn': return t('workflow.success.assignReleaseReturn', { who });
+      case 'startReleaseReturn': return t('workflow.success.startReleaseReturn', { who });
+      case 'cancelRelease': return t('workflow.success.cancelRelease', { who });
       case 'returnFromRelease': return t('workflow.success.returnFromRelease', { who });
       case 'approveRepair': return t('workflow.success.approveRepair', { who });
       case 'requestRefix': return t('workflow.success.requestRefix', { who });
@@ -1583,6 +1677,31 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // The client half of the location gate — the same rule the API enforces, applied here so the
   // inspector is stopped on the screen where he can still fix it rather than by a rejected submit.
   const missingLocations = findingsMissingLocation(symptoms, locationCatalog.policy, details);
+  // The client half of the system-check gate — the same rule submitReport() enforces server-side,
+  // applied here so an unanswered check is a named, tappable blocker rather than a rejected submit.
+  //
+  // ── WHY THIS FALLS BACK TO A FETCH ─────────────────────────────────────────────────────────────
+  // The BOARD's query deliberately does not eager-load checkRequirements — 65+ cards must not each
+  // pay to build option lists nobody renders there. Sound for the board. But Decide can be opened
+  // from the board as well as from the hydrated ticket page, and the gate that refuses an unanswered
+  // check lives on the SERVER. So a modal opened from the board rendered no SYSTEM CHECKS panel,
+  // gave the inspector nothing to tap, and then had the finished report rejected with a 422 he had
+  // no way to satisfy. A dead end — and the reason 191 raised checks had never once been answered.
+  //
+  // So: use what we were handed when it is there, and otherwise pull the ticket once, on open. One
+  // request, only for the Decide step, only when the checks are actually missing.
+  const requiredChecks = Array.isArray(ticket?.required_checks)
+    ? ticket.required_checks
+    : (hydratedChecks || []);
+  const checkPlan = buildCheckResults(requiredChecks, checkAnswers);
+  // Findings an approved check will contribute, shown in the findings step so a fault the inspector
+  // did not tap never appears unexplained.
+  const checkBornFindings = checkFindings(requiredChecks, checkAnswers);
+  // Flat catalog vocabulary, for the one check type whose catalog cannot name the fault itself.
+  const findingKeywordList = useMemo(
+    () => (findingsCatalog || []).flatMap((c) => c.keywords || []),
+    [findingsCatalog],
+  );
   const missingFindingLocations = findingsMissingLocation(findingTags, locationCatalog.policy, details);
   const openStep = decideSteps.includes(activeStep) ? activeStep : lastDecideStep;
   const stepProps = (n, summary, done) => ({
@@ -1599,6 +1718,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // it just expressed itself as a greyed-out button with no explanation, which is unreadable once the
   // offending field is collapsed inside another step.
   const decideBlockers = action !== 'decide' ? [] : [
+    // Named rather than silent: without this the button is simply dead while the checks load (or if
+    // the load failed), which reads as a broken screen.
+    !checksReady && { step: 2, label: t('checks.loading') },
     odoGateBlocked && { step: 1, label: t('workflow.decideStep.needOdometerCheck') },
     requiresMaintenance && !causesComplete && { step: 3, label: t('workflow.decideStep.needCauses') },
     requiresMaintenance && !faultSeverity && { step: 4, label: t('workflow.decideStep.needSeverity') },
@@ -1606,6 +1728,12 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // a ticket, so a report that lists them cannot also say "no maintenance needed". Points at step 2,
     // because untick-the-findings is the fix when the inspector really means the car is clear.
     clearanceWithFindings && { step: 2, label: t('workflow.decideStep.needNoFindings', { n: symptoms.length }) },
+    // A system check may not be silently skipped. Named individually rather than as a count, because
+    // "answer the battery check" is actionable and "2 checks unanswered" is a scavenger hunt.
+    checkPlan.unanswered.length > 0 && { step: 2, label: t('checks.blocking', { list: checkPlan.unanswered.join(', ') }) },
+    // A report cannot approve work and simultaneously say the car needs none.
+    !requiresMaintenance && checkBornFindings.length > 0
+      && { step: 2, label: t('checks.blockingClearance', { n: checkBornFindings.length }) },
   ].filter(Boolean);
 
   // Submit-button label: the branching steps spell out their decision; the rest use the action's submit verb.
@@ -1776,11 +1904,28 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   : t('workflow.decideStep.notAnswered'),
                 // "Answered" cuts both ways: a ticket needs at least one finding, and a clearance needs
                 // none — a step showing 3 findings under a "no maintenance" decision is not complete.
-                requiresMaintenance ? symptoms.length > 0 : symptoms.length === 0,
+                // Every system check must also have a result, or the step is not done however the
+                // findings look: an unanswered obligation is the one thing this screen must not allow
+                // to slide past ([[VehicleCheckRequirement]]).
+                (requiresMaintenance ? symptoms.length > 0 : symptoms.length === 0)
+                  && checkPlan.unanswered.length === 0,
               )}
               title={t('workflow.decideStep.findingsTitle')}
               hint={t('workflow.decideStep.findingsHint')}
             >
+              {/* SYSTEM CHECKS — above the findings picker, deliberately. These are the questions the
+                  platform ASKED; the picker below is what the inspector found on his own. Answering a
+                  check "OK" resolves it and adds nothing, which is the outcome the old screen could
+                  only express by inventing a fault. */}
+              <SystemChecks
+                checks={requiredChecks}
+                value={checkAnswers}
+                onChange={setCheckAnswers}
+                findingKeywords={findingKeywordList}
+                t={t}
+                lang={lang}
+              />
+
               {inspectChecklist.length > 0 && (
                 <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3">
                   <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-sky-700">
@@ -1797,6 +1942,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 </div>
               )}
               <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} required={requiredFindings} requiredNote={t('Required by the oil follow-up — the recall exists because this car needs an oil change.')} suggested={dataSuggested} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="test_findings" />
+              {/* Faults the answered system checks will add on submit. Shown because they are NOT in
+                  the picker above — the inspector never tapped them — and a fault appearing on the
+                  ticket that nobody selected reads as a bug rather than as his own decision. */}
+              {checkBornFindings.length > 0 && (
+                <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-teal-50 px-2.5 py-1.5 text-[11px] text-teal-800 ring-1 ring-inset ring-teal-200">
+                  <Icon.Shield className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  {t('checks.willAddFindings', { list: checkBornFindings.join(', ') })}
+                </p>
+              )}
               {/* WHAT IS WRONG, HOW MANY, AND WHERE. Sits inside the findings step rather than as a step of
                   its own: it is the same question continued — you said Scratch, now say how many and where on
                   the car. Renders only the faults that HAVE a place (the policy comes from the catalog, so a
@@ -2553,12 +2707,153 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               <Input label={t('workflow.tempRelease.takenByLabel')} value={takenBy} onChange={(e) => setTakenBy(e.target.value)} placeholder={currentUser?.name || t('workflow.tempRelease.takenByPlaceholder')} />
               <p className="mt-1 text-xs text-slate-400">{t('workflow.tempRelease.takenByHint')}</p>
             </div>
+            {/* What happens NEXT, said plainly — nobody signs off on a car leaving the workshop without
+                knowing who drives it and how it gets back. */}
+            <div className="rounded-lg bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-500 ring-1 ring-inset ring-slate-200">
+              {t('workflow.tempRelease.whatNext')}
+            </div>
+          </div>
+        )}
+
+        {/* Release OUT DISPATCH — the supervisor says where the released car goes and who takes it.
+            Mirrors the garage dispatch, except the destination is a plain place, not a garage. */}
+        {action === 'assignReleaseMove' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-600/10">
+              {t('workflow.tempRelease.assignHint', {
+                garage: ticket?.active_temporary_release?.garage_snapshot || ticket?.garage || t('workflow.hint.garageNotAssigned'),
+                why: ticket?.active_temporary_release?.reason_label || '',
+              })}
+            </div>
+            <div>
+              <Input
+                label={t('workflow.tempRelease.destinationLabel')}
+                value={releaseDestination}
+                onChange={(e) => setReleaseDestination(e.target.value)}
+                required
+                placeholder={t('workflow.tempRelease.destinationPlaceholder')}
+              />
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {RELEASE_DESTINATIONS.map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setReleaseDestination(d)}
+                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                      releaseDestination === d
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-white text-slate-600 ring-1 ring-inset ring-slate-300 hover:bg-slate-50'}`}
+                  >
+                    {t(`workflow.tempRelease.destination.${d}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.tempRelease.driverLabel')}</span>
+              <SearchSelect value={driverId} onChange={setDriverId} options={driverOptions} placeholder={t('workflow.ph.searchDriver')} />
+              <p className="mt-1 text-xs text-slate-400">{t('workflow.tempRelease.driverHint')}</p>
+            </div>
+            <Textarea label={t('workflow.tempRelease.moveNoteLabel')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+          </div>
+        )}
+
+        {/* Release OUT PICKUP — the driver has the keys. This is the moment the car actually leaves the
+            garage, so the OUT reading is captured here and nowhere else. */}
+        {action === 'startReleaseMove' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-600/10">
+              {t('workflow.tempRelease.pickupHint', {
+                garage: ticket?.active_temporary_release?.garage_snapshot || ticket?.garage || t('workflow.hint.garageNotAssigned'),
+                destination: ticket?.active_temporary_release?.destination || '',
+              })}
+            </div>
             <div>
               <Input label={t('workflow.tempRelease.odometerOutLabel')} type="number" min="1" required value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={t('workflow.ph.odometerExample')} />
               {lastKnownOdometer(ticket) != null && (
                 <p className="mt-1 text-xs text-slate-400">{t('workflow.tempRelease.odometerOutHint', { km: lastKnownOdometer(ticket).toLocaleString() })}</p>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Release OUT ARRIVAL — the car is parked where it was sent. */}
+        {action === 'arriveAtDestination' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-emerald-50/70 px-3 py-2 text-sm text-emerald-700 ring-1 ring-inset ring-emerald-600/10">
+              {t('workflow.tempRelease.arriveHint', { destination: ticket?.active_temporary_release?.destination || '' })}
+            </div>
+            <Textarea label={t('workflow.tempRelease.arriveNoteLabel')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+          </div>
+        )}
+
+        {/* CALL IT BACK — the repair wants the car again. Nothing to fill in: this only re-opens the
+            dispatch queue, where the garage and the driver are settled. */}
+        {action === 'requestReleaseReturn' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-indigo-50/70 px-3 py-2 text-sm text-indigo-700 ring-1 ring-inset ring-indigo-600/10">
+              {t('workflow.tempRelease.callBackHint', {
+                destination: ticket?.active_temporary_release?.destination || '',
+                garage: ticket?.active_temporary_release?.return_garage || ticket?.active_temporary_release?.garage_snapshot || ticket?.garage || '',
+              })}
+            </div>
+            {/* The faults are still open exactly as they were — that is the whole point of a release
+                over a pause, and it's worth showing at the moment the car is called back in. */}
+            {ticket?.findings?.length > 0 && (
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('workflow.tempRelease.faultsTitle')}</p>
+                <FindingsList findings={ticket.findings} tasks={ticket.tasks} showPending />
+                <p className="mt-2 text-xs text-slate-500">{t('workflow.tempRelease.faultsStayHint')}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Release RETURN DISPATCH — the garage it left, pre-selected and changeable, plus a driver. */}
+        {action === 'assignReleaseReturn' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-600/10">
+              {t('workflow.tempRelease.returnAssignHint', { destination: ticket?.active_temporary_release?.destination || '' })}
+            </div>
+            <div>
+              <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.tempRelease.returnGarageLabel')}<Req /></span>
+              <SearchSelect value={vendorId} onChange={setVendorId} options={garageOptions} placeholder={t('workflow.ph.confirmGarage')} />
+              {ticket?.active_temporary_release?.garage_snapshot && (
+                <p className="mt-1.5 text-xs text-slate-400">
+                  {String(vendorId) === String(ticket.active_temporary_release.vendor_id_snapshot || '')
+                    ? t('workflow.tempRelease.sameGarageNote', { garage: ticket.active_temporary_release.garage_snapshot })
+                    : t('workflow.tempRelease.changedGarageNote', { garage: ticket.active_temporary_release.garage_snapshot })}
+                </p>
+              )}
+            </div>
+            <div>
+              <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.tempRelease.driverLabel')}</span>
+              <SearchSelect value={driverId} onChange={setDriverId} options={driverOptions} placeholder={t('workflow.ph.searchDriver')} />
+              <p className="mt-1 text-xs text-slate-400">{t('workflow.tempRelease.driverHint')}</p>
+            </div>
+            <Textarea label={t('workflow.tempRelease.moveNoteLabel')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+          </div>
+        )}
+
+        {/* CANCEL THE RELEASE — the car never left; close it out with nothing recorded against it. */}
+        {action === 'cancelRelease' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600 ring-1 ring-inset ring-slate-200">
+              {t('workflow.tempRelease.cancelHint', {
+                garage: ticket?.active_temporary_release?.garage_snapshot || ticket?.garage || '',
+              })}
+            </div>
+            <Textarea label={t('workflow.tempRelease.cancelReasonLabel')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+          </div>
+        )}
+
+        {/* Release RETURN PICKUP — collected from where it was parked. */}
+        {action === 'startReleaseReturn' && (
+          <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-600/10">
+            {t('workflow.tempRelease.returnPickupHint', {
+              destination: ticket?.active_temporary_release?.destination || '',
+              garage: ticket?.active_temporary_release?.return_garage || ticket?.active_temporary_release?.garage_snapshot || '',
+            })}
           </div>
         )}
 
@@ -2571,12 +2866,21 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             ? Number(odometer) - Number(outKm) : null;
           return (
             <div className="space-y-3">
+              <div className="rounded-lg bg-emerald-50/70 px-3 py-2 text-sm text-emerald-700 ring-1 ring-inset ring-emerald-600/10">
+                {t('workflow.tempRelease.backHint', { garage: rel?.return_garage || rel?.garage_snapshot || ticket?.garage || '' })}
+              </div>
               {rel && (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
                   <div className="flex items-center justify-between">
                     <span className="text-slate-500">{t('workflow.tempRelease.outFor')}</span>
                     <span className="font-semibold text-slate-700">{rel.reason_label}{rel.taken_by ? ` · ${rel.taken_by}` : ''}</span>
                   </div>
+                  {rel.destination && (
+                    <div className="mt-1 flex items-center justify-between">
+                      <span className="text-slate-500">{t('workflow.tempRelease.destinationLabel')}</span>
+                      <span className="font-semibold text-slate-700">{rel.destination}</span>
+                    </div>
+                  )}
                   {outKm != null && (
                     <div className="mt-1 flex items-center justify-between">
                       <span className="text-slate-500">{t('workflow.tempRelease.odometerOutLabel')}</span>

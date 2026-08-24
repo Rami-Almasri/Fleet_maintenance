@@ -25,6 +25,14 @@ const BYPASS_ROLES = ['admin', 'super-admin'];
 // Paths nobody is ever blocked from — every signed-in user needs these.
 const ALWAYS_ALLOWED = ['/notifications', '/settings'];
 
+// NOTE on '/control-desk' — it is deliberately absent from every list below. The hub filters its own
+// sidebar section by section (each section declares the route it replaced, so the rules for
+// '/inspection-review', '/oil-projection', '/invoice-matching' and '/finding-keywords' still bite),
+// and today no role is denied all four: the driver and finance keep Invoice Matching, the inspector
+// keeps Invoice Matching, the Controller keeps three. If a future rule ever denies a role all four,
+// add '/control-desk' to that role's list too — otherwise it gets a nav entry that opens on
+// "You don't have access to this page".
+
 // role slug → paths that role must never see.
 // Blocking a path also blocks everything under it (e.g. '/vehicles' also hides
 // '/vehicles/123'), so parent paths are enough.
@@ -40,7 +48,7 @@ export const ROLE_BLOCKED_PATHS = {
   logistics: [
     '/',                        // Workspace landing (Dashboard-gated)
     '/dashboard',               // Classic fleet Dashboard
-    '/car-status',
+    '/reports',                 // the management reports read the very board this role is kept off
     '/inspection-review',
     '/inspections/schedules',
     '/service-reminders',
@@ -131,8 +139,6 @@ export const ROLE_BLOCKED_PATHS = {
   //   · Service Reminders / Parts / Keyword Risk — scheduling, procurement and
   //     vocabulary admin. His report auto-raises part requests; he never opens
   //     the procurement board himself.
-  //   · Car Status — overlaps Vehicles, which he keeps for plate lookup and the
-  //     car's timeline / past faults / odometer.
   //   · Component Intelligence — the fleet-wide asset/warranty board is a
   //     procurement surface. What a car currently has fitted is on that car's
   //     own Components tab, which he reaches through Vehicles.
@@ -157,7 +163,7 @@ export const ROLE_BLOCKED_PATHS = {
     '/garage-finder',      // a tab of /garages, denied below
     '/in-garage',          // ditto — the Controllers' whereabouts board
     '/components',
-    '/car-status',
+    '/reports',                 // the management reports read the very board this role is kept off
     '/driver-dispatch',         // the supervisor assigns; the inspector doesn't
     '/maintenance-swap',
     '/damage-accidents',
@@ -247,7 +253,7 @@ export const ROLE_BLOCKED_PATHS = {
     '/field-reports',      // complaints + driver notes, one page
     '/warranties',         // a tab of /parts, which is denied below
     '/garage-finder',      // a tab of /garages, denied below
-    '/car-status',
+    '/reports',                 // the management reports read the very board this role is kept off
     '/driver-dispatch',
     '/in-garage',               // operational whereabouts, not an accounting record
     '/inspection-review',

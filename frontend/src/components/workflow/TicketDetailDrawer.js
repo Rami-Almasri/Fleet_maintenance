@@ -19,7 +19,7 @@ import ProcurementLifecycle from './ProcurementLifecycle';
 import InvoicesPanel from './InvoicesPanel';
 import TicketParts from './TicketParts';
 import SuggestedChecks from './SuggestedChecks';
-import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPausable, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased, canOrderParts, ORIGIN_LABEL } from './meta';
+import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased, isReleaseCancellable, releaseStage, canOrderParts, ORIGIN_LABEL } from './meta';
 import { SHOW_VIDEO_REVIEW, SHOW_FINANCIALS } from '../../config/features';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -364,27 +364,30 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
   // Supervisor Video-Review: the secondary "request a re-fix" (the primary "approve" comes from ACTION).
   // The whole gate is hidden while parked (SHOW_VIDEO_REVIEW = false).
   const canRefix = SHOW_VIDEO_REVIEW && tk && tk.workflow_status === 'repair_review' && can('maintenance.delegate');
-  // Pause Maintenance & Return to Service — pull a mid-repair car out for a customer (the controllers'
-  // decision). Only offered once the car is physically IN THE WORKSHOP (at-garage stages: under_repair,
-  // repair_review, ready_for_pickup) — isAtGarage ∩ isPausable drops the pre-arrival stages (pending
-  // dispatch, in transit) and the post-garage QA stages, so you only "release" a car that's actually in
-  // the shop. (isAtGarage includes closed, but isPausable excludes it.) The ticket keeps all its state
-  // and Resume continues from here; the released car becomes rentable via the backend cascade. NOTE: the
-  // backend PAUSABLE_STATES stays wider on purpose so the rental-creation "pull from maintenance" path can
-  // still auto-pause an earlier-stage ticket.
-  const canPause = tk && isPausable(tk) && isAtGarage(tk) && can('maintenance.manage');
+  // Pause & Return to Service is NO LONGER offered here. Taking a mid-repair car out of the workshop is
+  // one act with one door: Temporarily Release (below), which keeps the ticket, its stage and its faults
+  // intact and drives the car out and back as a tracked round trip. A pause — which frees the car into
+  // the rentable pool and puts the repair on hold — is only ever raised by the rental-creation "pull from
+  // maintenance" path, never by hand from a ticket. The pause/resume endpoints and the Resume /
+  // Mark Returned actions below stay: tickets paused that way still have to be brought home.
+  //
   // Vehicle Physically Returned — a light checkpoint (no handover required yet) offered while the car
   // is paused and still out; once flagged, "Resume" (the primary action) takes over and captures the
   // full return handover. Mirrors isPausedOut() — controller, supervisor, or the driver/logistics claim.
   const canMarkReturn = tk && isPausedOut(tk) && (can('maintenance.manage') || can('maintenance.delegate') || can('logistics.claim'));
   // Temporary Vehicle Release — take the car OUT of the workshop mid-repair (road test / customer test /
   // external inspection / storage) WITHOUT pausing; the ticket stays at its stage. Releasing it is the
-  // controllers' call; bringing it back may also be a supervisor or the driver/logistics claim role.
-  // Only while the car is physically IN THE WORKSHOP (at-garage stages: under_repair, repair_review,
-  // ready_for_pickup) — isAtGarage ∩ isTempReleasable, matching Pause & Release. You can't "take the car
-  // out of the workshop" before it has arrived there. (isAtGarage includes closed; isTempReleasable excludes it.)
+  // controllers' call. Only while the car is physically IN THE WORKSHOP (at-garage stages: under_repair,
+  // repair_review, ready_for_pickup) — isAtGarage ∩ isTempReleasable. You can't "take the car out of the
+  // workshop" before it has arrived there. (isAtGarage includes closed; isTempReleasable excludes it.)
+  //
+  // Everything AFTER the release — dispatching it out, the pickup, the arrival, calling it back, the
+  // return dispatch and the final arrival — is the ticket's PRIMARY action while the trip runs
+  // (resolveAction → RELEASE_ACTION), so there is no secondary "Return to workshop" button any more:
+  // the trip always has exactly one next step, and it's the big button.
   const canTempRelease = tk && isTempReleasable(tk) && isAtGarage(tk) && can('maintenance.manage');
-  const canReturnRelease = tk && isTemporarilyReleased(tk) && (can('maintenance.manage') || can('maintenance.delegate') || can('logistics.claim'));
+  // …and the way to un-say it, while the car is still standing in the garage.
+  const canCancelRelease = tk && isReleaseCancellable(tk) && can('maintenance.manage');
   // Video Evidence is relevant once the car has reached the garage (or whenever any video already exists).
   const showVideo = SHOW_VIDEO_REVIEW && tk && (tk.has_video
     || ['under_repair', 'repair_review', 'ready_for_pickup', 'in_our_park', 'ready_for_reinspection', 'reinspection_failed', 'closed'].includes(tk.workflow_status));
@@ -441,9 +444,6 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
       {canRefix && (
         <Button size="sm" variant="secondary" onClick={() => onAct('requestRefix', tk)}>{t('workflow.cardAction.requestRefix')}</Button>
       )}
-      {canPause && (
-        <Button size="sm" variant="secondary" onClick={() => onAct('pause', tk)}>{t('workflow.cardAction.pause')}</Button>
-      )}
       {canMarkReturn && (
         <Button size="sm" variant="secondary" onClick={() => onAct('markReturned', tk)}>{t('workflow.cardAction.markReturned')}</Button>
       )}
@@ -452,9 +452,9 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
           <span aria-hidden>🚗</span> {t('workflow.cardAction.temporarilyRelease')}
         </Button>
       )}
-      {canReturnRelease && (
-        <Button size="sm" variant="secondary" onClick={() => onAct('returnFromRelease', tk)}>
-          <span aria-hidden>🔧</span> {t('workflow.cardAction.returnFromRelease')}
+      {canCancelRelease && (
+        <Button size="sm" variant="secondary" onClick={() => onAct('cancelRelease', tk)}>
+          <span aria-hidden>↩️</span> {t('workflow.cardAction.cancelRelease')}
         </Button>
       )}
       {/* Recovery (towing) is NOT offered here. It stays the PRIMARY action for a Breakdown ticket
@@ -536,11 +536,12 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                 )}
                 {/* Temporarily out — the car left the workshop mid-repair (road test / customer test). Its
                     workflow_status stays at the repair stage, so without this the deck would read "In
-                    Workshop" while the car is physically gone. This makes the OUT state explicit, so the
-                    "Return to workshop" action reads correctly (it only shows while the car is out). */}
+                    Workshop" while the car is physically gone. The badge names the leg the trip is on,
+                    because "out" alone doesn't say whether it's still at the garage, driving somewhere,
+                    parked, or on its way back. */}
                 {isTemporarilyReleased(tk) && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-400/20 px-2.5 py-1 text-xs font-bold text-amber-200 ring-1 ring-inset ring-amber-400/40">
-                    🚗 {t('workflow.tempRelease.outBadge')}
+                    🚗 {releaseStage(tk) ? t(`workflow.tempRelease.stage.${releaseStage(tk)}`) : t('workflow.tempRelease.outBadge')}
                   </span>
                 )}
               </div>

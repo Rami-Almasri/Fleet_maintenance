@@ -52,7 +52,67 @@ class PartRequestResource extends JsonResource
             'rejected_at'         => optional($this->rejected_at)->toIso8601String(),
             'rejection_reason'    => $this->rejection_reason,
             'purchases'           => PartPurchaseResource::collection($this->whenLoaded('purchases')),
+
+            // THE LAST TIME WE BOUGHT THIS PART FOR THIS CAR — the one fact that turns "approve this
+            // request" into a decision rather than a rubber stamp: we fitted the same part here before,
+            // on that date, for that money, from that supplier. Purchases belonging to THIS request are
+            // excluded, so the answer is always about a PREVIOUS occasion.
+            //
+            // "The same part" is PartIdentityService's answer and nobody else's (catalog row → known
+            // namings → SKU), so a change of wording between two buys cannot hide the repeat.
+            //
+            // Opt-in (?with_last_purchase=1): it costs one query per row, which is fine for the handful
+            // of rows on one ticket and not fine for a 50-row page of the fleet-wide Parts board.
+            'last_purchase'       => $this->when(
+                $request->boolean('with_last_purchase') && $this->vehicle_id,
+                fn () => $this->lastPurchaseOfSamePart(),
+            ),
+
             'created_at'          => optional($this->created_at)->toIso8601String(),
+        ];
+    }
+
+    /**
+     * The most recent purchase of the same part on the same vehicle, from any earlier request.
+     * Null when this car has never had it before — which is itself worth saying out loud.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function lastPurchaseOfSamePart(): ?array
+    {
+        $identity = app(\App\Services\PartIdentityService::class)
+            ->identityFor($this->component_catalog_id, $this->part_name, $this->part_number);
+
+        $q = \App\Models\PartPurchase::query()
+            ->where('vehicle_id', $this->vehicle_id)
+            ->where('part_request_id', '!=', $this->id)
+            ->with('sourceVendor:id,name');
+
+        $prev = app(\App\Services\PartIdentityService::class)
+            ->apply($q, $identity)
+            ->orderByDesc('purchased_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $prev) {
+            return null;
+        }
+
+        return [
+            'id'             => $prev->id,
+            'part_name'      => $prev->part_name,
+            'purchased_at'   => optional($prev->purchased_at)->toIso8601String(),
+            'purchased_by'   => $prev->purchased_by_name,
+            // What it actually cost us that time, net of anything returned.
+            'net_cost'       => $prev->netCost(),
+            'currency'       => $prev->currency,
+            'quantity'       => $prev->quantity,
+            // WHERE it came from: the supplier register name, else whatever was written down, else
+            // just "garage"/"supplier" — never a blank that reads as "nowhere".
+            'source'         => $prev->sourceVendor?->name ?: $prev->source_name,
+            'source_kind'    => $prev->purchase_source,
+            'maintenance_id' => $prev->maintenance_id,
+            'result'         => $prev->result,
         ];
     }
 }

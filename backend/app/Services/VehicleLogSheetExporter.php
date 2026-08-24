@@ -76,6 +76,7 @@ class VehicleLogSheetExporter
         'temp_returned'             => 'Returned to Workshop',
         'oil_recall_sales_confirmed' => 'Sales Confirmed Return',
         'oil_recall_instructed'      => 'Collection Instructions Set',
+        'oil_recall_handed_to_supervisor' => 'Handed to the Supervisors',
         'oil_change_recorded'        => 'Oil Changed',
         'oil_recall_returned'        => 'Returned to Customer',
         'readiness_confirmed'       => 'Readiness Confirmed',

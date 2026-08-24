@@ -435,11 +435,142 @@ const RECALL_STAGES = [
   { key: 'at_workshop',       label: 'At the workshop',   who: 'Review the follow-up request and send it in' },
   { key: 'inspection',        label: 'Inspection / test', who: 'Abu Maroof is testing the car' },
   { key: 'oil_service',       label: 'Oil change',        who: 'The oil service ticket is open' },
+  // NB: two of these lines change with the route the test answer picked — see `stageWho()` below. A
+  // car that arrives with no test is not waiting for anyone to review anything, and an oil ticket
+  // with no garage on it yet is waiting for a Supervisor, not for a workshop.
   { key: 'return_to_customer', label: 'Give it back',     who: 'Hand the car back — the customer is still paying for it' },
   { key: 'completed',         label: 'Completed',         who: 'Everything this recall owed is done' },
 ];
 
 const STAGE_INDEX = Object.fromEntries(RECALL_STAGES.map((s, i) => [s.key, i]));
+
+/**
+ * "Who does it" for the step the car is actually on — which is not always the same sentence.
+ *
+ * The test answer on a recall is a ROUTE. With a test the car is announced to the review queue and
+ * handed to the Inspector; without one it goes to the Supervisors, who read the dial and pick the
+ * garage. Two steps therefore have two owners, and printing the wrong one sends somebody to a queue
+ * that has no card in it for this car.
+ */
+function stageWho(stage, recall) {
+  if (stage?.key === 'at_workshop' && recall?.awaiting_supervisor) {
+    return 'Waleed / Abdullah take it: read the odometer and pick the garage';
+  }
+  if (stage?.key === 'oil_service' && recall?.service_ticket?.awaiting_garage) {
+    return 'Waleed / Abdullah pick the garage and enter the odometer';
+  }
+  return stage?.who;
+}
+
+/**
+ * THE SUPERVISOR'S STEP — the car is standing here with no test asked for, so it is his.
+ *
+ * Two answers and nothing else, because two answers are the whole job: what the dial says now, and
+ * which garage it goes to. Both are on this one panel deliberately. The alternative — open the
+ * ticket and let him find it on the dispatch board — is how a car ends up sitting in a yard while
+ * everyone assumes somebody else picked a shop.
+ *
+ * The garage may be left empty: the ticket then waits in his own dispatch lane, which is the same
+ * choice one step later. What he can never do is have the choice taken away from him.
+ */
+function SupervisorHandOver({ r, recall, onChanged }) {
+  const { t, tf } = useI18n();
+  const toast = useToast();
+  const [garages, setGarages] = useState([]);
+  const [odometer, setOdometer] = useState('');
+  const [vendorId, setVendorId] = useState('');
+  const [busy, setBusy] = useState(false);
+  // The ticket may already exist (the driver's arrival opened it) — in which case this panel is
+  // finishing the job rather than starting it, and only the garage is still missing.
+  const opened = !!recall?.service_ticket?.awaiting_garage;
+
+  // The shops, same source and same filter the dispatch board uses — one list of garages fleet-wide.
+  useEffect(() => {
+    let alive = true;
+    api.get('/Vendor')
+      .then((res) => {
+        if (!alive) return;
+        const raw = res.data?.data;
+        const all = Array.isArray(raw) ? raw : raw?.items || [];
+        const shops = all.filter((x) => x.type === 'garage');
+        setGarages(shops.length ? shops : all);
+      })
+      .catch(() => setGarages([]));
+    return () => { alive = false; };
+  }, []);
+
+  const submit = async () => {
+    if (odometer === '' || Number.isNaN(Number(odometer))) {
+      return toast.error(t('Enter the odometer reading off the dashboard'));
+    }
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/Contract/${r.contract_id}/oil-recall/hand-over`, {
+        odometer: Number(odometer),
+        vendor_id: vendorId ? Number(vendorId) : null,
+      });
+      toast.success(vendorId
+        ? t('Sent to the garage — oil change ticket #{id}', { id: data?.data?.ticket_id })
+        : t('Opened as ticket #{id} — pick the garage in your dispatch queue', { id: data?.data?.ticket_id }));
+      setVendorId('');
+      setOdometer('');
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.response?.data?.message || t('Could not hand it over.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 rounded-lg border-2 border-amber-400 bg-amber-50 p-3">
+      <div className="text-sm font-bold text-amber-900">
+        🔧 {tf('oil.recall.handover.title', 'The car is here — send it for its oil change')}
+      </div>
+      <p className="mt-0.5 text-xs leading-snug text-amber-800">
+        {opened
+          ? tf('oil.recall.handover.bodyOpen', 'The oil change is open as ticket #{id} and no garage has been chosen yet. Read the odometer off the dashboard and pick the garage — it goes straight there.', { id: recall.service_ticket.id })
+          : tf('oil.recall.handover.body', 'No test was asked for, so nobody is holding this car. Read the odometer off the dashboard and choose the garage — that opens the oil change ticket and sends it there.')}
+      </p>
+
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900">
+            {tf('oil.recall.handover.odometer', 'Odometer now')}
+          </span>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={odometer}
+            onChange={(e) => setOdometer(e.target.value)}
+            placeholder={t('e.g. {n}', { n: '137969' })}
+            className="w-32 rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-sm tabular-nums outline-none focus:border-amber-500"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900">
+            {tf('oil.recall.handover.garage', 'Garage')}
+          </span>
+          <select
+            value={vendorId}
+            onChange={(e) => setVendorId(e.target.value)}
+            className="min-w-[11rem] rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500"
+          >
+            <option value="">{t('Decide later — keep it in my queue')}</option>
+            {garages.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+        </label>
+        <Button size="sm" variant="primary" loading={busy} onClick={submit}>
+          {vendorId
+            ? tf('oil.recall.handover.send', 'Send to the garage')
+            : opened
+              ? tf('oil.recall.handover.reading', 'Save the reading')
+              : tf('oil.recall.handover.open', 'Open the oil change')}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * The recall's own panel: where it has got to, the single action available now, and the work the
@@ -526,7 +657,7 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
               <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 {tf('oil.recall.nextUp', 'Next')}
               </div>
-              <div className="text-sm font-semibold leading-snug">{t(current.who)}</div>
+              <div className="text-sm font-semibold leading-snug">{t(stageWho(current, recall))}</div>
             </div>
           </div>
         )}
@@ -667,6 +798,45 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
             <p className="mt-2 text-xs leading-snug text-slate-500">
               {tf('oil.recall.required.note', 'The oil change is why this car is coming back, so it cannot be removed. The test is optional and can be changed until the car arrives.')}
             </p>
+
+            {/* ── WHAT THE ANSWER ACTUALLY DOES ────────────────────────────────────────────────
+                The tick is not a preference, it is the hand-off: it decides whose queue this car
+                lands in when it rolls through the gate. Said here, in the same box, because the
+                person ticking it is deciding somebody else's morning. */}
+            <div className="mt-2 flex items-start gap-2 rounded-md bg-white/70 px-2.5 py-2 text-xs leading-snug text-slate-600 ring-1 ring-inset ring-slate-200">
+              <span aria-hidden>➜</span>
+              <span>
+                {test?.required
+                  ? tf('oil.recall.route.inspector', 'On arrival it goes to Abu Maroof: the request is waiting in the review queue, and approving it starts the inspection workflow. The oil change rides on that same visit.')
+                  : parking
+                    ? tf('oil.recall.route.parking', 'On arrival Abu Maroof changes the oil here in our parking — no garage, no test.')
+                    : tf('oil.recall.route.supervisor', 'No test — on arrival it goes straight to Waleed / Abdullah: the oil change opens in their queue and they enter the odometer and pick the garage.')}
+              </span>
+            </div>
+
+            {/* The car is standing here and nobody has been handed it — normally the driver's
+                "Arrived" tap does this, so this button is the same step by hand. */}
+            {/* Shown while the Supervisor's decision is still outstanding — whether the ticket has
+                been opened yet or not. The driver's arrival tap opens it automatically WITHOUT a
+                garage (a driver parking a car at night has no business choosing the shop), so the
+                panel has to survive that: the ticket existing is not the same as somebody having
+                decided where the car goes. */}
+            {canRecord && (recall.awaiting_supervisor || recall.service_ticket?.awaiting_garage) && (
+              <SupervisorHandOver r={r} recall={recall} onChanged={onChanged} />
+            )}
+
+            {/* Once it IS theirs, say where it got to — "Oil change" on its own hides whether
+                anybody has actually picked a garage yet. */}
+            {recall.service_ticket && (
+              <p className="mt-2 text-xs text-slate-500">
+                {recall.service_ticket.awaiting_garage
+                  ? tf('oil.recall.ticket.awaitingGarage', 'Oil change ticket #{id} is open — waiting for a garage to be picked.', { id: recall.service_ticket.id })
+                  : tf('oil.recall.ticket.open', 'Oil change ticket #{id}{garage}.', {
+                    id: recall.service_ticket.id,
+                    garage: recall.service_ticket.garage ? ` · ${recall.service_ticket.garage}` : '',
+                  })}
+              </p>
+            )}
           </div>
         )}
       </div>

@@ -95,7 +95,7 @@ export default function DriverObservations() {
       key: 'vehicle',
       header: t('driverObs.col.vehicle'),
       render: (r) => (
-        <Link to={`/car-status/${r.vehicle_id}`} className="font-mono text-sm font-bold text-slate-800 hover:text-indigo-600">
+        <Link to={`/vehicles/${r.vehicle_id}`} className="font-mono text-sm font-bold text-slate-800 hover:text-indigo-600">
           {r.plate || `#${r.vehicle_id}`}
         </Link>
       ),

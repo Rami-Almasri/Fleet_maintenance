@@ -67,9 +67,11 @@ const CATEGORIES = [
     tone: 'amber',
     modules: ['maintenance'],
     permission: 'maintenance.view',
-    viewAllTo: '/car-status',
+    viewAllTo: '/maintenance-workflow',
+    // The ticket is the whole story of this visit, so that's where a row opens; a car we only know
+    // about from the sheet contract has no ticket to open, and falls back to its profile.
     map: (it, t) => ({
-      to: it.id ? `/car-status/${it.id}` : '/car-status',
+      to: it.ticket_id ? `/maintenance-workflow/${it.ticket_id}` : it.id ? `/vehicles/${it.id}` : '/maintenance-workflow',
       title: vehicleTitle(it, t('Vehicle')),
       sub: etaSub(t, it),
       tone: it.eta?.days_over > 0 ? 'red' : 'amber',

@@ -125,7 +125,17 @@ class MaintenanceWorkflowController extends Controller
         // Operations card (`ops`) — the State-resolver graph, the progress checkpoints and the follow-up
         // owners, so a fully-hydrated ticket carries the SAME ops block the board does.
         'tasks.partRequests.purchases', 'tasks.partRequests.purchases.sourceVendor:id,name',
-        'checkpoints', 'responsibles:id,name', 'pickedUpFromGarageBy:id,name'];
+        'checkpoints', 'responsibles:id,name', 'pickedUpFromGarageBy:id,name',
+        // SYSTEM CHECKS — the obligations the Decide step must resolve. On the hydrated ticket only;
+        // the board's own query does not load this relation, so the 141-card queue pays nothing.
+        'checkRequirements.inspector:id,name',
+        // Temporary Vehicle Release — while the car is out, the release row (and the drivers named on its
+        // legs) is what the ticket's whole action surface reads from, so it never lazy-loads.
+        'activeTemporaryRelease.outDriver:id,name', 'activeTemporaryRelease.returnDriver:id,name',
+        // The OfficeManager maintenance contract this visit was opened under — the paper the whole visit
+        // hangs off. The ticket view shows its header (number, customer, window, money) so a reader does
+        // not have to leave the ticket to learn what the office recorded for the same visit.
+        'contract.customer:id,name_en,name_ar'];
 
     // Mileage-chain sources kept OUT of the drawer's chain. Purely a display filter: the readings still
     // exist on their source rows (contracts, tickets) and every other consumer — utilization, the mileage
@@ -175,6 +185,8 @@ class MaintenanceWorkflowController extends Controller
         'partRequests', 'partRequests.purchases',
         'checkpoints', 'responsibles:id,name',
         'activeMove',
+        // A released card's next action, its lane and its custody gate all come off the release row.
+        'activeTemporaryRelease.outDriver:id,name', 'activeTemporaryRelease.returnDriver:id,name',
     ];
 
     public function __construct(
@@ -258,6 +270,40 @@ class MaintenanceWorkflowController extends Controller
         // answer. Both are derived from config + the catalogs; neither is hard-coded per fault type.
         $locations = app(\App\Services\FaultLocationService::class);
 
+        // WHAT KIND OF WORK IS THIS WORD? — resolved for every selectable keyword, shipped with the
+        // catalog, so the picker can say "Service" or "Fault" on the chip ITSELF rather than the
+        // answer only becoming visible after the task exists.
+        //
+        // The distinction is real work, not decoration: a service is planned upkeep falling due, a
+        // fault is a claim the car failed — and only the fault feeds Top Faults, recurrence and the
+        // health score (see the two-menus note below). An inspector picking "Oil Change" and one
+        // picking "Engine noise" are doing different things, and until now the screen looked identical
+        // for both. Resolved through EventClassificationService — the SAME resolver syncFromFindings()
+        // uses — so the badge cannot disagree with the task that is eventually created.
+        //
+        // One pass over ~200 keywords against maps the classifier builds once; the modal already makes
+        // this call exactly once.
+        // MERGED INTO keyword_risk rather than shipped as a fourth map: every picker in the app
+        // already receives that one (three separate fetch sites), so a keyword's kind reaches all of
+        // them without threading a new prop through screens this change has no other business
+        // touching. Entries are CREATED for catalog words the keyword library has no row for, so
+        // coverage is the catalog's, not the library's.
+        $classifier  = app(\App\Services\EventClassificationService::class);
+        $keywordRisk = $keywordRisk->toArray();
+
+        foreach ((array) config('maintenance_findings.categories', []) as $category) {
+            foreach ($category['keywords'] ?? [] as $keyword) {
+                $kind = $classifier->classifyFromFinding(['text' => $keyword])['kind'] ?? null;
+
+                $keywordRisk[$keyword] = ($keywordRisk[$keyword] ?? []) + [];
+                // Null is honest and NOT hidden. A keyword neither catalog recognises is promoted by
+                // the legacy shield, which DEFAULTS it to fault — so omitting the badge would let a
+                // word quietly become a fault while looking like a considered choice.
+                $keywordRisk[$keyword]['kind']       = $kind;
+                $keywordRisk[$keyword]['kind_label'] = $kind ? (MaintenanceTask::KIND_META[$kind]['label'] ?? $kind) : null;
+            }
+        }
+
         return ResponseHelper::SuccessResponse(
             [
                 'categories'        => array_values(config('maintenance_findings.categories', [])),
@@ -267,7 +313,9 @@ class MaintenanceWorkflowController extends Controller
                 'maintenance_types' => $types,
                 // Keyed by normalised symptom (FaultCause::normalizeKey) → [{ id, root_cause, description }]
                 'fault_causes'      => $faultCauses,
-                // Keyed by keyword string → { risk, label, tone, emoji, rank } (active library rows only)
+                // Keyed by keyword string → { risk, label, tone, emoji, rank } from the active library,
+                // PLUS { kind, kind_label } for every catalog word — service | fault | damage, or null
+                // when neither catalog recognises it (see the classification block above).
                 'keyword_risk'      => $keywordRisk,
                 // Grouped "where on the car" vocabulary → [{ key, label, label_ar, locations[] }]
                 'locations'         => $locations->groupedCatalog(),
@@ -741,6 +789,15 @@ class MaintenanceWorkflowController extends Controller
                 ->orderByDesc('id')
                 ->get();
 
+            // Temporary Vehicle Release — while a car is out, its ticket's workflow_status is FROZEN at the
+            // repair stage it left (it is still "In Workshop" as far as the repair is concerned), but the
+            // car itself is being driven somewhere, parked, and driven back. The board follows the CAR: a
+            // released ticket is lifted out of its frozen lane and dropped into the lane its release leg is
+            // at (Needs Dispatch → Awaiting Pickup → En Route → Returned — Resume Due → and round again for
+            // the way back). See MaintenanceTemporaryRelease::STAGE_LANES.
+            $released = $open->filter(fn ($t) => $t->activeTemporaryRelease?->laneKey() !== null);
+            $open     = $open->reject(fn ($t) => $t->activeTemporaryRelease?->laneKey() !== null)->values();
+
             $columns = [];
             $counts  = [];
             foreach (self::COLUMNS as $key => $states) {
@@ -752,20 +809,25 @@ class MaintenanceWorkflowController extends Controller
                 if ($key === 'paused') {
                     $bucket = $bucket->whereNull('vehicle_returned_at')->values();
                 }
+                $bucket = $bucket->concat($released->filter(fn ($t) => $t->activeTemporaryRelease->laneKey() === $key))->values();
                 $columns[$key] = MaintenanceWorkflowResource::collection($bucket);
                 $counts[$key]  = $bucket->count();
             }
 
             // Returned – Waiting Resume — the vehicle is physically back but the resume handover hasn't
             // cleared yet (an open incident, if any, stays in this same lane — it isn't a separate 8th lane).
+            // A released car parked at its destination waits in this same lane: same shape of wait — the car
+            // is somewhere else and the repair can't move until it comes back.
             $returnedWaitingResume = $open
                 ->whereIn('workflow_status', [Maintenance::WF_PAUSED_RETURNED_TO_SERVICE])
                 ->whereNotNull('vehicle_returned_at')
+                ->concat($released->filter(fn ($t) => $t->activeTemporaryRelease->laneKey() === 'returned_waiting_resume'))
                 ->values();
             $columns['returned_waiting_resume'] = MaintenanceWorkflowResource::collection($returnedWaitingResume);
             $counts['returned_waiting_resume']  = $returnedWaitingResume->count();
 
-            $counts['open_total'] = $open->count();
+            // Every live ticket, including the ones lifted into a release lane above.
+            $counts['open_total'] = $open->count() + $released->count();
 
             // "Completed today" — workflow tickets that reached their closing timestamp since midnight
             // (car back in the fleet). Feeds the board's Workshop-Control strip; a single cheap count,
@@ -1002,7 +1064,15 @@ class MaintenanceWorkflowController extends Controller
                 ->orderByRaw('last_state_change_at IS NULL, last_state_change_at DESC')
                 ->orderByDesc('id')
                 ->get();
+            // A temporarily-released car's repair is FROZEN while it is out — nobody can work on it, so it
+            // must not sit in the repair sections below pretending to be actionable. It gets its own
+            // sections (the release round trip), the same way the board gives it its own lane.
+            $released = $open->filter(fn ($t) => $t->activeTemporaryRelease?->isOpen());
+            $open     = $open->reject(fn ($t) => $t->activeTemporaryRelease?->isOpen())->values();
+
             $section = fn (array $states) => $open->whereIn('workflow_status', $states)->values();
+            /** Released tickets sitting at any of these release stages. */
+            $releaseSection = fn (array $stages) => $released->filter(fn ($t) => in_array($t->activeTemporaryRelease->stage, $stages, true))->values();
 
             $sections = [];
             $counts   = [];
@@ -1026,6 +1096,16 @@ class MaintenanceWorkflowController extends Controller
                     Maintenance::WF_READY_FOR_PICKUP,
                 ])
                 ->values();
+            // A release leg named to this person belongs in the same "someone handed ME this" list — it is
+            // the same job (drive this car there), just on a ticket whose repair is paused in place.
+            $mineReleases = $released->filter(function ($t) use ($user) {
+                $r = $t->activeTemporaryRelease;
+                return in_array($r->stage, [MaintenanceTemporaryRelease::STAGE_OUT_ASSIGNED, MaintenanceTemporaryRelease::STAGE_OUT_TRANSIT], true)
+                    ? (int) $r->out_driver_id === (int) $user->id
+                    : (in_array($r->stage, [MaintenanceTemporaryRelease::STAGE_RETURN_ASSIGNED, MaintenanceTemporaryRelease::STAGE_RETURN_TRANSIT], true)
+                        && (int) $r->return_driver_id === (int) $user->id);
+            });
+            $mine = $mine->concat($mineReleases)->values();
             $sections['assigned_to_me'] = MaintenanceWorkflowResource::collection($mine);
             $counts['assigned_to_me']   = $mine->count();
 
@@ -1065,6 +1145,34 @@ class MaintenanceWorkflowController extends Controller
                 // QA sign-off. The driver tracks them here but the close/reopen action isn't theirs
                 // (routes/api.php).
                 $add('back_from_garage', [Maintenance::WF_READY_REINSPECTION]);
+            }
+
+            // ── Temporary releases — the round trip out of the workshop and back ────────────────────
+            // Split by who owns the next step, exactly like the repair sections above: the supervisor
+            // decides where a released car goes and confirms the garage it comes back to; the driver
+            // does the moving; a parked car is a controller's call to bring back.
+            $addRelease = function (string $key, array $stages) use (&$sections, &$counts, $releaseSection) {
+                $rows = $releaseSection($stages);
+                $sections[$key] = MaintenanceWorkflowResource::collection($rows);
+                $counts[$key]   = $rows->count();
+            };
+
+            if ($isDispatcher) {
+                $addRelease('release_dispatch', [
+                    MaintenanceTemporaryRelease::STAGE_OUT_DISPATCH,
+                    MaintenanceTemporaryRelease::STAGE_RETURN_DISPATCH,
+                ]);
+            }
+            if ($isDriver) {
+                $addRelease('release_moves', [
+                    MaintenanceTemporaryRelease::STAGE_OUT_ASSIGNED,
+                    MaintenanceTemporaryRelease::STAGE_OUT_TRANSIT,
+                    MaintenanceTemporaryRelease::STAGE_RETURN_ASSIGNED,
+                    MaintenanceTemporaryRelease::STAGE_RETURN_TRANSIT,
+                ]);
+            }
+            if ($isDispatcher || $user->can('maintenance.manage')) {
+                $addRelease('released_parked', [MaintenanceTemporaryRelease::STAGE_AT_DESTINATION]);
             }
 
             return ResponseHelper::SuccessResponse(
@@ -1905,11 +2013,12 @@ class MaintenanceWorkflowController extends Controller
     }
 
     /**
-     * Temporarily Release Vehicle — the car physically leaves the workshop mid-repair (road test /
-     * customer test/delivery / external inspection / storage) while the ticket stays open at its current
-     * stage. NOT a pause: workflow_status is untouched, the car is NOT freed for rental, the ticket is
-     * never closed. Captures WHO took it, WHY and the odometer OUT. Gated to maintenance.manage (the
-     * controllers who own the "let the car leave" decision, matching the pause authority).
+     * Temporarily Release Vehicle — the DECISION that the car may leave the workshop mid-repair (road
+     * test / customer test/delivery / external inspection / storage) while the ticket stays open at its
+     * current stage. NOT a pause: workflow_status is untouched, the car is NOT freed for rental, the
+     * ticket is never closed, the faults stay exactly as they are. Nothing has moved yet — the ticket
+     * lands in Needs Dispatch and the movement legs below carry it from there. Gated to
+     * maintenance.manage (the controllers who own the "let the car leave" decision).
      */
     public function temporarilyRelease(Request $request, Maintenance $ticket)
     {
@@ -1918,30 +2027,170 @@ class MaintenanceWorkflowController extends Controller
                 'reason'         => ['required', 'string', Rule::in(MaintenanceTemporaryRelease::REASONS)],
                 // A free-text detail — MANDATORY when the reason is "Other" (there's no preset label then).
                 'reason_note'    => ['nullable', 'string', 'max:2000', Rule::requiredIf($request->input('reason') === MaintenanceTemporaryRelease::REASON_OTHER)],
-                // Who physically takes the car. Defaults to the signed-in user (they hold custody); an
-                // explicit name is only needed when someone ELSE takes it.
+                // Who the car is being released FOR. Defaults to the signed-in user; an explicit name is
+                // only needed when it goes out on someone else's behalf.
                 'taken_by'       => ['nullable', 'string', 'max:120'],
-                'release_odometer' => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
             ]);
 
             $ticket = $this->workflow->temporarilyReleaseVehicle($ticket, [
-                'reason'       => $data['reason'],
-                'reason_note'  => $data['reason_note'] ?? null,
-                'taken_by'     => trim((string) ($data['taken_by'] ?? '')) ?: $request->user()->name,
-                'odometer_out' => $data['release_odometer'],
+                'reason'      => $data['reason'],
+                'reason_note' => $data['reason_note'] ?? null,
+                'taken_by'    => trim((string) ($data['taken_by'] ?? '')) ?: $request->user()->name,
             ], $request->user());
 
             return ResponseHelper::SuccessResponse(
                 MaintenanceWorkflowResource::make($ticket),
-                'Vehicle temporarily released — the repair stays open',
+                'Vehicle released — pick where it goes and who drives it',
                 200
             );
         });
     }
 
     /**
-     * Return Vehicle to Workshop — the temporarily-released car is back; record the odometer IN, compute
-     * the distance driven while out, and clear the overlay so the ticket presents at its (unchanged) stage
+     * Release out-dispatch — WHERE the released car goes (free text; the UI offers the common
+     * destinations as quick-picks) and, optionally, WHO drives it. Blank driver = open to the pool.
+     * Supervisor authority, matching the garage dispatch it mirrors.
+     */
+    public function assignReleaseMove(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'destination' => ['required', 'string', 'max:160'],
+                'driver_id'   => ['nullable', 'integer', 'exists:users,id'],
+                'note'        => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->assignReleaseMove($ticket, $data, $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Release dispatched — awaiting pickup',
+                200
+            );
+        });
+    }
+
+    /**
+     * Release out-pickup — the driver physically collects the car from the garage. The OUT odometer is
+     * captured here, because THIS is the moment the car leaves.
+     */
+    public function startReleaseMove(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'release_odometer' => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
+            ]);
+
+            $ticket = $this->workflow->startReleaseMove($ticket, [
+                'odometer_out' => $data['release_odometer'],
+            ], $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Car collected — en route to its destination',
+                200
+            );
+        });
+    }
+
+    /** Release out-arrival — the car is parked at its destination; it waits there until it's called back. */
+    public function arriveAtReleaseDestination(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'note' => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->arriveAtReleaseDestination($ticket, $data, $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Delivered — the car is parked at its destination',
+                200
+            );
+        });
+    }
+
+    /**
+     * Call the released car back — re-opens the dispatch queue for the return leg. The garage it left is
+     * carried through as the default destination; the supervisor confirms or changes it at the next step.
+     */
+    public function requestReleaseReturn(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $ticket = $this->workflow->requestReleaseReturn($ticket, $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Called back — confirm the garage and assign a driver',
+                200
+            );
+        });
+    }
+
+    /**
+     * Release return-dispatch — confirm (or change) the garage the car goes back to, and pick a driver.
+     * The ticket's own garage only moves when the car physically arrives there.
+     */
+    public function assignReleaseReturn(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'vendor_id' => ['nullable', 'integer', 'exists:vendors,id'],
+                'driver_id' => ['nullable', 'integer', 'exists:users,id'],
+                'note'      => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->assignReleaseReturn($ticket, $data, $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Return dispatched — awaiting pickup',
+                200
+            );
+        });
+    }
+
+    /**
+     * Cancel a release — the decision is taken back before the car has physically moved. Refused once a
+     * driver has the keys (from then on the car has to be driven back, which is the return leg).
+     * Controller authority, matching the authority that raised it.
+     */
+    public function cancelTemporaryRelease(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'reason' => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->cancelTemporaryRelease($ticket, $data['reason'] ?? null, $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Release cancelled — the car stays in the workshop',
+                200
+            );
+        });
+    }
+
+    /** Release return-pickup — the driver collects the car from where it was parked and heads to the garage. */
+    public function startReleaseReturn(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $ticket = $this->workflow->startReleaseReturn($ticket, $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Car collected — on the way back to the workshop',
+                200
+            );
+        });
+    }
+
+    /**
+     * Return Vehicle to Workshop — the temporarily-released car has ARRIVED back at the garage; record the
+     * odometer IN, compute the distance driven while out, move the ticket's garage if the return leg was
+     * pointed at a different shop, and clear the overlay so the ticket presents at its (unchanged) stage
      * again. Gated to whoever can plausibly hand the keys back (controllers, supervisors, or the
      * driver/logistics claim role) — matching mark-returned's authority.
      */
@@ -2298,6 +2547,19 @@ class MaintenanceWorkflowController extends Controller
                 // Which finding (symptom text) the part serves — the key that binds it to the fault once
                 // findings are promoted to first-class tasks.
                 'required_parts.*.finding'   => ['nullable', 'string', 'max:500'],
+                // SYSTEM CHECKS — the inspector's structured answer to each obligation the system
+                // raised on this car. Checkbox/radio only: a result code, and a decision code when the
+                // result implies work. Validated for SHAPE here and for MEANING against the catalog in
+                // MaintenanceWorkflowService::planCheckAnswers(), which is also what refuses a report
+                // that leaves any of them unanswered — the whole point being that "nobody looked" must
+                // stop being a possible outcome. See [[VehicleCheckRequirement]].
+                'check_results'                 => ['nullable', 'array'],
+                'check_results.*.id'            => ['required_with:check_results', 'integer'],
+                'check_results.*.result_code'   => ['nullable', 'string', 'max:40'],
+                'check_results.*.decision_code' => ['nullable', 'string', 'max:40'],
+                // Only read for a check type whose catalog offers no keyword of its own; a catalog
+                // keyword is never overridable from the request body.
+                'check_results.*.finding_keyword' => ['nullable', 'string', 'max:120'],
             ]);
 
             $requires = $request->boolean('requires_maintenance');

@@ -270,7 +270,7 @@ function Row({ r, open, onToggle }) {
           <div className="min-w-0 lg:w-52 lg:shrink-0">
             <div className="flex items-center gap-2">
               <Link
-                to={`/maintenance-progress?ticket=${r.ticket_id}`}
+                to={`/maintenance-workflow/${r.ticket_id}`}
                 className="font-mono text-base font-bold tracking-tight text-slate-900 transition-colors hover:text-indigo-600"
               >
                 {r.plate_no || `#${r.ticket_id}`}
@@ -359,7 +359,7 @@ function Row({ r, open, onToggle }) {
           {/* The fix is filing the answer, so the row ends in the door to the form. */}
           <div className="lg:shrink-0 lg:self-center">
             <Link
-              to={`/maintenance-progress?ticket=${r.ticket_id}`}
+              to={`/maintenance-workflow/${r.ticket_id}`}
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
             >
               {t('Chase it')}
@@ -539,7 +539,7 @@ export default function CheckpointCompliance() {
                 <div className="mt-3 flex flex-wrap gap-2">
                   {unassigned.map((u) => (
                     <Link
-                      key={u.ticket_id} to={`/maintenance-progress?ticket=${u.ticket_id}`}
+                      key={u.ticket_id} to={`/maintenance-workflow/${u.ticket_id}`}
                       className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-inset ring-rose-200 transition hover:bg-rose-50"
                     >
                       <span className="font-mono font-bold">{u.plate_no || `#${u.ticket_id}`}</span>

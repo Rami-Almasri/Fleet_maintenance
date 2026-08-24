@@ -20,6 +20,7 @@ import VehicleComplaintsPanel from '../../components/vehicles/VehicleComplaintsP
 import VehicleInvestigationTimeline from '../../components/vehicles/VehicleInvestigationTimeline';
 import VehicleComponentsPanel from '../../components/vehicles/VehicleComponentsPanel';
 import ComponentRepeatAlert from '../../components/vehicles/ComponentRepeatAlert';
+import VehicleCostIntelligence from './VehicleCostIntelligence';
 import { aed2, fmtDate, fmtClock, fmtSeconds, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
 import { faultTagSegments, isServiceOnlyVisit } from '../../lib/faultCategories';
@@ -278,6 +279,10 @@ const PRIO = {
   routine: { label: 'Routine', tone: 'green', emoji: '🟢' },
 };
 
+// OfficeManager's contract letters in the words the office uses for them. Anything else keeps its
+// raw letter rather than being hidden behind an "Other" bucket.
+const CONTRACT_TYPE_LABEL = { C: 'Rental', U: 'Maintenance', R: 'Booking' };
+
 // Top-level tabs for the profile. Keys are also the ?tab= URL value (deep-linkable / shareable).
 // 'timeline' (the old Maintenance Log feed) was merged into 'activity' — the one Timeline tab. It stays
 // in the key list so old ?tab=timeline links still resolve; changeTab() redirects them to 'activity'.
@@ -294,7 +299,7 @@ const TAB_ORIGIN = {
   journey: 'The same in-app maintenance-workflow audit trail (vehicle event log), reshaped per ticket: each workflow_status transition marks a stage, timed to the next transition — so you see every stage the car went through and how long it sat in each.',
   checkpoints: 'Workshop progress updates filed by the responsible follow-up owners (Waleed/Abdullah, or a ticket’s assigned users): the revised completion date, the reason it moved, a progress note and photos/videos. The On Schedule / Overdue status is derived automatically from the promised date; reminders escalate before a job goes overdue.',
   activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits (click one for its full record — garage, cost, issues, notes), the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share.',
-  financials: 'Reverse-engineered from OfficeManager billing via RealProfitService: rent − discount + realized usage − operating − car-level maintenance.',
+  financials: 'Every contract OfficeManager holds against this car — rental (C), maintenance (U) and booking (R) — listed newest first and filterable by type. The money on each line (debit, credit, balance) is the contract’s own billing; the cost analysis below it is reverse-engineered from that billing via RealProfitService: rent − discount + realized usage − operating − car-level maintenance.',
   media: 'Pre/post condition & odometer photos captured during the maintenance workflow (inspection & garage steps).',
   components: 'The vehicle’s physical configuration, DERIVED from the maintenance workflow — never typed in. A component appears here through one of two doors, and the row says which. PURCHASED: a ticket reached its install step (part purchased → received → installed); identity, supplier, cost, warranty and odometer are FACTS copied from the purchase order. REPORTED: a technician recorded “replaced X” at repair capture with no purchase behind it — the part is genuinely fitted, but there is no paperwork, so cost and supplier are blank rather than zero, and no warranty is claimed. Either way the install retires the part it replaced and writes both to the timeline. Age, life-used, warranty standing and cost/km are DERIVED at read time. Money figures count only the parts whose cost is known, and say how many that is. Consumables refreshed by routine servicing (oil, filters bundled with an oil change) are merged in from the service log and tagged “Service”, because they are performed work rather than tracked assets.',
 };
@@ -594,14 +599,21 @@ export default function VehicleProfile() {
   // Newest first — sort by the most recent date on the contract (out, falling back to in).
   const contractTime = (c) => { const ms = new Date(c.out_date || c.in_date || 0).getTime(); return isNaN(ms) ? 0 : ms; };
   const sortedContracts = [...contracts].sort((a, b) => contractTime(b) - contractTime(a));
-  // Contract History type filter — only offer the types this vehicle actually has.
-  const contractTypeCounts = contracts.reduce((acc, c) => { acc[c.contract_type] = (acc[c.contract_type] || 0) + 1; return acc; }, {});
+  // Contract-type filter — only offer the types this vehicle actually has. Any type OfficeManager
+  // sends that we have no name for still gets its own chip (keyed by the raw letter), so a contract
+  // can never be filtered out of existence by a label we forgot to add.
+  const contractTypeCounts = contracts.reduce((acc, c) => {
+    if (!c.contract_type) return acc; // untyped rows stay reachable under "All" rather than under a "null" chip
+    acc[c.contract_type] = (acc[c.contract_type] || 0) + 1;
+    return acc;
+  }, {});
+  const KNOWN_CONTRACT_TYPES = ['C', 'U', 'R'];
   const contractFilters = [
     { key: 'all', label: t('All'), count: contracts.length },
-    { key: 'C', label: t('Rental'), count: contractTypeCounts.C || 0 },
-    { key: 'U', label: t('Maintenance'), count: contractTypeCounts.U || 0 },
-    { key: 'R', label: t('Booking'), count: contractTypeCounts.R || 0 },
-  ].filter((f) => f.key === 'all' || f.count > 0);
+    ...[...KNOWN_CONTRACT_TYPES, ...Object.keys(contractTypeCounts).filter((k) => !KNOWN_CONTRACT_TYPES.includes(k))]
+      .map((key) => ({ key, label: t(CONTRACT_TYPE_LABEL[key] || key), count: contractTypeCounts[key] || 0 }))
+      .filter((f) => f.count > 0),
+  ];
   const filteredContracts = contractType === 'all' ? sortedContracts : sortedContracts.filter((c) => c.contract_type === contractType);
   const maintenance = data.maintenance || [];
   // Per-fault distribution for the hero telemetry card — each individual fault by its share of every
@@ -750,10 +762,22 @@ export default function VehicleProfile() {
                 </div>
               )}
               {/* Always-available: generate the printable Vehicle Report (Save-as-PDF) from this dossier. */}
-              <div className="mt-5">
+              <div className="mt-5 space-y-2">
                 <Button variant="secondary" className="w-full justify-center" onClick={() => openVehicleProfileReport(data)}>
                   <Icon.Download className="h-4 w-4" /> {t('Vehicle Report')}
                 </Button>
+                {/* The donut above says WHICH systems fail on this car; this opens the one that answers
+                    whether any of them was ever actually fixed — the full history of a single system,
+                    with what was replaced and whether it failed again after. Engine is the default
+                    because it is the question that gets asked; the page has a picker for the rest. */}
+                <Link
+                  to={`/reports/vehicle-system/${v.id}?system=engine`}
+                  className="block"
+                >
+                  <Button variant="secondary" className="w-full justify-center">
+                    <Icon.Activity className="h-4 w-4" /> {t('System Dashboard')}
+                  </Button>
+                </Link>
               </div>
             </div>
           </div>
@@ -775,7 +799,7 @@ export default function VehicleProfile() {
               // Plate History is a first-class tab, but only when this plate was actually re-issued
               // across more than one physical vehicle (self-hides for a single-holder plate).
               ...(plateReused ? [{ key: 'plate', label: t('Plate History') }] : []),
-              { key: 'financials', label: t('Rent'), badge: num(contracts.length) },
+              { key: 'financials', label: t('Contracts'), badge: num(contracts.length) },
               { key: 'visits', label: t('Visits'), badge: num(maintenance.length) },
               // The rolling-asset view: what is physically fitted to this car right now. No badge —
               // the count comes from the components API, which the profile payload does not carry.
@@ -994,55 +1018,13 @@ export default function VehicleProfile() {
         </div>
         )}
 
-        {/* ── RENT ─────────────────────────────── contract history + maintenance cost analysis */}
+        {/* ── CONTRACTS ────────────────────────── every contract this car has held, filterable by
+            type (rental / maintenance / booking), then the maintenance cost analysis behind them. */}
         {activeTab === 'financials' && (
         <div role="tabpanel" id="panel-financials" aria-labelledby="tab-financials" className="space-y-6">
-        {/* Cost analysis — per-service price trend & vs-fleet comparison */}
-        {analytics.length > 0 && (
-          <SectionCard
-            title={t('vehicleProfile.cost.title')}
-            subtitle={t('vehicleProfile.cost.subtitle')}
-          >
-            <DataTable
-              rows={analytics}
-              rowKey={(s) => s.service}
-              columns={[
-                { key: 'service', header: t('Service'), cellClass: 'font-medium text-slate-900', render: (s) => s.service },
-                { key: 'visits', header: t('Visits'), align: 'center', cellClass: 'text-slate-500', render: (s) => s.visits },
-                { key: 'latest', header: t('Latest'), align: 'right', cellClass: 'tabular-nums font-medium text-slate-900', render: (s) => aed2(s.latest_cost) },
-                {
-                  key: 'trend', header: t('Trend (vs previous)'), align: 'right',
-                  tooltip: t('Change from the previous recorded price for this service. Red = more expensive, green = cheaper.'),
-                  cellClass: 'tabular-nums font-medium',
-                  render: (s) => {
-                    const arrow = s.trend === 'up' ? '▲' : s.trend === 'down' ? '▼' : '–';
-                    const tone = s.trend === 'up' ? 'text-red-600' : s.trend === 'down' ? 'text-emerald-600' : 'text-slate-400';
-                    return <span className={tone}>{s.delta != null ? `${arrow} ${aed2(Math.abs(s.delta))}` : '—'}</span>;
-                  },
-                },
-                { key: 'avg', header: t('This car avg'), align: 'right', cellClass: 'tabular-nums text-slate-700', render: (s) => aed2(s.avg_cost) },
-                {
-                  key: 'fleet', header: t('Fleet avg'), align: 'right',
-                  tooltip: t('Average cost of this service across the whole fleet — to spot a car being over- or under-charged.'),
-                  cellClass: 'tabular-nums text-slate-700',
-                  render: (s) => {
-                    const vsFleet = (s.fleet_avg != null && s.avg_cost != null) ? s.avg_cost - s.fleet_avg : null;
-                    return (
-                      <>
-                        {s.fleet_avg != null ? aed2(s.fleet_avg) : '—'}
-                        {vsFleet != null && vsFleet !== 0 && (
-                          <span className={`ms-1 text-xs ${vsFleet > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                            {vsFleet > 0 ? t('(above)') : t('(below)')}
-                          </span>
-                        )}
-                      </>
-                    );
-                  },
-                },
-              ]}
-            />
-          </SectionCard>
-        )}
+        {/* What this car costs to run — the /cost-intelligence figures for THIS car, each shown against
+            the fleet's own, so "AED 0.42/km" reads as good or bad without leaving the page. */}
+        <VehicleCostIntelligence vehicleId={id} />
 
         {/* Contract history */}
         <SectionCard
@@ -1052,8 +1034,9 @@ export default function VehicleProfile() {
           actions={(
             <div className="flex items-center gap-3">
               <Badge tone="gray">{t('vehicleProfile.contracts.total', { n: num(contracts.length) })}</Badge>
-              {/* Type filter — only shows when the vehicle has more than one type to switch between */}
-              {contractFilters.length > 2 && (
+              {/* Type filter — pick which kind of contract you want to read. Always present so the
+                  choice is visible even on a car that has only ever held one type. */}
+              {contractFilters.length > 1 && (
                 <div className="inline-flex rounded-lg bg-slate-100 p-0.5">
                   {contractFilters.map((f) => (
                     <button
@@ -1114,6 +1097,53 @@ export default function VehicleProfile() {
             </div>
           )}
         </SectionCard>
+        {/* Cost analysis — per-service price trend & vs-fleet comparison */}
+        {analytics.length > 0 && (
+          <SectionCard
+            title={t('vehicleProfile.cost.title')}
+            subtitle={t('vehicleProfile.cost.subtitle')}
+          >
+            <DataTable
+              rows={analytics}
+              rowKey={(s) => s.service}
+              columns={[
+                { key: 'service', header: t('Service'), cellClass: 'font-medium text-slate-900', render: (s) => s.service },
+                { key: 'visits', header: t('Visits'), align: 'center', cellClass: 'text-slate-500', render: (s) => s.visits },
+                { key: 'latest', header: t('Latest'), align: 'right', cellClass: 'tabular-nums font-medium text-slate-900', render: (s) => aed2(s.latest_cost) },
+                {
+                  key: 'trend', header: t('Trend (vs previous)'), align: 'right',
+                  tooltip: t('Change from the previous recorded price for this service. Red = more expensive, green = cheaper.'),
+                  cellClass: 'tabular-nums font-medium',
+                  render: (s) => {
+                    const arrow = s.trend === 'up' ? '▲' : s.trend === 'down' ? '▼' : '–';
+                    const tone = s.trend === 'up' ? 'text-red-600' : s.trend === 'down' ? 'text-emerald-600' : 'text-slate-400';
+                    return <span className={tone}>{s.delta != null ? `${arrow} ${aed2(Math.abs(s.delta))}` : '—'}</span>;
+                  },
+                },
+                { key: 'avg', header: t('This car avg'), align: 'right', cellClass: 'tabular-nums text-slate-700', render: (s) => aed2(s.avg_cost) },
+                {
+                  key: 'fleet', header: t('Fleet avg'), align: 'right',
+                  tooltip: t('Average cost of this service across the whole fleet — to spot a car being over- or under-charged.'),
+                  cellClass: 'tabular-nums text-slate-700',
+                  render: (s) => {
+                    const vsFleet = (s.fleet_avg != null && s.avg_cost != null) ? s.avg_cost - s.fleet_avg : null;
+                    return (
+                      <>
+                        {s.fleet_avg != null ? aed2(s.fleet_avg) : '—'}
+                        {vsFleet != null && vsFleet !== 0 && (
+                          <span className={`ms-1 text-xs ${vsFleet > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                            {vsFleet > 0 ? t('(above)') : t('(below)')}
+                          </span>
+                        )}
+                      </>
+                    );
+                  },
+                },
+              ]}
+            />
+          </SectionCard>
+        )}
+
         <DataOrigin tab="financials" />
         </div>
         )}

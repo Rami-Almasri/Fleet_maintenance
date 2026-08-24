@@ -503,6 +503,51 @@ class OilProjectionController extends Controller
     }
 
     /**
+     * HAND THE CAR TO THE SUPERVISORS — the arrival step for a recall with no test.
+     *
+     * With a test, an arriving car is already announced: the request is in /inspection-review and
+     * approving it hands the car to the Inspector. Without one there is nothing in any queue, so this
+     * opens the oil change as a real ticket in the Supervisors' own lane — "assign a garage" — which
+     * is where they read the odometer and pick where it goes.
+     *
+     * The Supervisor's two answers ride in the body: `odometer` — what the dial says now the car is
+     * standing here, stored as a real staff reading — and `vendor_id`, the garage it is going to
+     * (with an optional `driver_id` for the leg out). Send them and the job is done in one step; send
+     * neither and the ticket waits in his dispatch lane, which is the same choice a step later.
+     *
+     * Normally the driver's "Arrived" tap fires the bare version of this. The endpoint exists so a
+     * Supervisor can do it himself, and is idempotent: a second press returns the ticket already open.
+     */
+    public function handOverToSupervisor(Request $request, Contract $contract): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'odometer'  => ['nullable', 'integer', 'min:2', 'max:9999999'],
+                'vendor_id' => ['nullable', 'integer', 'exists:vendors,id'],
+                'driver_id' => ['nullable', 'integer', 'exists:users,id'],
+            ]);
+
+            $ticket = $this->projection->handOverAtWorkshop($contract, $request->user(), $data);
+            $decision = $this->projection->latestDecision($contract);
+
+            if (! $ticket && ! $decision?->settled_ticket_id) {
+                throw ValidationException::withMessages([
+                    'hand_over' => 'There is nothing to hand over — this car is either not back yet, is being'
+                                 . ' tested, is having its oil changed in our own parking, or is already with the Supervisors.',
+                ]);
+            }
+
+            return ResponseHelper::SuccessResponse([
+                'ticket_id'  => $ticket?->id ?? $decision->settled_ticket_id,
+                'recall'     => $this->projection->recallState($decision),
+                'projection' => $this->projection->project($contract->fresh()),
+            ]);
+        } catch (Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * THE CAR IS BACK WITH THE CUSTOMER — the step that actually ends a recall.
      *
      * We took a car off a paying rental. The oil change is what the fleet wanted; the customer wants

@@ -281,6 +281,22 @@ class FaultLocationService
      */
     public function policyForText(?string $text, ?string $categoryKey = null): string
     {
+        // A SERVICE HAS NO PLACE — the same rule policyForTask() already states, applied here so the
+        // report-time gate and the promoted task cannot disagree about the same wording.
+        //
+        // They did. "Tire Rotation" is a service that sits in the `tyres` findings category, so it
+        // inherited that category's `required` policy and the gate demanded to know WHICH WHEEL a
+        // rotation happens at — a question with no answer, since a rotation is all four by
+        // definition. The report was refused; had it been accepted, policyForTask() would have
+        // immediately called the very same task `none`. Stating the rule once, here, is what makes
+        // the two agree.
+        //
+        // Deliberately BEFORE the catalog lookup: it is a statement about what kind of work this is,
+        // not about which row happens to describe it.
+        if ($this->isServiceText($text)) {
+            return self::MODE_NONE;
+        }
+
         $row = $this->catalogRowForText($text);
 
         // The TYPE's own answer outranks the category it happens to sit in — that is what makes
@@ -290,6 +306,30 @@ class FaultLocationService
             $row['category_key'] ?? $categoryKey,
             $row['location_mode'] ?? null,
         );
+    }
+
+    /**
+     * Does this wording name planned work rather than a defect?
+     *
+     * Asked of [[EventClassificationService]] — the one resolver that answers "what kind of work is
+     * this word", and the same one that types the task — so this can never drift from the kind the
+     * finding actually becomes. Best-effort: a classifier hiccup must never turn into a location gate
+     * nobody can satisfy, so an error degrades to "not a service" (today's behaviour, never worse).
+     */
+    private function isServiceText(?string $text): bool
+    {
+        if (! $text) {
+            return false;
+        }
+
+        try {
+            $kind = app(EventClassificationService::class)
+                ->classifyFromFinding(['text' => $text])['kind'] ?? null;
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        return in_array($kind, [MaintenanceTask::KIND_SERVICE, MaintenanceTask::KIND_INSPECTION], true);
     }
 
     /**
@@ -308,6 +348,14 @@ class FaultLocationService
         foreach ($categories as $category) {
             $categoryKey = $category['key'] ?? null;
             foreach ((array) ($category['keywords'] ?? []) as $keyword) {
+                // Same service rule as policyForText(), so the PICKER shows the location box on
+                // exactly the words the report gate will demand one for. A service ("Tire Rotation")
+                // sitting in a location-required category ("tyres") must not sprout a wheel picker.
+                if ($this->isServiceText($keyword)) {
+                    $out[$keyword] = self::MODE_NONE;
+                    continue;
+                }
+
                 $row = $index[$this->normText($keyword)] ?? null;
                 $out[$keyword] = $this->policyFor(
                     $row['slug'] ?? null,
