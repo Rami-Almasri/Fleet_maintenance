@@ -34,6 +34,11 @@ import {
   CommandPanel, KpiTile, LiveActivityFeed, JourneyMap, OpsClock, severityTone,
 } from '../components/ops';
 import TicketActionModal from '../components/workflow/TicketActionModal';
+// The SAME full ticket the pipeline board opens — findings, suggested checks, parts, money, history
+// and every action. A card on this page is the same ticket as a card on /maintenance-workflow, so it
+// must open the same thing; anything less makes this page a list of stubs you have to leave to read.
+import TicketDetailDrawer from '../components/workflow/TicketDetailDrawer';
+import TaskRoutingModal from '../components/workflow/TaskRoutingModal';
 import SendCarInModal from '../components/workflow/SendCarInModal';
 import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import ComplaintTriageModal from '../components/workflow/ComplaintTriageModal';
@@ -493,7 +498,7 @@ function CardActions({ tk, can, userId, onAct, readonly, t }) {
   );
 }
 
-function QueueCard({ tk, can, userId, onAct, readonly = false }) {
+function QueueCard({ tk, can, userId, onAct, onSelect, active = false, readonly = false }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const sev = sevOf(tk);
@@ -520,7 +525,18 @@ function QueueCard({ tk, can, userId, onAct, readonly = false }) {
   }, [tk, readonly, t]);
 
   return (
-    <div className={`opx-card qc ${sevClass}`}>
+    // The whole card is the door to the ticket. The plate link, the action buttons and the timeline
+    // toggle each stop the click so their own job still wins over opening the drawer.
+    <div
+      className={`opx-card qc ${sevClass} ${active ? 'qc-open' : ''}`}
+      role="button"
+      tabIndex={0}
+      title={t('queue.openTicket')}
+      onClick={() => onSelect?.(tk)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(tk); }
+      }}
+    >
       <span className="sev" />
       <div className="top">
         <Link to={`/vehicles/${tk.vehicle_id}`} className="opx-plate" onClick={(e) => e.stopPropagation()}>
@@ -563,10 +579,10 @@ function QueueCard({ tk, can, userId, onAct, readonly = false }) {
         <div className="opx-prog"><i style={{ width: `${pct}%`, background: SEV_COLOR[sev] || SEV_COLOR.info }} /></div>
       </div>
 
-      <div className="qc-foot">
+      <div className="qc-foot" onClick={(e) => e.stopPropagation()}>
         <CardActions tk={tk} can={can} userId={userId} onAct={onAct} readonly={readonly} t={t} />
         {nodes.length > 0 && (
-          <button type="button" className="qc-tl-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          <button type="button" className="qc-tl-toggle" onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }} aria-expanded={open}>
             <Icon.Clock className="h-3.5 w-3.5" /> {open ? t('queue.hideTimeline') : t('queue.showTimeline')}
           </button>
         )}
@@ -589,6 +605,10 @@ export default function MyMaintenanceQueue() {
   const { user } = useAuth();
 
   const [modal, setModal] = useState(null);
+  // The open ticket. Seeded from the card's own summary so the drawer paints instantly, then it
+  // lazy-loads the full record itself. `detailReload` re-pulls it after any action lands.
+  const [detail, setDetail] = useState(null);
+  const [detailReload, setDetailReload] = useState(0);
   const [vehicles, setVehicles] = useState([]);
   const [garages, setGarages] = useState([]);
   const [findingsCatalog, setFindingsCatalog] = useState([]);
@@ -607,7 +627,9 @@ export default function MyMaintenanceQueue() {
   const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/my-queue')).data.data, []);
   const { data, loading, error, reload } = useFetch(fetcher, [], {
     refreshInterval: 8000,
-    paused: () => !!modal,
+    // Also paused while the drawer is open — an 8s revalidation must not re-render the ticket you
+    // are reading out from under you.
+    paused: () => !!modal || !!detail,
   });
 
   const canDelegate = can('maintenance.delegate');
@@ -714,6 +736,7 @@ export default function MyMaintenanceQueue() {
     setModal(null);
     if (message) toast.success(message);
     reload({ silent: true });
+    setDetailReload((n) => n + 1);
   };
 
   const isInspector = !!roles.inspector;
@@ -916,6 +939,8 @@ export default function MyMaintenanceQueue() {
                           ) : (
                             tickets.map((tk) => (
                               <QueueCard key={tk.id} tk={tk} can={can} userId={user?.id} readonly={s.readonly}
+                                active={detail?.id === tk.id}
+                                onSelect={(ticket) => setDetail({ id: ticket.id, summary: ticket })}
                                 onAct={(action, ticket) => setModal({ action, ticket })} />
                             ))
                           )}
@@ -960,6 +985,34 @@ export default function MyMaintenanceQueue() {
           </>
         )}
       </div>
+
+      {/* The full ticket — the same slide-over the pipeline board opens: journey rail, findings and
+          their fix evidence, this car's own suggested checks, diagnostic context, parts, money,
+          quality and history, plus every action the stage allows. Opening it here means a driver or
+          an inspector never has to leave their own queue to read the car. */}
+      {detail && (
+        <TicketDetailDrawer
+          ticketId={detail.id}
+          summary={detail.summary}
+          can={can}
+          userId={user?.id}
+          reloadKey={detailReload}
+          garages={garages}
+          findingsCatalog={findingsCatalog}
+          onAct={(action, ticket) => setModal({ action, ticket })}
+          onClose={() => setDetail(null)}
+        />
+      )}
+
+      {/* Routing a fault container to a garage — the drawer's own "Manage faults" door. */}
+      {modal?.action === 'route' && (
+        <TaskRoutingModal
+          ticket={modal.ticket}
+          garages={garages}
+          onClose={() => setModal(null)}
+          onDone={() => { reload({ silent: true }); setDetailReload((n) => n + 1); }}
+        />
+      )}
 
       {/* "Car received from customer" — custody passes to us, and the odometer at the doorstep is
           captured with it. Mandatory: this reading is what the oil follow-up has been chasing by
@@ -1012,7 +1065,7 @@ export default function MyMaintenanceQueue() {
       {modal?.action === 'request' && (
         <SendCarInModal vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
       )}
-      {modal && !['breakdown', 'triage', 'request'].includes(modal.action) && (
+      {modal && !['breakdown', 'triage', 'request', 'route'].includes(modal.action) && (
         <TicketActionModal
           action={modal.action}
           ticket={modal.ticket || null}

@@ -41,7 +41,18 @@
 .opx .qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(288px, 1fr)); gap: 13px; }
 
 /* ---- ticket card (extends .opx-card) ---- */
-.opx .qc { cursor: default; padding: 13px 14px; display: flex; flex-direction: column; }
+/* The card body is the door to the full ticket drawer, so it carries the pointer and lifts on
+   hover — the same affordance the pipeline board's cards have. The footer (buttons + timeline
+   toggle) stops the click, so it keeps its own default cursor. */
+.opx .qc {
+  cursor: pointer; padding: 13px 14px; display: flex; flex-direction: column;
+  transition: transform .16s, border-color .16s, box-shadow .16s;
+}
+.opx .qc:hover { transform: translateY(-2px); border-color: var(--line-2); }
+.opx .qc:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+/* The ticket currently open in the drawer — so you can see which card you are reading. */
+.opx .qc.qc-open { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan), 0 16px 34px -20px var(--cyan); }
+.opx .qc-foot { cursor: default; }
 .opx .qc .top { align-items: flex-start; }
 .opx .qc .model { min-width: 0; }
 .opx .qc .model span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 15ch; }
