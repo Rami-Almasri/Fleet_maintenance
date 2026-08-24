@@ -646,8 +646,11 @@ class DashboardService
      *                                       the ticket's own start stamp; target = its effective
      *                                       expected-completion date (same maths the Checkpoints
      *                                       monitor uses), else the default window.
-     *   source 'both'                     — the same visit exists in BOTH (a contract whose ticket is
-     *                                       live in the workflow). Shown ONCE, badged as both.
+     *   source 'both'                     — the same visit exists in BOTH. Shown ONCE, built from the
+     *                                       TICKET (the half that knows the garage, the faults and the
+     *                                       live stage), borrowing the contract id and — only when the
+     *                                       ticket recorded no fault — the sheet's fault. Matched on the
+     *                                       CAR, so a ticket carrying no contract_id still pairs up.
      *
      * De-duplicated by vehicle, longest-overdue first so the cars blowing their window sit at the top.
      *
@@ -655,19 +658,43 @@ class DashboardService
      */
     public function inMaintenanceList(int $limit = 25): array
     {
-        $rows = $this->contractInShopRows($limit);
+        $contractRows = $this->contractInShopRows($limit);
 
-        // Vehicles already accounted for by an open contract — a workflow ticket for the same car is
-        // the same visit seen from the other side, so it upgrades that row to 'both' instead of
-        // adding a duplicate card.
-        $seen = [];
-        foreach ($rows as $r) {
-            if ($r['id']) {
-                $seen[(int) $r['id']] = true;
+        // EVERY live ticket, with no vehicle excluded. The app's own record of the visit is the richer
+        // half — it names the garage, the faults and the stage the car actually sits at — so we fetch
+        // it in full and decide below which half each card is built from.
+        $ticketRows = collect($this->ticketInShopRows($limit, []))->keyBy('id');
+
+        $rows = [];
+        foreach ($contractRows as $r) {
+            $ticket = $r['id'] ? $ticketRows->get((int) $r['id']) : null;
+
+            if (! $ticket) {
+                $rows[] = $r;   // the sheet contract stands alone
+                continue;
             }
+
+            // The car is in BOTH records — one card, built from the TICKET, because the contract header
+            // carries no fault and no garage of its own. It borrows from the contract only what the
+            // ticket cannot say: the contract id, and the sheet's fault when the ticket recorded none.
+            $ticketRows->forget((int) $r['id']);
+
+            $ticket['source']      = 'both';
+            $ticket['contract_id'] = $r['contract_id'];
+            $ticket['garage']      = $ticket['garage'] ?: $r['garage'];
+            $ticket['checkpoint']  = $ticket['checkpoint'] ?: $r['checkpoint'];
+
+            if (! $ticket['problem']) {
+                $ticket['problem']       = $r['problem'];
+                $ticket['problem_items'] = $r['problem_items'];
+                $ticket['problem_type']  = $r['problem_type'];
+            }
+
+            $rows[] = $ticket;
         }
 
-        foreach ($this->ticketInShopRows($limit, array_keys($seen)) as $r) {
+        // Tickets with no open contract behind them — the app's record alone.
+        foreach ($ticketRows as $r) {
             $rows[] = $r;
         }
 
@@ -706,22 +733,9 @@ class DashboardService
         // event matched to THIS contract's visit window (our contract↔sheet Hard-Lock rule).
         $sheetProblems = $this->sheetProblemsForContracts($contracts);
 
-        // Live app tickets for these same CARS, keyed by vehicle. The contract's own `maintenance`
-        // relation is a contract_id join, but ticketInShopRows() excludes duplicates by VEHICLE — so a
-        // ticket raised without a contract_id (the common case: the app opened the visit, the sheet
-        // contract arrived separately) was dropped as a duplicate on one side and never recognised as
-        // "also in the system" on the other, and the whole panel read "From system 0". Badge by the
-        // same key the exclusion uses, so a car in both records is counted in both pills.
-        $trackedTickets = Maintenance::query()
-            ->whereIn('workflow_status', Maintenance::CHECKPOINT_TRACKED_STATES)
-            ->whereIn('vehicle_id', $contracts->pluck('vehicle_id')->filter()->all())
-            ->pluck('id', 'vehicle_id');
-
         return $contracts
-            ->map(function ($c) use ($sheetProblems, $trackedTickets) {
+            ->map(function ($c) use ($sheetProblems) {
                 $m = $c->maintenance;
-                // The live ticket standing behind this visit, found by contract link OR by car.
-                $liveTicketId = $trackedTickets[(int) $c->vehicle_id] ?? null;
                 // Prefer any fault recorded on the ticket itself; else fall back to the matched sheet fault.
                 $problem = $this->ticketProblem($m);
                 if (! $problem['label']) {
@@ -742,15 +756,12 @@ class DashboardService
                     'plate'      => $c->vehicle?->plate_no,
                     'car'        => $c->vehicle ? (trim(($c->vehicle->make ?? '') . ' ' . ($c->vehicle->model ?? '')) ?: null) : null,
                     'stage'      => 'In workshop',
-                    // Provenance — 'contract' (the sheet/OM record alone) or 'both' when the same visit
-                    // is ALSO live as an app workflow ticket, whether that ticket names this contract
-                    // or only the car.
-                    'source'      => ($m && in_array($m->workflow_status, Maintenance::CHECKPOINT_TRACKED_STATES, true)) || $liveTicketId
-                        ? 'both' : 'contract',
+                    // Provenance — the sheet/OM record alone. inMaintenanceList() upgrades this to
+                    // 'both' (and rebuilds the row from the ticket) when the app is also running this
+                    // visit; it matches on the CAR, so a ticket that never got a contract_id still counts.
+                    'source'      => 'contract',
                     'contract_id' => (int) $c->id,
-                    // Deep-link to the live ticket when there is one, so the card opens the visit that is
-                    // actually running rather than a closed contract header.
-                    'ticket_id'   => $liveTicketId ? (int) $liveTicketId : ($m?->id ? (int) $m->id : null),
+                    'ticket_id'   => $m?->id ? (int) $m->id : null,
                     'garage'     => $m?->vendor?->name ?: ($m?->garage ?: null),
                     // WHY the car is in the shop — the fault(s)/reason behind the visit.
                     'problem'       => $problem['label'],
@@ -778,8 +789,8 @@ class DashboardService
 
     /**
      * Source B — cars in the shop per the APP's own maintenance-workflow tickets: any ticket sitting
-     * in an in-shop state (the same set the Checkpoints monitor tracks). Vehicles already covered by
-     * an open contract row are skipped here — that row is badged 'both' instead. The ETA is computed
+     * in an in-shop state (the same set the Checkpoints monitor tracks). inMaintenanceList() calls this
+     * with NO exclusions and pairs the rows off against the contract side itself. The ETA is computed
      * exactly as MaintenanceCheckpointService::monitorState does (start stamp → effective expected
      * completion → fleet-default window), so a ticket card and its Checkpoints row can never disagree.
      *
