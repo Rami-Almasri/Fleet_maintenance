@@ -3597,6 +3597,7 @@ const en = {
     timeline: 'Ticket Timeline',
     showTimeline: 'Timeline',
     hideTimeline: 'Hide',
+    openTicket: 'Open the full ticket',
     stageProgress: 'Workflow progress',
     nowStage: 'Now',
     step: {
@@ -8557,6 +8558,7 @@ const ar = {
     timeline: 'مسار التذكرة',
     showTimeline: 'المسار',
     hideTimeline: 'إخفاء',
+    openTicket: 'افتح التذكرة كاملة',
     stageProgress: 'تقدّم سير العمل',
     nowStage: 'الآن',
     step: {
