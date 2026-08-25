@@ -4,8 +4,37 @@
    it renders correctly in both Platinum (light) and Cockpit (dark) themes.
    ======================================================================= */
 
+/* =========================================================================
+   1. THE SEAT — who you are, what this page is for you, and which role you
+   are currently reading. One band, because "which seat" is the single choice
+   everything below the fold obeys.
+   ========================================================================= */
+.opx .qhero {
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  padding: 16px 18px; margin-bottom: 16px; border-radius: 18px;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(60rem 22rem at 6% -60%, rgba(37, 99, 235, .10), transparent 62%),
+    linear-gradient(180deg, var(--panel), var(--deep));
+  box-shadow: 0 22px 48px -38px rgba(15, 27, 48, .55);
+}
+.opx .qhero-id { display: flex; align-items: center; gap: 13px; min-width: 0; flex: 1 1 320px; }
+.opx .qhero-av {
+  width: 42px; height: 42px; border-radius: 13px; flex: none; display: grid; place-items: center;
+  font-family: var(--mono); font-size: 17px; font-weight: 700; color: #fff;
+  background: linear-gradient(140deg, var(--brand), var(--violet));
+  box-shadow: 0 12px 26px -14px var(--brand);
+}
+.opx .qhero-txt { min-width: 0; }
+.opx .qhero-name {
+  font-size: 15px; font-weight: 700; letter-spacing: -.015em; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.opx .qhero-sub { margin: 3px 0 0; font-size: 12px; color: var(--ink-3); line-height: 1.45; max-width: 60ch; }
+
 /* ---- role selector: icon + task counter per role ---- */
-.opx .qroles { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+.opx .qroles { display: flex; gap: 10px; flex-wrap: wrap; }
+.opx .qhero .qroles { margin-inline-start: auto; }
 .opx .qrole {
   --rail: var(--brand);
   display: inline-flex; align-items: center; gap: 11px;
@@ -31,6 +60,124 @@
 }
 .opx .qrole.on .qrole-ic { background: var(--rail); color: #fff; }
 .opx .qrole.on .qrole-ct { background: var(--rail); color: #fff; }
+/* Red-graded work waiting on a seat you are NOT looking at. */
+.opx .qrole-ic { position: relative; }
+.opx .qrole-dot {
+  position: absolute; top: -3px; inset-inline-end: -3px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--crit); border: 2px solid var(--panel);
+}
+.opx .qrole-dot::after {
+  content: ''; position: absolute; inset: -3px; border-radius: 50%;
+  border: 1px solid var(--crit); opacity: .55; animation: q-ping 1.9s ease-out infinite;
+}
+@keyframes q-ping { 0% { transform: scale(.7); opacity: .7; } 100% { transform: scale(1.7); opacity: 0; } }
+
+/* =========================================================================
+   2. HEADLINE NUMBERS — always the WHOLE seat, never the filtered view. The
+   first three, and the wait clock, double as the board's filter and sort.
+   ========================================================================= */
+.opx .qmetrics {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(184px, 1fr));
+  gap: 12px; margin-bottom: 16px;
+}
+.opx .qm {
+  --qm-c: var(--brand);
+  position: relative; overflow: hidden; padding: 14px 15px 13px; border-radius: 15px;
+  border: 1px solid var(--line); background: linear-gradient(180deg, var(--panel), var(--deep));
+  transition: transform .16s, border-color .16s, box-shadow .16s;
+}
+.opx .qm::after {
+  content: ''; position: absolute; inset-inline-end: -30px; top: -34px; width: 96px; height: 96px;
+  border-radius: 50%; background: var(--qm-c); opacity: .07; pointer-events: none;
+}
+.opx .qm.click { cursor: pointer; }
+.opx .qm.click:hover { transform: translateY(-2px); border-color: var(--line-2); }
+.opx .qm.on {
+  border-color: var(--qm-c);
+  box-shadow: 0 0 0 1px var(--qm-c), 0 20px 40px -26px var(--qm-c);
+}
+.opx .qm.warm { --qm-c: var(--paused); }
+.opx .qm.hot  { --qm-c: var(--crit); }
+.opx .qm.good { --qm-c: var(--avail); }
+
+.opx .qm-hd { display: flex; align-items: center; gap: 8px; }
+.opx .qm-ic {
+  width: 24px; height: 24px; border-radius: 8px; flex: none; display: grid; place-items: center;
+  color: var(--qm-c); background: color-mix(in srgb, var(--qm-c) 12%, transparent);
+}
+.opx .qm-ic svg { width: 14px; height: 14px; }
+.opx .qm-lbl {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 600; line-height: 1.3;
+}
+.opx .qm-v {
+  font-size: 30px; font-weight: 800; letter-spacing: -.035em; line-height: 1.05; margin-top: 9px;
+  color: var(--ink);
+}
+.opx .qm.warm .qm-v, .opx .qm.hot .qm-v, .opx .qm.good .qm-v { color: var(--qm-c); }
+.opx .qm-bar { height: 4px; border-radius: 3px; background: var(--ov2); overflow: hidden; margin-top: 9px; }
+.opx .qm-bar i {
+  display: block; height: 100%; border-radius: 3px; background: var(--qm-c);
+  transition: width .55s cubic-bezier(.2, .7, .3, 1);
+}
+.opx .qm-foot {
+  margin-top: 7px; font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* =========================================================================
+   3. THE VIEW BAR — find a car, narrow to a slice, choose the order.
+   ========================================================================= */
+.opx .qbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; margin-bottom: 14px; border-radius: 14px;
+  border: 1px solid var(--line); background: linear-gradient(180deg, var(--panel-2), var(--deep));
+}
+.opx .qbar-search {
+  display: flex; align-items: center; gap: 8px; flex: 1 1 240px; min-width: 0;
+  padding: 7px 11px; border-radius: 10px; background: var(--ov2);
+  border: 1px solid var(--line); transition: border-color .16s, box-shadow .16s;
+}
+.opx .qbar-search:focus-within { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan); }
+.opx .qbar-search svg { color: var(--ink-3); flex: none; }
+.opx .qbar-search input {
+  flex: 1; min-width: 0; border: none; background: none; outline: none;
+  font-family: inherit; font-size: 13px; color: var(--ink);
+}
+.opx .qbar-search input::placeholder { color: var(--ink-3); }
+.opx .qbar-search input::-webkit-search-cancel-button { display: none; }
+.opx .qbar-x {
+  border: none; background: none; cursor: pointer; color: var(--ink-3); padding: 2px;
+  display: grid; place-items: center; border-radius: 6px; flex: none;
+}
+.opx .qbar-x:hover { color: var(--crit); background: var(--ov2); }
+
+.opx .qbar-sort { display: flex; align-items: center; gap: 8px; margin-inline-start: auto; }
+.opx .qbar-sort-lbl {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 600;
+}
+.opx .qbar-sort select {
+  font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink);
+  padding: 7px 10px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--ov2); cursor: pointer; outline: none;
+}
+.opx .qbar-sort select:focus-visible { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan); }
+
+/* When the view hides anything, it says so — an empty-looking board must never be mistaken for an
+   empty queue. */
+.opx .qbar-note {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  margin: -6px 0 14px; padding: 8px 12px; border-radius: 11px;
+  border: 1px dashed var(--line-2); background: var(--ov);
+  font-size: 12px; color: var(--ink-2);
+}
+.opx .qbar-note svg { color: var(--ink-3); flex: none; }
+.opx .qbar-note button {
+  margin-inline-start: auto; border: none; background: none; cursor: pointer; font-family: var(--mono);
+  font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; color: var(--cyan);
+}
+.opx .qbar-note button:hover { text-decoration: underline; }
 
 /* ---- sections column + card grid ---- */
 .opx .qsections { display: flex; flex-direction: column; gap: 16px; }
@@ -53,6 +200,15 @@
 /* The ticket currently open in the drawer — so you can see which card you are reading. */
 .opx .qc.qc-open { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan), 0 16px 34px -20px var(--cyan); }
 .opx .qc-foot { cursor: default; }
+/* Overstayed its stage SLA — the one fact on a card that is nobody's fault but the holder's, so it
+   gets a corner flag rather than only a red number in the header. */
+.opx .qc-late { border-color: rgba(225, 29, 72, .38); }
+.opx .qc-late::after {
+  content: ''; position: absolute; top: 0; inset-inline-end: 0;
+  border-block-start: 22px solid var(--crit);
+  border-inline-start: 22px solid transparent;
+  border-start-end-radius: 12px; opacity: .5; pointer-events: none;
+}
 .opx .qc .top { align-items: flex-start; }
 .opx .qc .model { min-width: 0; }
 .opx .qc .model span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 15ch; }
@@ -117,4 +273,12 @@
 /* ---- responsive: collapse the side rail below the sections ---- */
 @media (max-width: 1100px) {
   .opx .qside { position: static; }
+  .opx .qhero { gap: 14px; }
+  .opx .qhero .qroles { margin-inline-start: 0; width: 100%; }
+  .opx .qbar-sort { margin-inline-start: 0; }
+}
+@media (max-width: 640px) {
+  .opx .qmetrics { grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); }
+  .opx .qm-v { font-size: 25px; }
+  .opx .qrole { flex: 1 1 auto; }
 }

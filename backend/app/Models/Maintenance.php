@@ -1489,6 +1489,29 @@ class Maintenance extends Model
         return $this->belongsTo(User::class, 'picked_up_from_garage_by');
     }
 
+    /**
+     * The people behind the LAST THREE handoffs. Their ids have always been stamped on the ticket
+     * (`ready_by`, `park_arrived_by`, `wf_closed_by`) but had no relation, so the timeline could only
+     * print a date for them — "Marked ready", with nobody's name against it. Every other stage in the
+     * trail names its actor; these three read as if the workshop moved on its own.
+     */
+    public function readyBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'ready_by');
+    }
+
+    /** The Driver (Logistics) who confirmed the car had arrived back at our park. */
+    public function parkArrivedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'park_arrived_by');
+    }
+
+    /** Whoever signed the ticket off — the final QA decision. */
+    public function wfClosedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'wf_closed_by');
+    }
+
     /** The maintenance (type-'U') contract this ticket was linked to at dispatch, if any. */
     public function linkedContract(): BelongsTo
     {

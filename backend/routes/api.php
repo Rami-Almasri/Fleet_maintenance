@@ -616,6 +616,10 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::get('/{ticket}', 'show')->middleware('permission:maintenance.view');
     // The car's real current mileage + the full log of manual mileage corrections on this vehicle.
     Route::get('/{ticket}/mileage', 'mileage')->middleware('permission:maintenance.view');
+    // The DECISION LOG — every action ever taken on this ticket, with the person who took it, read from
+    // the append-only audit trail rather than from the ticket's own one-stamp-per-stage columns. Same
+    // readership as the ticket itself: anyone who can open a ticket can see who moved it.
+    Route::get('/{ticket}/decision-log', 'decisionLog')->middleware('permission:maintenance.view');
     // Diagnostic context — idle duration, last check (+ link), and live oil/battery/tyre status vs. limits.
     Route::get('/{ticket}/diagnostic-context', 'diagnosticContext')->middleware('permission:maintenance.view');
     // Decision Cards — what the intelligence platform thinks the user should know BEFORE deciding, at

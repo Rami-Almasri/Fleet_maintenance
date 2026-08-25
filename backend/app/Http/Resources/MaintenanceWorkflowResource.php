@@ -161,6 +161,13 @@ class MaintenanceWorkflowResource extends JsonResource
                 'reason_label'       => $t->activeTemporaryRelease->reasonLabel(),
                 'reason_note'        => $t->activeTemporaryRelease->reason_note,
                 'taken_by'           => $t->activeTemporaryRelease->taken_by,
+                // WHO authorised the car leaving. Letting a car out mid-repair is a decision, and a
+                // decision with no name against it cannot be questioned later — which is the whole
+                // point of asking "why is this car out of the workshop".
+                'released_by'        => $t->activeTemporaryRelease->released_by,
+                'released_by_name'   => $t->activeTemporaryRelease->relationLoaded('releasedBy')
+                                            ? $t->activeTemporaryRelease->releasedBy?->name
+                                            : null,
                 'released_at'        => optional($t->activeTemporaryRelease->released_at)->toIso8601String(),
                 'odometer_out'       => $t->activeTemporaryRelease->odometer_out,
                 // The round trip: where it stands, where it went, and which garage it belongs back at.
@@ -577,10 +584,14 @@ class MaintenanceWorkflowResource extends JsonResource
                     'odometer' => $t->receive_odometer,
                     'garage'   => $t->vendor?->name ?: $t->garage,
                 ]),
-                'ready'          => $this->stamp($t->ready_by, $t->ready_at),
+                // These three carried an actor id and no name, so the timeline printed a bare date for
+                // the last three decisions on a ticket while every earlier stage named its owner. The
+                // relation is loaded on the hydrated ticket; on the slim board payload the name simply
+                // stays null, exactly as it did before.
+                'ready'          => $this->stamp($t->ready_by, $t->ready_at, $t->relationLoaded('readyBy') ? $t->readyBy?->name : null),
                 'picked_up_from_garage' => $this->stamp($t->picked_up_from_garage_by, $t->picked_up_from_garage_at, $t->pickedUpFromGarageBy?->name),
-                'park_arrived'   => $this->stamp($t->park_arrived_by, $t->park_arrived_at),
-                'closed'         => $this->stamp($t->wf_closed_by, $t->wf_closed_at),
+                'park_arrived'   => $this->stamp($t->park_arrived_by, $t->park_arrived_at, $t->relationLoaded('parkArrivedBy') ? $t->parkArrivedBy?->name : null),
+                'closed'         => $this->stamp($t->wf_closed_by, $t->wf_closed_at, $t->relationLoaded('wfClosedBy') ? $t->wfClosedBy?->name : null),
             ],
 
             // Inspection Request Review Gate — the Controller (Lin/Marwa) sign-off before the request

@@ -14,6 +14,8 @@ use App\Models\MaintenanceIncident;
 use App\Models\MaintenanceTask;
 use App\Models\MaintenanceTemporaryRelease;
 use App\Models\Vehicle;
+use App\Models\VehicleLogEvent;
+use App\Services\ActivityFeedService;
 use App\Services\MaintenanceAnalyticsService;
 use App\Services\MaintenanceWorkflowService;
 use App\Services\PlateResolver;
@@ -132,6 +134,12 @@ class MaintenanceWorkflowController extends Controller
         // Temporary Vehicle Release — while the car is out, the release row (and the drivers named on its
         // legs) is what the ticket's whole action surface reads from, so it never lazy-loads.
         'activeTemporaryRelease.outDriver:id,name', 'activeTemporaryRelease.returnDriver:id,name',
+        // …and WHO let the car out. "Why is it out of the workshop" is a decision with an owner, so the
+        // drawer states the reason next to the person who authorised it.
+        'activeTemporaryRelease.releasedBy:id,name',
+        // The last three handoffs (Marked ready → Back at base → Closed) carried an actor id but no
+        // relation, so the timeline could only print a date for them.
+        'readyBy:id,name', 'parkArrivedBy:id,name', 'wfClosedBy:id,name',
         // The OfficeManager maintenance contract this visit was opened under — the paper the whole visit
         // hangs off. The ticket view shows its header (number, customer, window, money) so a reader does
         // not have to leave the ticket to learn what the office recorded for the same visit.
@@ -1123,6 +1131,13 @@ class MaintenanceWorkflowController extends Controller
             if ($isDispatcher) {
                 // The Supervisor's call: open tickets waiting on a garage + driver assignment.
                 $add('awaiting_dispatch_decision', [Maintenance::WF_INSPECTION_PENDING]);
+                // …and the step AFTER his call: garage picked, driver named (or left to the pool), car
+                // still standing with us waiting to be collected. It was a driver-only section, so the
+                // supervisor who made the assignment had no way of seeing that nobody had acted on it —
+                // the one lane where a car sits still precisely because a decision has already been made.
+                // He may take the pickup himself or hand it to someone else (maySupersedeDriver), so the
+                // card carries its real action rather than being a read-only tracker.
+                $add('awaiting_pickup', [Maintenance::WF_AWAITING_DISPATCH]);
                 // Supervisor Video-Review: garage finished — review the video, then approve it for
                 // re-inspection or request a re-fix.
                 $add('repair_review', [Maintenance::WF_REPAIR_REVIEW]);
@@ -1260,6 +1275,76 @@ class MaintenanceWorkflowController extends Controller
         }
 
         return ['status' => 'healthy', 'label' => 'Healthy', 'tone' => 'green', 'detail' => 'No open maintenance', 'open_ticket_id' => null];
+    }
+
+    /**
+     * THE DECISION LOG — every action ever taken on this ticket and the person who took it.
+     *
+     * The ticket's own `handoffs` block answers "which stages has this reached", and it answers it from
+     * columns on the ticket: one stamp per stage, overwritten if a stage is entered twice. That is a
+     * summary of the current state, not a record of decisions. It cannot tell you who re-dispatched a
+     * car after a failed re-inspection, who reclassified the job, who let the car out of the workshop,
+     * or who changed their mind — because none of those leave a column behind.
+     *
+     * `vehicle_log_events` does. It is the append-only audit trail the workflow service already writes
+     * on every transition (VehicleLogService::record), stamped with the actor, the stage the ticket was
+     * at, and the meta the action carried. This endpoint is simply that trail, scoped to one ticket and
+     * read newest-first — the same rows the vehicle timeline reads, so the two can be checked against
+     * each other.
+     *
+     * `maintenance_ref` is queried alongside `maintenance_id` on purpose: the FK is nulled if a ticket
+     * is ever deleted, and the ref is the FK-free twin that survives it (see VehicleLogEvent).
+     *
+     * SYSTEM-generated events have no actor. They are returned with `actor_name` null and `is_system`
+     * true rather than being labelled with somebody's name — "the system did this" is a real answer to
+     * "who decided", and inventing an operator for it would be worse than saying nobody.
+     */
+    public function decisionLog(Maintenance $ticket)
+    {
+        try {
+            $rows = VehicleLogEvent::query()
+                ->where(function ($q) use ($ticket) {
+                    $q->where('maintenance_id', $ticket->id)
+                      ->orWhere('maintenance_ref', $ticket->id);
+                })
+                ->with(['actor:id,name', 'task:id,symptom,kind'])
+                ->orderByDesc('occurred_at')
+                ->orderByDesc('id')
+                ->limit(300)
+                ->get();
+
+            $events = $rows->map(fn (VehicleLogEvent $e) => [
+                'id'              => $e->id,
+                'event_type'      => $e->event_type,
+                // The event's human name, from the SAME map the vehicle timeline uses.
+                'action'          => ActivityFeedService::labelFor($e->event_type),
+                'actor_id'        => $e->actor_id,
+                'actor_name'      => $e->actor?->name,
+                'actor_role'      => ActivityFeedService::roleFor($e->event_type),
+                'is_system'       => $e->actor_id === null,
+                'occurred_at'     => optional($e->occurred_at)->toIso8601String(),
+                // The stage the TICKET was at when this happened — what the decision was taken against.
+                // Named with the SAME map the ticket's own status pill uses, so a log line and the pill
+                // above it never call one stage two different things.
+                'workflow_status' => $e->workflow_status,
+                'stage_label'     => $e->workflow_status
+                    ? (MaintenanceWorkflowResource::LABELS[$e->workflow_status] ?? $e->workflow_status)
+                    : null,
+                'source_tag'      => $e->source_tag,
+                'description'     => $e->description,
+                // Which fault this line is about, when it is about one at all.
+                'task_id'         => $e->maintenance_task_id,
+                'task_symptom'    => $e->task?->symptom,
+                'details'         => $e->meta ?: null,
+            ])->values();
+
+            return ResponseHelper::SuccessResponse([
+                'events' => $events,
+                'total'  => $events->count(),
+            ], 'Ticket decision log retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
     }
 
     /** One ticket with its full handoff trail. */

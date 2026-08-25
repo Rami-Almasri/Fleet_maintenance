@@ -7,7 +7,9 @@ use App\Models\Maintenance;
 use App\Models\MaintenanceCheckpoint;
 use App\Models\MaintenanceMedia;
 use App\Models\Vehicle;
+use App\Services\DashboardService;
 use App\Services\MaintenanceCheckpointService;
+use App\Services\MaintenanceOpsCenterService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -110,6 +112,20 @@ class MaintenanceCheckpointController extends Controller
 
             $checkpoint->load('media');
 
+            // THE UPDATE MUST BE VISIBLE THE MOMENT IT IS FILED.
+            //
+            // The Dashboard's in-shop cards read "Latest checkpoint" out of DashboardService's cached
+            // aggregate, and the ops board out of its own cached build. Filing an update changes what
+            // both of those say — the checkpoint line itself, and the ETA/overdue figures, since
+            // submit() moves the ticket's expected completion date.
+            //
+            // Nothing invalidated either cache, so the card the user was standing on reloaded straight
+            // back into the pre-filing snapshot and kept insisting "No update filed yet" until the TTL
+            // ran out a minute later. An update you have just filed reading as never filed is worse
+            // than a slow board: it invites the user to file it again.
+            DashboardService::flushCache();
+            MaintenanceOpsCenterService::flush();
+
             return ResponseHelper::SuccessResponse([
                 'checkpoint' => $this->checkpointArray($checkpoint),
                 'monitor'    => $this->checkpoints->monitorState($ticket->refresh()),
@@ -192,6 +208,11 @@ class MaintenanceCheckpointController extends Controller
             }
             $checkpoint->delete();
 
+            // Removing the latest update changes what the boards say this car last reported — same
+            // stale-aggregate problem as filing one.
+            DashboardService::flushCache();
+            MaintenanceOpsCenterService::flush();
+
             return ResponseHelper::SuccessResponse(null, 'Checkpoint removed', 200);
         });
     }
@@ -224,6 +245,11 @@ class MaintenanceCheckpointController extends Controller
                 $ticket->expected_completion_date = $start->copy()->startOfDay()->addDays((int) $data['expected_duration_days']);
             }
             $ticket->save();
+
+            // The promised date IS the card's target, and every "N days overdue" figure measures
+            // against it — so moving it has to reach the boards immediately, not a minute later.
+            DashboardService::flushCache();
+            MaintenanceOpsCenterService::flush();
 
             return ResponseHelper::SuccessResponse([
                 'expected_completion_date' => optional($ticket->expected_completion_date)->toDateString(),

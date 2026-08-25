@@ -185,6 +185,156 @@ function Stat({ label, value, hint, tone = 'text-white' }) {
   );
 }
 
+/**
+ * WHY THIS CAR IS OUT OF THE WORKSHOP — the deck block for a live temporary release.
+ *
+ * A release badge that only names the leg ("Out — waiting to come back") answers where the trip has
+ * got to and nothing else. The reader looking at a car that has been standing outside the garage for
+ * a day wants the other three answers, and every one of them is already stored on the release row:
+ *
+ *   WHY   the reason it was let out, plus whatever was typed alongside it
+ *   WHO   the person who authorised the release, and the person who physically took the car
+ *   WHERE it is standing now, and which garage it is due back at
+ *
+ * Nothing here is derived: each line is a stored field or it is not rendered. A release written
+ * before a field existed shows one line fewer rather than a guess.
+ */
+function ReleaseReason({ rel, t, tf, lang }) {
+  const reason = rel.reason ? t(`workflow.tempRelease.reason.${rel.reason}`) : (rel.reason_label || null);
+  // Who authorised it vs who drove it away: the same person more often than not, and worth stating
+  // separately when they differ — one is a decision, the other is custody.
+  const authorised = rel.released_by_name || null;
+  const taken = rel.taken_by || null;
+
+  return (
+    <div className="mt-3 rounded-lg bg-amber-400/10 px-3 py-2.5 ring-1 ring-inset ring-amber-300/25">
+      <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-amber-300/80">
+        {tf('workflow.detail.release.why', 'Why it is out of the workshop')}
+      </p>
+      <p className="mt-1 text-sm font-semibold text-amber-100">
+        {reason || tf('workflow.detail.release.noReason', 'No reason was recorded')}
+      </p>
+      {rel.reason_note && <p className="mt-0.5 text-xs italic text-amber-100/80">“{rel.reason_note}”</p>}
+
+      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+        {authorised && (
+          <div>
+            <dt className="text-amber-300/70">{tf('workflow.detail.release.releasedBy', 'Let out by')}</dt>
+            <dd className="font-semibold text-amber-50">{authorised}</dd>
+          </div>
+        )}
+        {taken && taken !== authorised && (
+          <div>
+            <dt className="text-amber-300/70">{t('workflow.tempRelease.takenByLabel')}</dt>
+            <dd className="font-semibold text-amber-50">{taken}</dd>
+          </div>
+        )}
+        {rel.released_at && (
+          <div>
+            <dt className="text-amber-300/70">{tf('workflow.detail.release.since', 'Out since')}</dt>
+            <dd className="font-semibold text-amber-50">
+              {fmtDateTime(rel.released_at)}
+              <span className="ms-1 font-normal text-amber-200/70">· {ago(rel.released_at, t)}</span>
+            </dd>
+          </div>
+        )}
+        {rel.destination && (
+          <div>
+            <dt className="text-amber-300/70">{tf('workflow.detail.release.where', 'Standing at')}</dt>
+            <dd className="font-semibold text-amber-50">{rel.destination}</dd>
+          </div>
+        )}
+        {rel.odometer_out != null && (
+          <div>
+            <dt className="text-amber-300/70">{t('workflow.tempRelease.odometerOutLabel')}</dt>
+            <dd className="font-mono font-semibold text-amber-50">{nfmt(rel.odometer_out, lang)}</dd>
+          </div>
+        )}
+        {(rel.return_garage || rel.garage_snapshot) && (
+          <div>
+            <dt className="text-amber-300/70">{tf('workflow.detail.release.backTo', 'Due back at')}</dt>
+            <dd className="font-semibold text-amber-50">{rel.return_garage || rel.garage_snapshot}</dd>
+          </div>
+        )}
+      </dl>
+    </div>
+  );
+}
+
+/**
+ * THE DECISION LOG — every action ever taken on this ticket, and who took it.
+ *
+ * The timeline above it is built from the ticket's own handoff columns: one stamp per stage, the
+ * latest value winning. That answers "how far has this got", and it is structurally unable to answer
+ * "who decided this" — a car re-dispatched twice keeps one dispatch stamp, a reclassification leaves
+ * no stamp at all, and letting a car out of the workshop leaves none either.
+ *
+ * This reads the append-only audit trail the workflow service writes on every transition instead, so
+ * repeats, reversals and admin decisions all appear, each with its actor. Where the trail records no
+ * actor the line says "System" — the platform genuinely did it, and naming an operator would be a
+ * fabrication of exactly the fact the reader came here for.
+ */
+function DecisionLog({ events, loading, failed, t, tf }) {
+  if (loading) {
+    return <div className="space-y-2"><Skeleton className="h-4 w-3/5" /><Skeleton className="h-4 w-2/3" /><Skeleton className="h-4 w-1/2" /></div>;
+  }
+  if (failed) {
+    return <p className="text-xs text-red-500">{tf('workflow.detail.decisionLog.error', 'Could not load the decision log')}</p>;
+  }
+  if (!events || events.length === 0) {
+    return <p className="text-xs text-slate-400">{tf('workflow.detail.decisionLog.empty', 'Nothing has been recorded against this ticket yet')}</p>;
+  }
+
+  return (
+    <ol className="space-y-1">
+      {events.map((e) => {
+        // The role that performs this kind of action — it says in whose lane the decision was taken,
+        // which is often the point of asking who took it.
+        const role = e.actor_role || 'system';
+        const roleCls = ROLE_CHIP[role] || ROLE_CHIP.system;
+        return (
+          <li key={e.id} className="flex gap-2.5 rounded-lg px-2 py-1.5 transition hover:bg-slate-50">
+            <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${e.is_system ? 'bg-slate-300' : 'bg-indigo-500'}`} />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <p className="text-sm font-semibold text-slate-800">{t(e.action)}</p>
+                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ring-1 ring-inset ${roleCls}`}>
+                  {tf(`workflow.detail.decisionLog.role.${role}`, role)}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                <span className={e.is_system ? 'italic text-slate-400' : 'font-semibold text-slate-600'}>
+                  {e.actor_name || tf('workflow.detail.decisionLog.system', 'System')}
+                </span>
+                {' · '}{fmtDateTime(e.occurred_at)}
+                {e.occurred_at && <span className="text-slate-400"> · {ago(e.occurred_at, t)}</span>}
+              </p>
+              {/* What the ticket was AT when the decision was taken — a decision reads differently
+                  depending on the stage it was taken against. */}
+              {(e.stage_label || e.task_symptom) && (
+                <p className="text-[11px] text-slate-400">
+                  {e.stage_label ? tf('workflow.detail.decisionLog.atStage', 'at {stage}', { stage: t(e.stage_label) }) : ''}
+                  {e.stage_label && e.task_symptom ? ' · ' : ''}
+                  {e.task_symptom || ''}
+                </p>
+              )}
+              {e.description && <p className="mt-0.5 text-[11px] text-slate-500">{e.description}</p>}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// Role chip colours for the decision log — the lane a decision was taken in.
+const ROLE_CHIP = {
+  driver:    'bg-blue-50 text-blue-700 ring-blue-200',
+  inspector: 'bg-violet-50 text-violet-700 ring-violet-200',
+  garage:    'bg-amber-50 text-amber-700 ring-amber-200',
+  system:    'bg-slate-100 text-slate-500 ring-slate-200',
+};
+
 // The six-stage rail. Reached stages glow in the lane colour, the live one pulses, and a regression
 // (a failed re-inspection) simply moves the live node back — the stages ahead go dark again.
 function JourneyRail({ tk, tone, t }) {
@@ -234,6 +384,10 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
   const [mileageLoading, setMileageLoading] = useState(true);
   const [mileageErr, setMileageErr] = useState(false);
   const [diag, setDiag] = useState(null); // { idle, last_check, conditions[] } — diagnostic context panel
+  // The append-only audit trail for THIS ticket: every action, and who took it. null = not fetched yet.
+  const [decisionLog, setDecisionLog] = useState(null);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logErr, setLogErr] = useState(false);
   const [money, setMoney] = useState(null); // { blockers, amount } — reported up by FinancialStory
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -314,6 +468,27 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
       .catch(() => { if (alive) setDiag(null); });
     return () => { alive = false; };
   }, [ticketId, reloadKey]);
+
+  // THE DECISION LOG — every action ever taken on this ticket and who took it, from the append-only
+  // audit trail. Loaded when the History tab is FIRST opened, not on drawer open: it is a per-ticket
+  // read most readers never ask for, and the tab it lives on is the one nobody lands on by default.
+  // Once loaded it is kept for this ticket; `reloadKey` (an action just landed) re-pulls it, because
+  // the action the reader just took is precisely the line they will look for.
+  useEffect(() => {
+    if (!ticketId || tab !== 'history') return undefined;
+    let alive = true;
+    setLogErr(false);
+    setLogLoading(true);
+    api.get(`/maintenance-tickets/${ticketId}/decision-log`)
+      .then((r) => { if (alive) setDecisionLog(r.data?.data?.events || []); })
+      .catch(() => { if (alive) { setDecisionLog([]); setLogErr(true); } })
+      .finally(() => { if (alive) setLogLoading(false); });
+    return () => { alive = false; };
+  }, [ticketId, reloadKey, tab]);
+
+  // A different ticket is a different trail — drop the previous one rather than showing it under the
+  // new ticket's heading until the fetch lands.
+  useEffect(() => { setDecisionLog(null); }, [ticketId]);
 
   // The financial blockers are read TWICE on purpose: once here for the deck and the tab badge, and
   // again by FinancialStory when the money tab is opened. The deck has to be able to say "this ticket
@@ -545,6 +720,15 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                   </span>
                 )}
               </div>
+
+              {/* WHY THE CAR IS OUT OF THE WORKSHOP.
+                  The badge above names the leg the trip is on ("Out — waiting to come back"); it does
+                  not say why the car left, who let it go, or where it is standing. Those are the first
+                  three questions anyone asks of a car that is out mid-repair, and the answers were
+                  stored on the release row all along without ever being shown. */}
+              {isTemporarilyReleased(tk) && tk.active_temporary_release && (
+                <ReleaseReason rel={tk.active_temporary_release} t={t} tf={tf} lang={lang} />
+              )}
 
               {/* How far the ticket has travelled, in one glance. */}
               <div className="mt-3.5">
@@ -1080,6 +1264,22 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                       });
                     })()}
                   </ol>
+                </Section>
+
+                {/* WHO DECIDED WHAT — the append-only audit trail, every action with its actor. Sits
+                    directly under the stage timeline because it is the same story told properly: the
+                    timeline says which stages were reached, this says who moved it and when, including
+                    every repeat, reversal and admin decision the stage columns cannot hold. */}
+                <Section
+                  title={tf('workflow.detail.decisionLog.title', 'Who decided what')}
+                  icon={<Icon.Users className="h-3.5 w-3.5 text-slate-400" />}
+                  count={decisionLog?.length}
+                >
+                  <p className="mb-3 text-[11px] leading-relaxed text-slate-400">
+                    {tf('workflow.detail.decisionLog.hint',
+                      'Every action recorded against this ticket, newest first, with the person who took it. Actions with no person behind them were taken by the system.')}
+                  </p>
+                  <DecisionLog events={decisionLog} loading={logLoading} failed={logErr} t={t} tf={tf} />
                 </Section>
 
                 {/* Timing */}

@@ -762,6 +762,25 @@ class ActivityFeedService
      */
     private function actorRole(string $eventType): string
     {
+        return self::roleFor($eventType);
+    }
+
+    /**
+     * The human name of one raw `vehicle_log_events.event_type`, and the role that performs it.
+     *
+     * Public because the ticket's own DECISION LOG (MaintenanceWorkflowController::decisionLog) reads
+     * the same audit rows this feed reads, and the two must never call the same event different things
+     * — a reader who checks a car's timeline against a ticket's history is checking exactly that.
+     * They stay `private const` maps with a public accessor so there is still one place to edit.
+     */
+    public static function labelFor(string $eventType): string
+    {
+        return self::LABELS[$eventType] ?? Str::headline($eventType);
+    }
+
+    /** The role that performs an event type: driver | inspector | garage | system. */
+    public static function roleFor(string $eventType): string
+    {
         if (in_array($eventType, self::DRIVER_EVENTS, true)) {
             return 'driver';
         }
