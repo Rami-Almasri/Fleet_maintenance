@@ -6,9 +6,10 @@ import InspectionReviewQueue from './InspectionReviewQueue';
 import OilProjection from './reminders/OilProjection';
 import InvoiceMatching from './InvoiceMatching';
 import FindingKeywords from './FindingKeywords';
+import VehicleLocations from './VehicleLocations';
 
 /**
- * Control Desk — the Controllers' (Lin & Marwa) day, in one place. Four jobs that were four separate
+ * Control Desk — the Controllers' (Lin & Marwa) day, in one place. Five jobs that were five separate
  * routes, each reached from a different corner of the sidebar, even though the same two people do all
  * of them and move between them constantly:
  *
@@ -20,18 +21,24 @@ import FindingKeywords from './FindingKeywords';
  *                          whether the paper and the repair agree.
  *   • Keyword Risk       → the fault vocabulary the inspection picker offers, and how serious each
  *                          fault type is. The desk's own settings, not a daily queue.
+ *   • Vehicle Locations  → the other half of that same vocabulary: WHERE on the car a fault can be,
+ *                          and which fault types must name a place before the report can be filed.
  *
- * A SIDEBAR rather than a tab strip: these are separate jobs, not four readings of one board, and the
+ * The last two are one job split across two pages — a fault is WHAT it is, HOW MANY there are and
+ * WHERE they are, and the same two people curate all of it. Keeping them apart meant grading a
+ * keyword on one route and its location rule on another; they sit side by side now.
+ *
+ * A SIDEBAR rather than a tab strip: these are separate jobs, not five readings of one board, and the
  * rail stays in view while you work inside one of them.
  *
  * Permissions differ per section (review is maintenance.manage, the oil chase is reminders.view, the
- * other two are maintenance.view), so the ROUTE is left ungated and SidebarHub filters section by
+ * rest are maintenance.view), so the ROUTE is left ungated and SidebarHub filters section by
  * section — each declaring the route it replaced so the role deny list still applies. A person who
  * only holds reminders.view opens the desk and sees exactly the oil chase.
  *
- * Every old route still resolves: /inspection-review, /oil-projection, /invoice-matching and
- * /finding-keywords redirect in here on their own section, keeping their query string — which the
- * notification deep-links (?ticket=<id>) depend on.
+ * Every old route still resolves: /inspection-review, /oil-projection, /invoice-matching,
+ * /finding-keywords and /vehicle-locations redirect in here on their own section, keeping their query
+ * string — which the notification deep-links (?ticket=<id>) depend on.
  */
 export default function ControlDesk() {
   const { t } = useI18n();
@@ -73,6 +80,15 @@ export default function ControlDesk() {
         permission: 'maintenance.view',
         was: '/finding-keywords',
         Component: FindingKeywords,
+      },
+      {
+        key: 'locations',
+        label: t('Vehicle Locations'),
+        hint: t('Where on the car a fault can be, and who must say'),
+        icon: <Icon.Car className="h-4 w-4" />,
+        permission: 'maintenance.view',
+        was: '/vehicle-locations',
+        Component: VehicleLocations,
       },
     ],
     [t],

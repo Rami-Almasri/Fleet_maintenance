@@ -27,11 +27,20 @@ const ALWAYS_ALLOWED = ['/notifications', '/settings'];
 
 // NOTE on '/control-desk' — it is deliberately absent from every list below. The hub filters its own
 // sidebar section by section (each section declares the route it replaced, so the rules for
-// '/inspection-review', '/oil-projection', '/invoice-matching' and '/finding-keywords' still bite),
-// and today no role is denied all four: the driver and finance keep Invoice Matching, the inspector
-// keeps Invoice Matching, the Controller keeps three. If a future rule ever denies a role all four,
+// '/inspection-review', '/oil-projection', '/invoice-matching', '/finding-keywords' and
+// '/vehicle-locations' still bite), and today no role is denied all five: the driver and finance keep
+// Invoice Matching, the inspector keeps Invoice Matching, the Controller keeps four. If a future rule
+// ever denies a role all five,
 // add '/control-desk' to that role's list too — otherwise it gets a nav entry that opens on
 // "You don't have access to this page".
+//
+// SAME NOTE for '/vehicles', which is a hub as of the Repair Records merge: the fleet register plus
+// the two ledgers ('/completed-repairs' and '/maintenance-history'). It is absent from every list
+// below on purpose — the driver keeps the car list and loses both ledgers, the inspector keeps the
+// car list and the per-car history and loses the signed-off one, and each falls out through the
+// tab's `was` rule rather than through a block on the hub. Blocking '/vehicles' for a role would
+// take the CAR LIST away too, and it also blocks '/vehicles/:id' — every deep link into a car's
+// profile — so never reach for it as a way of hiding a ledger.
 
 // role slug → paths that role must never see.
 // Blocking a path also blocks everything under it (e.g. '/vehicles' also hides
@@ -70,6 +79,9 @@ export const ROLE_BLOCKED_PATHS = {
     // stops applying the moment the page moves into a tab.
     '/suppliers',
     '/field-reports',
+    // Still listed although Repair Records is retired: the path resolves as a redirect into
+    // /vehicles?tab=signed-off, and this is what refuses it before the redirect runs. The two
+    // ledgers themselves are denied above, so the hub shows him the car list and nothing else.
     '/repair-records',
     '/warranties',
     '/garage-finder',

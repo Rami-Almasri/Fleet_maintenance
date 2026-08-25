@@ -29,8 +29,12 @@ const phrasesAr = {
   'Find a garage': 'اختر الورشة',
   'Garage sections': 'أقسام الورش',
   'In the Garage': 'في الورشة',
-  'Repair record sections': 'أقسام سجلات الإصلاح',
   'Repair Records': 'سجلات الإصلاح',
+  // ── Vehicles (/vehicles) — the fleet register plus the two repair ledgers that used to be the
+  // Repair Records page. The tab labels are translated elsewhere (vehicles.registry in labels.js,
+  // 'Completed Repairs', 'History'); these are the hub's own strings.
+  'Vehicle sections': 'أقسام المركبات',
+  'Every car in the fleet, and the finished work behind it — the signed-off ledger of what was fixed and what it cost, and each car’s workshop history, trip by trip.': 'كل سيارة في الأسطول، والعمل المنتهي خلفها — السجل المعتمَد لما أُصلح وكم كلّف، وسجل ورشة كل سيارة، زيارة بزيارة.',
   'Report sections': 'أقسام البلاغات',
   'Scorecard': 'بطاقة الأداء',
   'Supplier sections': 'أقسام الموردين',
@@ -39,7 +43,6 @@ const phrasesAr = {
   'What we owe': 'ما نَدين به',
   'Which garage is good at what, which one to send this car to, and which cars are standing at a workshop right now.': 'أي ورشة جيدة في أي عمل، وإلى أيها نرسل هذه السيارة، وأي السيارات واقفة في ورشة الآن.',
   'Who we buy from and what we owe them — outstanding balances by age, how each supplier performs, every payment that has left the account, and the supplier register itself.': 'ممّن نشتري وكم نَدين لهم — المبالغ المستحقة حسب قِدَمها، وكيف يؤدّي كل مورّد، وكل دفعة خرجت من الحساب، وسجلّ الموردين نفسه.',
-  'Work that is finished — the signed-off ledger of what was fixed and what it cost, and the workshop history of each car, trip by trip.': 'العمل المنتهي — السجل المعتمَد لما أُصلح وكم كلّف، وسجل ورشة كل سيارة، زيارة بزيارة.',
   '— (not yet)': '— (ليس بعد)',
   '— if the customer reports a value close to this, the rental is tracking normally.': '— إذا أفاد العميل برقم قريب من هذا، فإن الإيجار يسير كما هو متوقع.',
   '— logged as a note first, then raised for inspection.': '— سُجّلت كملاحظة أولًا ثم رُفعت للفحص.',
@@ -5084,9 +5087,11 @@ const phrasesAr = {
   'damage': 'ضرر',
   'No work recorded on this ticket.': 'لا يوجد عمل مسجّل على هذه التذكرة.',
   '{n} work items are on no bill: {list}': '{n} من الأعمال ليست على أي فاتورة: {list}',
-  // ── Control Desk (/control-desk) — the sidebar hub that holds the Controllers' four jobs. The
-  // four section LABELS are already translated elsewhere in this file (Inspection Review, Oil
+  // ── Control Desk (/control-desk) — the sidebar hub that holds the Controllers' five jobs. Most
+  // section LABELS are already translated elsewhere in this file (Inspection Review, Oil
   // Mileage Follow-up, Invoice Matching, Keyword Risk); these are the hub's own strings.
+  'Vehicle Locations': 'مواقع السيارة',
+  'Where on the car a fault can be, and who must say': 'أين يمكن أن يكون العطل على السيارة، ومن يجب أن يُحدِّد ذلك',
   'Control Desk': 'مكتب الضبط',
   'Control Desk sections': 'أقسام مكتب الضبط',
   'Requests in, mileage chased, bills matched, vocabulary kept honest.': 'الطلبات الواردة، ومتابعة الكيلومترات، ومطابقة الفواتير، وضبط مفردات الأعطال.',

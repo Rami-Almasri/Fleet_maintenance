@@ -76,12 +76,17 @@ export const MODULES = [
         ],
       },
       { name: 'My Queue', route: '/my-maintenance-queue', permission: 'maintenance.view', icon: Icon.Check, desc: 'Your role-scoped maintenance work in one place — what needs you, right now.' },
-      // The Controllers' four jobs behind one sidebar: vet requests in, chase mileage on cars still
-      // out, match the bills on cars that came back, and curate the fault vocabulary. The four routes
-      // it absorbed redirect into their section.
-      { name: 'Control Desk', route: '/control-desk', permissionAny: ['maintenance.manage', 'reminders.view', 'maintenance.view'], icon: Icon.Check, desc: 'The Controllers’ day: vet requests to send a car in, chase the oil mileage on cars still out on rental, match each garage’s bill to the work it covers, and keep the fault vocabulary graded.' },
+      // The Controllers' five jobs behind one sidebar: vet requests in, chase mileage on cars still
+      // out, match the bills on cars that came back, and curate the fault vocabulary — both what a
+      // fault is called and where on the car it can be. The five routes it absorbed redirect into
+      // their section.
+      { name: 'Control Desk', route: '/control-desk', permissionAny: ['maintenance.manage', 'reminders.view', 'maintenance.view'], icon: Icon.Check, desc: 'The Controllers’ day: vet requests to send a car in, chase the oil mileage on cars still out on rental, match each garage’s bill to the work it covers, and keep the fault vocabulary graded — what a fault is called, and where on the car it can be.' },
       { name: 'What people report', route: '/field-reports', permission: 'maintenance.view', icon: Icon.Flag, desc: 'Customer complaints with their follow-up timeline, and the handover notes drivers leave — the two ways a problem reaches us from outside the workshop.' },
-      { name: 'Repair Records', route: '/repair-records', permission: 'maintenance.view', icon: Icon.Check, desc: 'The signed-off ledger — who, where, what was found and fixed, what it cost — and each car’s workshop history, trip by trip.' },
+      // Repair Records retired — the signed-off ledger and each car's workshop history are tabs of
+      // Vehicles (Fleet Operations) now, because the finished work is a fact about the CARS. Not
+      // re-listed here as a shortcut: a module section is deny-checked on its own route, and
+      // '/vehicles' carries none of the rules that hid those two ledgers from the driver and the
+      // inspector — a tile pointing at it would show them a link they must not have.
       // Each of these is one page of tabs now; the routes they absorbed redirect into their tab.
       { name: 'Parts', route: '/parts', permission: 'parts.view', icon: Icon.Coins, desc: 'Request, approve, buy and install parts — plus the supplier invoices behind what each part cost, the catalog of part names the app selects from, and the warranty that came with each part.' },
       { name: 'Suppliers', route: '/suppliers', permission: 'maintenance.view', icon: Icon.Cash, desc: 'What we owe suppliers and garages aged by how long it has been outstanding, every payment that has left the account, and the supplier register itself.' },
@@ -97,7 +102,10 @@ export const MODULES = [
     tone: 'indigo',
     tagline: 'Vehicles, rentals and the daily movement of the fleet',
     sections: [
-      { name: 'Vehicles', route: '/vehicles', permission: 'vehicles.view', icon: Icon.Car, desc: 'Every car in the fleet — open a row for its full profile, history and documents.' },
+      // Three tabs: the fleet register, plus the two repair ledgers the retired Repair Records page
+      // held. Registry is vehicles.view, the ledgers maintenance.view — so permissionAny, and the
+      // hub filters tab by tab against the routes they replaced.
+      { name: 'Vehicles', route: '/vehicles', permissionAny: ['vehicles.view', 'maintenance.view'], icon: Icon.Car, desc: 'Every car in the fleet — open a row for its full profile, history and documents — plus the signed-off repair ledger and each car’s workshop history, trip by trip.' },
       { name: 'Contracts', route: '/contracts', permission: 'contracts.view', icon: Icon.Invoice, desc: 'Rental contracts synced from OfficeManager — all open, plus recently closed.' },
       { name: 'Customers', route: '/customers', permission: 'customers.view', icon: Icon.Users, desc: 'Customer contacts, contracts and available wallet (carried-forward credit).' },
       { name: 'Drivers', route: '/drivers', permission: 'drivers.view', icon: Icon.Users, desc: 'Fleet drivers with licence number, expiry and status — expiring licences flagged.' },
@@ -117,7 +125,8 @@ export const MODULES = [
     tagline: 'Operational analytics — cost, prediction, faults and utilization',
     sections: [
       { name: 'Fleet Analytics', route: '/fleet-utilization', permission: 'insights.view', icon: Icon.Gauge, desc: 'Per-car split of owned time into rented, in-maintenance and idle days.' },
-      { name: 'Vehicle Locations', route: '/vehicle-locations', permission: 'maintenance.view', icon: Icon.Car, desc: 'Everywhere a fault can be, and which fault types must say where they are.' },
+      // Vehicle Locations is a Control Desk section now (Maintenance module) — the WHERE half of the
+      // fault vocabulary, kept beside the Keyword Risk library that owns the WHAT.
       { name: 'Recurring Faults', route: '/recurring-fault-reviews', permission: 'maintenance.recurring.view', icon: Icon.Refresh, desc: 'Cars back with the same confirmed fault after a repair — for a management ruling.' },
       { name: 'Maintenance Analytics', route: null, permission: 'maintenance.view', icon: Icon.Chart, status: 'soon', desc: 'Deeper trends across repairs, cost and turnaround — coming soon.' },
       { name: 'Health Scores', route: null, permission: 'insights.view', icon: Icon.Scale, status: 'soon', desc: 'A single per-car condition score rolled up from every signal — coming soon.' },
