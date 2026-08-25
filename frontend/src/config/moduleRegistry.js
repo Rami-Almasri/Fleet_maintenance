@@ -162,7 +162,6 @@ export const MODULES = [
       // The five accountability reports are tabs on one page now; each old URL redirects into its tab.
       { name: 'Workflow Oversight', route: '/oversight', permission: 'insights.view', icon: Icon.Flag, desc: 'Did the process hold? Five checks in one page: cars that left the garage with the contract still open, the severity QC gate, faults later marked incorrect, transfers with every fault fixed, and supervisors who never answered the "due back" reminder.' },
       { name: 'Data Health', route: '/data-health', permission: 'insights.view', icon: Icon.Activity, desc: 'Overall data quality — incomplete records, status mismatches, and the history of every sync run.' },
-      { name: 'Intelligence Center', route: '/intelligence-center', permission: 'insights.view', icon: Icon.Activity, desc: 'What the platform knows and how sure it is — evidence readiness, QC throughput, promotion decisions and what is blocking each capability.' },
       { name: 'Mileage & Fuel', route: '/mileage', permission: 'insights.view', icon: Icon.Gauge, desc: 'Every odometer and fuel tool — travel vs. contract km, leakage, chain audit and the readings that do not line up.' },
     ],
   },

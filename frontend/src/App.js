@@ -54,7 +54,6 @@ import EventClassificationReview from './pages/EventClassificationReview';
 import ConceptBridgeReview from './pages/ConceptBridgeReview';
 import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
-import IntelligenceCenter from './pages/IntelligenceCenter';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
 import SimulationPanel from './pages/SimulationPanel';
@@ -393,8 +392,12 @@ export default function App() {
                   <Route path="/maintenance-swap" element={<MaintenanceSwap />} />
                   {/* Data Health absorbed Status Mismatch as its second tab — keep the old path alive. */}
                   <Route path="/data-health" element={<DataHealth />} />
-                  {/* The platform's own operating state — previously reachable only via artisan. */}
-                  <Route path="/intelligence-center" element={<IntelligenceCenter />} />
+                  {/* Intelligence Center is deleted. It reported the platform's own operating state —
+                      evidence readiness, QC throughput, promotion history — which is an engineering
+                      surface, not an operational one; `php artisan intelligence:evidence-health` is
+                      still the way to read it. The path redirects rather than 404s, because links to
+                      it exist in the docs. */}
+                  <Route path="/intelligence-center" element={<Navigate to="/apps/reports" replace />} />
                   <Route path="/status-mismatch" element={<Navigate to="/data-health?tab=status" replace />} />
                   {/* Workflow Oversight — accountability & data-integrity suite over the maintenance
                       workflow, one page of five tabs. Each report kept its old URL as a redirect.
