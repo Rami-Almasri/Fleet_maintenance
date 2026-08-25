@@ -47,7 +47,9 @@ export const MODULES = [
     tone: 'amber',
     tagline: 'The repair pipeline, queues, parts, suppliers and history',
     sections: [
-      { name: 'Daily Report', route: '/reports/daily-maintenance', permission: 'maintenance.view', icon: Icon.Activity, desc: "The morning report — every car the day touched plus every car still out, with severity, garage, days and the work recorded. Prints straight to PDF." },
+      // The Daily Report moved to the Reports module — it is a report, it already lives under
+      // /reports/, and every other one was there. It keeps maintenance.view, so the same people
+      // reach it; only the tile moved.
       {
         name: 'Maintenance Cycle',
         route: '/maintenance-workflow',
@@ -151,6 +153,12 @@ export const MODULES = [
     tone: 'blue',
     tagline: 'Operational reports, audit trails and data quality',
     sections: [
+      // Leads the module: it is the one report somebody opens every morning, and the only one here
+      // that is operational rather than an audit surface. It carries maintenance.view rather than
+      // the insights.view the rest share, so a dispatcher who holds neither the oversight nor the
+      // data-quality boards now sees a Reports module containing exactly this — which is right, it
+      // was always their report; it just used to be filed under Maintenance.
+      { name: 'Daily Report', route: '/reports/daily-maintenance', permission: 'maintenance.view', icon: Icon.Activity, desc: "The morning report — every car the day touched plus every car still out, with severity, garage, days and the work recorded. Prints straight to PDF." },
       // The five accountability reports are tabs on one page now; each old URL redirects into its tab.
       { name: 'Workflow Oversight', route: '/oversight', permission: 'insights.view', icon: Icon.Flag, desc: 'Did the process hold? Five checks in one page: cars that left the garage with the contract still open, the severity QC gate, faults later marked incorrect, transfers with every fault fixed, and supervisors who never answered the "due back" reminder.' },
       { name: 'Data Health', route: '/data-health', permission: 'insights.view', icon: Icon.Activity, desc: 'Overall data quality — incomplete records, status mismatches, and the history of every sync run.' },
