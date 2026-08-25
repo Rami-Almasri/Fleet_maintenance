@@ -658,12 +658,23 @@ class DashboardService
      */
     public function inMaintenanceList(int $limit = 25): array
     {
-        $contractRows = $this->contractInShopRows($limit);
+        // BOTH SIDES ARE FETCHED WHOLE, and the cap is applied only after the sort at the bottom.
+        //
+        // They used to be fetched with `->limit($limit)` — 25 rows straight out of the database, in
+        // whatever order the table happened to return them, and only THEN sorted worst-overdue first.
+        // So the panel did not show the 25 most overdue cars; it showed an arbitrary 25 cars sorted
+        // among themselves. A car 38 days over could be missing while cars 16 days over were listed,
+        // and which cars made the cut could change between reads — a card appearing and disappearing
+        // for no reason the user could see.
+        //
+        // The set is bounded by how many cars are physically in the shop (tens, not thousands) and
+        // every relation is eager-loaded, so reading it whole costs the same handful of queries.
+        $contractRows = $this->contractInShopRows();
 
         // EVERY live ticket, with no vehicle excluded. The app's own record of the visit is the richer
         // half — it names the garage, the faults and the stage the car actually sits at — so we fetch
         // it in full and decide below which half each card is built from.
-        $ticketRows = collect($this->ticketInShopRows($limit, []))->keyBy('id');
+        $ticketRows = collect($this->ticketInShopRows([]))->keyBy('id');
 
         $rows = [];
         foreach ($contractRows as $r) {
@@ -711,7 +722,7 @@ class DashboardService
      *
      * @return array<int,array<string,mixed>>
      */
-    private function contractInShopRows(int $limit): array
+    private function contractInShopRows(): array
     {
         $contracts = Contract::query()
             ->where('contract_type', 'U')
@@ -726,7 +737,6 @@ class DashboardService
                 'maintenance.tasks:id,maintenance_id,symptom,status,severity',
                 'maintenance.reason:id,reason_en',
             ])
-            ->limit($limit)
             ->get(['id', 'vehicle_id', 'out_date', 'in_date']);
 
         // The contract header carries no fault — pull the current problem from the N-Maintenance sheet
@@ -797,7 +807,7 @@ class DashboardService
      * @param  array<int,int>  $excludeVehicleIds  vehicles already listed from the contract side
      * @return array<int,array<string,mixed>>
      */
-    private function ticketInShopRows(int $limit, array $excludeVehicleIds): array
+    private function ticketInShopRows(array $excludeVehicleIds): array
     {
         return Maintenance::query()
             ->whereIn('workflow_status', Maintenance::CHECKPOINT_TRACKED_STATES)
@@ -810,7 +820,6 @@ class DashboardService
                 'tasks:id,maintenance_id,symptom,status,severity',
                 'reason:id,reason_en',
             ])
-            ->limit($limit)
             ->get()
             ->map(function (Maintenance $t) {
                 $start = $t->repair_started_at ?? $t->out_date ?? $t->dispatched_at ?? $t->created_at;
