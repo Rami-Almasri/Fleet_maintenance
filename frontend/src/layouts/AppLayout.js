@@ -102,10 +102,10 @@ const NAV_SECTIONS = [
     items: [
       { name: 'Maintenance Cycle', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
       { name: 'My Queue', to: '/my-maintenance-queue', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 9 2 2 4-4', desc: 'Your role-scoped maintenance work in one place: Abu Maroof (Inspector) sees pending inspections and final re-inspections; a Supervisor (Dispatcher) sees tickets awaiting a garage + driver assignment; a Driver sees active trips/dispatches and cars waiting on a follow-up.' },
-      // The Controllers' four jobs are one destination now — Inspection Review, the oil chase,
-      // Invoice Matching and the Keyword Risk library, behind a sidebar. The description names all
-      // four so a search for any of the old page names still lands here.
-      { name: 'Control Desk', to: '/control-desk', permissionAny: ['maintenance.manage', 'reminders.view', 'maintenance.view'], icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The Controllers\' (Lin & Marwa) day in one place. Inspection Review: vet requests to send a car in before they reach Abu Maroof — approve to send on, or reject with a reason. Oil Mileage Follow-up: cars OUT on rental heading for their oil limit — Service Reminders reads the odometer we hold, which stops being true the moment a car drives off, so this projects forward from the handover mileage at 200 km/day; call the customer, enter the odometer they report, and the projection re-anchors on that real number without ever touching the car\'s odometer. Invoice Matching: the car is back — key each garage\'s bill next to the work actually done and see whether they agree. Keyword Risk: the fault-keyword library the inspection picker offers, each graded critical, moderate or routine.' },
+      // The Controllers' five jobs are one destination now — Inspection Review, the oil chase,
+      // Invoice Matching, the Keyword Risk library and Vehicle Locations, behind a sidebar. The
+      // description names all five so a search for any of the old page names still lands here.
+      { name: 'Control Desk', to: '/control-desk', permissionAny: ['maintenance.manage', 'reminders.view', 'maintenance.view'], icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The Controllers\' (Lin & Marwa) day in one place. Inspection Review: vet requests to send a car in before they reach Abu Maroof — approve to send on, or reject with a reason. Oil Mileage Follow-up: cars OUT on rental heading for their oil limit — Service Reminders reads the odometer we hold, which stops being true the moment a car drives off, so this projects forward from the handover mileage at 200 km/day; call the customer, enter the odometer they report, and the projection re-anchors on that real number without ever touching the car\'s odometer. Invoice Matching: the car is back — key each garage\'s bill next to the work actually done and see whether they agree. Keyword Risk: the fault-keyword library the inspection picker offers, each graded critical, moderate or routine. Vehicle Locations: everywhere on a car a fault can be — the places the inspector picks from ("Front Bumper", "Rims", "Engine Bay"), the sections they are grouped into, and which fault types MUST say where they are before the report can be filed.' },
     ],
   },
   // Customer Care — the two intake surfaces that feed the pipeline from outside
@@ -124,16 +124,16 @@ const NAV_SECTIONS = [
   {
     title: 'Maintenance Control',
     items: [
-      // The signed-off ledger and each car's visit history are two readings of the same finished
-      // work — one page, two tabs.
-      { name: 'Repair Records', to: '/repair-records', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Completed Repairs: the ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost, with the full custody chain behind each row. History: every car that saw the workshop over the chosen window, how often it went in and how long it stayed, opening onto each individual trip.' },
+      // Repair Records retired — its two ledgers are tabs of Vehicles (Records) now. The finished
+      // work is a fact about the CARS, and reading it used to mean leaving the car list.
       { name: 'Workflow Oversight', to: '/oversight', icon: 'M9 12l2 2 4-4m5 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Did the process hold? Five checks in one page: cars that left the garage while the maintenance contract stayed open, the severity QC gate, faults later marked incorrect, transfers where every fault was fixed, and supervisors who never answered the "car is due back" reminder.' },
     ],
   },
   {
     title: 'Maintenance Intelligence',
     items: [
-      { name: 'Vehicle Locations', to: '/vehicle-locations', icon: 'M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zM12 11.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z', desc: 'Everywhere on a car a fault can be — the places the inspector picks from ("Front Bumper", "Rims", "Engine Bay"), the sections they are grouped into, and which fault types MUST say where they are before the report can be filed. Add, rename, reorder or retire a place, and preview the real picker before anyone else sees the change.' },
+      // Vehicle Locations moved into the Control Desk (Maintenance Operations) — it is the WHERE half
+      // of the same fault vocabulary the Keyword Risk section owns, curated by the same two people.
       { name: 'Recurring Fault Reviews', to: '/recurring-fault-reviews', icon: 'M3 2v6h6M3 8a9 9 0 1 0 2.6-4.36L3 8', desc: 'Cars that came back with the SAME confirmed fault after a completed repair. Each case shows the previous ticket, garage, parts used, days and distance since the repair, and how many times it recurred — so management can decide whether the earlier repair failed, it is a new failure, workshop responsibility, customer misuse, or needs investigation.' },
       { name: 'Concept Bridge Review', to: '/concept-bridge-review', icon: 'M9 12h6m-3-3v6M5 8V6a2 2 0 0 1 2-2h2M5 16v2a2 2 0 0 0 2 2h2m6-16h2a2 2 0 0 1 2 2v2m-4 12h2a2 2 0 0 0 2-2v-2', desc: 'Teach the system to read workshop language. You are shown one real line from a maintenance note and asked what it means — BEFORE the computer\'s answer is revealed, so your judgement stays independent. Roughly 90 lines, mostly button clicks. The result is the benchmark that decides whether we may translate 26,839 historical tickets into automotive concepts, or need to fix the matching first.' },
     ],
@@ -167,7 +167,11 @@ const NAV_SECTIONS = [
   {
     title: 'Records',
     items: [
-      { name: 'Vehicles', to: '/vehicles', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M7 12h10', desc: 'Every car in the fleet. The OfficeManager API is the sole source of which cars exist; the sheet only enriches matched cars. Click a row to open its full profile.' },
+      // Three tabs now: the fleet register itself, plus the two repair ledgers the retired Repair
+      // Records page held. The registry needs vehicles.view and the ledgers maintenance.view, so the
+      // item can't be reduced to one NAV_PERMISSIONS entry — it declares permissionAny and the hub
+      // filters tab by tab. The description names the absorbed pages so a search still lands here.
+      { name: 'Vehicles', to: '/vehicles', permissionAny: ['vehicles.view', 'maintenance.view'], icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M7 12h10', desc: 'Fleet Registry: every car in the fleet. The OfficeManager API is the sole source of which cars exist; the sheet only enriches matched cars. Click a row to open its full profile. Completed Repairs: the ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost, with the full custody chain behind each row. History: every car that saw the workshop over the chosen window, how often it went in and how long it stayed, opening onto each individual trip.' },
       { name: 'Customers', to: '/customers', icon: 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM3 21v-1a6 6 0 0 1 6-6h6a6 6 0 0 1 6 6v1', desc: 'All customers with their contact details and available wallet (carried-forward credit). Open a customer to see their contracts and balance history.' },
       { name: 'Contracts', to: '/contracts', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z', desc: 'Rental contracts synced from OfficeManager — all open contracts plus the last 3 months of closed ones. Open or closed status is detected on each sync.' },
       { name: 'Drivers', to: '/drivers', icon: 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM6 21v-1a6 6 0 0 1 6-6 6 6 0 0 1 6 6v1M3 9l2 2 3-3', desc: 'Fleet drivers with their licence number, expiry and status. Add, edit or suspend drivers; expiring licences are flagged.' },

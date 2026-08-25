@@ -13,7 +13,9 @@ import Login from './pages/Login';
 import ModuleLauncher from './pages/ModuleLauncher';
 import ModuleOverview from './pages/ModuleOverview';
 import Dashboard from './pages/Dashboard';
-import Vehicles from './pages/Vehicles';
+// Vehicles is a hub now: the fleet registry plus the two repair ledgers that used to be the
+// Repair Records page. App.js mounts the hub; the registry itself is only reachable as its tab.
+import VehiclesHub from './pages/VehiclesHub';
 import VehicleProfile from './pages/vehicles/VehicleProfile';
 import OdometerApprovals from './pages/vehicles/OdometerApprovals';
 import Customers from './pages/Customers';
@@ -26,9 +28,9 @@ import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
 // ComponentsDashboard is held back as "Coming Soon" — the page file stays in the
 // repo; re-import it here when /components is switched back on.
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
-// Control Desk — the Controllers' hub. It owns the four pages that used to be their own routes
-// (Inspection Review, Oil Follow-up, Invoice Matching, Keyword Risk), so App.js no longer mounts
-// them directly; the old paths redirect into their section below.
+// Control Desk — the Controllers' hub. It owns the five pages that used to be their own routes
+// (Inspection Review, Oil Follow-up, Invoice Matching, Keyword Risk, Vehicle Locations), so App.js no
+// longer mounts them directly; the old paths redirect into their section below.
 import ControlDesk from './pages/ControlDesk';
 import ComplaintsCenter from './pages/ComplaintsCenter';
 import FleetUtilization from './pages/FleetUtilization';
@@ -38,12 +40,10 @@ import QuickCostInput from './pages/QuickCostInput';
 import GarageProfile from './pages/intelligence/GarageProfile';
 import GarageCompare from './pages/intelligence/GarageCompare';
 import Executive from './pages/intelligence/Executive';
-import VehicleLocations from './pages/VehicleLocations';
 import PartsHub from './pages/PartsHub';
 import SuppliersHub from './pages/SuppliersHub';
 import GaragesHub from './pages/GaragesHub';
 import FieldReportsHub from './pages/FieldReportsHub';
-import RepairRecordsHub from './pages/RepairRecordsHub';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
 import CostIntelligence from './pages/CostIntelligence';
@@ -135,12 +135,12 @@ export default function App() {
                 {/* Module Overview (Odoo-style mini-app home). Self-guards: redirects
                     to the launcher if the user can't reach the module. */}
                 <Route path="/apps/:moduleId" element={<ModuleOverview />} />
-                {/* Control Desk — the Controllers' four jobs behind one sidebar. Deliberately NOT
+                {/* Control Desk — the Controllers' five jobs behind one sidebar. Deliberately NOT
                     wrapped in a RequirePermission: its sections carry three different permissions
                     (maintenance.manage / reminders.view / maintenance.view), so a single route gate
                     would lock out someone who legitimately holds only one of them. SidebarHub filters
                     section by section instead — each declaring the route it replaced, so the role
-                    deny list still applies — and says "no access" if nothing is left. The four old
+                    deny list still applies — and says "no access" if nothing is left. The five old
                     paths below keep their own gates, so a direct URL is refused exactly as before. */}
                 <Route path="/control-desk" element={<ControlDesk />} />
                 {/* Vehicle Readiness board retired — send the old path to the Fleet Health hub. */}
@@ -169,8 +169,16 @@ export default function App() {
                   <Route path="/dashboard" element={<Dashboard />} />
                 </Route>
 
+                {/* Vehicles — the fleet registry plus the two repair ledgers, one tab strip.
+                    Deliberately NOT wrapped in a RequirePermission: its tabs carry two different
+                    permissions (vehicles.view for the registry, maintenance.view for the ledgers)
+                    and three different deny rules, so a single route gate would lock out someone who
+                    can legitimately open one of them. TabbedHub filters tab by tab instead — each
+                    declaring the route it replaced, so those deny rules still apply — and says
+                    "no access" if nothing is left. A car's own profile is NOT a tab of the hub, so
+                    it keeps its own gate. */}
+                <Route path="/vehicles" element={<VehiclesHub />} />
                 <Route element={<RequirePermission permission="vehicles.view" />}>
-                  <Route path="/vehicles" element={<Vehicles />} />
                   <Route path="/vehicles/:id" element={<VehicleProfile />} />
                 </Route>
 
@@ -302,10 +310,12 @@ export default function App() {
                       config/access.js, and the ticket carries the same checkpoint form. Without the
                       ticket id there is nothing to open, so it falls back to the board. */}
                   <Route path="/maintenance-progress" element={<RedirectCheckpoint />} />
-                  {/* Repair records — the signed-off ledger and each car's workshop history, two tabs. */}
-                  <Route path="/repair-records" element={<RepairRecordsHub />} />
+                  {/* Repair Records is retired — the signed-off ledger and each car's workshop
+                      history are tabs of the Vehicles hub now, because both answer a question about
+                      the CARS and asking it used to mean leaving the car list. */}
+                  <Route path="/repair-records" element={<RedirectToTab to="/vehicles" tab="signed-off" />} />
                   {/* Fixed & Completed Repairs ledger — every closed ticket with its full story */}
-                  <Route path="/completed-repairs" element={<RedirectToTab to="/repair-records" tab="signed-off" />} />
+                  <Route path="/completed-repairs" element={<RedirectToTab to="/vehicles" tab="signed-off" />} />
                   {/* Invoice Matching — the car is back: key each garage's bill beside the work it covers */}
                   <Route path="/invoice-matching" element={<RedirectToTab to="/control-desk" tab="invoices" />} />
                   {/* /maintenance-foresight is retired — its "keeps breaking down" evidence now
@@ -319,11 +329,13 @@ export default function App() {
                   <Route path="/intelligence/garages/compare" element={<GarageCompare />} />
                   <Route path="/intelligence/garages/:id" element={<GarageProfile />} />
                   <Route path="/finding-keywords" element={<RedirectToTab to="/control-desk" tab="keywords" />} />
-                  <Route path="/vehicle-locations" element={<VehicleLocations />} />
+                  {/* Where on the car a fault can be — the other half of the fault vocabulary, so it
+                      sits beside Keyword Risk on the Control Desk rather than on its own route. */}
+                  <Route path="/vehicle-locations" element={<RedirectToTab to="/control-desk" tab="locations" />} />
                   {/* Maintenance Analytics is marked "Coming Soon" in the module registry —
                       redirect the old URL so the unfinished page isn't reachable directly. */}
                   <Route path="/maintenance-analytics" element={<Navigate to="/apps/fleet-intelligence" replace />} />
-                  <Route path="/maintenance-history" element={<RedirectToTab to="/repair-records" tab="per-car" />} />
+                  <Route path="/maintenance-history" element={<RedirectToTab to="/vehicles" tab="per-car" />} />
                   <Route path="/damage-accidents" element={<DamageAccidents />} />
                 </Route>
 
