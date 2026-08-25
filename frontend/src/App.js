@@ -33,7 +33,6 @@ import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
 // longer mounts them directly; the old paths redirect into their section below.
 import ControlDesk from './pages/ControlDesk';
 import ComplaintsCenter from './pages/ComplaintsCenter';
-import FleetUtilization from './pages/FleetUtilization';
 import MaintenanceSwap from './pages/MaintenanceSwap';
 import LogisticsDispatch from './pages/LogisticsDispatch';
 import QuickCostInput from './pages/QuickCostInput';
@@ -46,7 +45,6 @@ import GaragesHub from './pages/GaragesHub';
 import FieldReportsHub from './pages/FieldReportsHub';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
-import CostIntelligence from './pages/CostIntelligence';
 import RecommendationIntelligence from './pages/RecommendationIntelligence';
 import DailyMaintenanceIntelligence from './pages/reports/DailyMaintenanceIntelligence';
 import VehicleSystemDashboard from './pages/reports/VehicleSystemDashboard';
@@ -377,7 +375,10 @@ export default function App() {
                   <Route path="/inspections/history" element={<Navigate to="/maintenance-workflow" replace />} />
                   <Route path="/activity" element={<Navigate to="/maintenance-workflow" replace />} />
                   <Route path="/vehicle-status" element={<Navigate to="/maintenance-workflow" replace />} />
-                  <Route path="/cost-intelligence" element={<CostIntelligence />} />
+                  {/* Cost Intelligence and Fleet Utilization are tabs of the Vehicles hub now — both
+                      are per-car tables over the same fleet, and reading either meant leaving the car
+                      list. Their old routes redirect onto their tab. */}
+                  <Route path="/cost-intelligence" element={<RedirectToTab to="/vehicles" tab="cost" />} />
                   <Route path="/recommendation-intelligence" element={<RecommendationIntelligence />} />
                   {/* Service Due board retired — service reminders live in the Fleet Health hub now. */}
                   <Route path="/service-due" element={<Navigate to="/inspections/schedules?tab=service" replace />} />
@@ -388,7 +389,7 @@ export default function App() {
                   <Route path="/mileage-chain-audit" element={<Navigate to="/mileage?tab=chain" replace />} />
                   {/* Mileage Discrepancies left the oversight group for the odometer hub. */}
                   <Route path="/oversight/mileage" element={<RedirectToTab to="/mileage" tab="discrepancies" />} />
-                  <Route path="/fleet-utilization" element={<FleetUtilization />} />
+                  <Route path="/fleet-utilization" element={<RedirectToTab to="/vehicles" tab="utilization" />} />
                   <Route path="/maintenance-swap" element={<MaintenanceSwap />} />
                   {/* Data Health absorbed Status Mismatch as its second tab — keep the old path alive. */}
                   <Route path="/data-health" element={<DataHealth />} />

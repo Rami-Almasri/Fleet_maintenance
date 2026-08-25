@@ -34,7 +34,7 @@ const phrasesAr = {
   // Repair Records page. The tab labels are translated elsewhere (vehicles.registry in labels.js,
   // 'Completed Repairs', 'History'); these are the hub's own strings.
   'Vehicle sections': 'أقسام المركبات',
-  'Every car in the fleet, and the finished work behind it — the signed-off ledger of what was fixed and what it cost, and each car’s workshop history, trip by trip.': 'كل سيارة في الأسطول، والعمل المنتهي خلفها — السجل المعتمَد لما أُصلح وكم كلّف، وسجل ورشة كل سيارة، زيارة بزيارة.',
+  'Every car in the fleet — what it costs to run, how much of its owned time it earns, and the finished work behind it: the signed-off ledger of what was fixed, and each car’s workshop history, trip by trip.': 'كل سيارة في الأسطول — ما تكلّفه لتشغيلها، وكم من مدة ملكيتها تكسب، والعمل المنتهي خلفها: السجل المعتمَد لما أُصلح، وسجل ورشة كل سيارة، زيارة بزيارة.',
   'Report sections': 'أقسام البلاغات',
   'Scorecard': 'بطاقة الأداء',
   'Supplier sections': 'أقسام الموردين',

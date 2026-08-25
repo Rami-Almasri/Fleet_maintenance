@@ -107,7 +107,7 @@ export const MODULES = [
       // Three tabs: the fleet register, plus the two repair ledgers the retired Repair Records page
       // held. Registry is vehicles.view, the ledgers maintenance.view — so permissionAny, and the
       // hub filters tab by tab against the routes they replaced.
-      { name: 'Vehicles', route: '/vehicles', permissionAny: ['vehicles.view', 'maintenance.view'], icon: Icon.Car, desc: 'Every car in the fleet — open a row for its full profile, history and documents — plus the signed-off repair ledger and each car’s workshop history, trip by trip.' },
+      { name: 'Vehicles', route: '/vehicles', permissionAny: ['vehicles.view', 'maintenance.view', 'insights.view'], icon: Icon.Car, desc: 'Every car in the fleet — open a row for its full profile, history and documents — plus what each car costs to run per kilometre, day and rental, how its owned time splits into rented, in-maintenance and idle days, the signed-off repair ledger, and each car’s workshop history, trip by trip.' },
       { name: 'Contracts', route: '/contracts', permission: 'contracts.view', icon: Icon.Invoice, desc: 'Rental contracts synced from OfficeManager — all open, plus recently closed.' },
       { name: 'Customers', route: '/customers', permission: 'customers.view', icon: Icon.Users, desc: 'Customer contacts, contracts and available wallet (carried-forward credit).' },
       { name: 'Drivers', route: '/drivers', permission: 'drivers.view', icon: Icon.Users, desc: 'Fleet drivers with licence number, expiry and status — expiring licences flagged.' },
@@ -126,7 +126,6 @@ export const MODULES = [
     tone: 'violet',
     tagline: 'Operational analytics — cost, prediction, faults and utilization',
     sections: [
-      { name: 'Fleet Analytics', route: '/fleet-utilization', permission: 'insights.view', icon: Icon.Gauge, desc: 'Per-car split of owned time into rented, in-maintenance and idle days.' },
       // Vehicle Locations is a Control Desk section now (Maintenance module) — the WHERE half of the
       // fault vocabulary, kept beside the Keyword Risk library that owns the WHAT.
       { name: 'Recurring Faults', route: '/recurring-fault-reviews', permission: 'maintenance.recurring.view', icon: Icon.Refresh, desc: 'Cars back with the same confirmed fault after a repair — for a management ruling.' },
@@ -141,7 +140,6 @@ export const MODULES = [
     tone: 'emerald',
     tagline: 'Running cost, accounting data and reports',
     sections: [
-      { name: 'Cost Intelligence', route: '/cost-intelligence', permission: 'insights.view', flag: 'intel', icon: Icon.Chart, desc: 'The true running cost of each asset — per kilometre, per day and per rental.' },
       { name: 'Reports', route: '/apps/reports', permission: 'insights.view', icon: Icon.Chart, desc: 'Operational reports, audit trails and data-quality surfaces in one place.' },
       { name: 'Accounting Data', route: null, permission: 'insights.view', icon: Icon.Invoice, status: 'soon', desc: 'Direct feed from the accounting system — coming soon.' },
     ],

@@ -85,7 +85,7 @@ export default function VehicleCostIntelligence({ vehicleId }) {
       }
       subtitle={t('vehicleProfile.cost.intelSubtitle')}
       actions={(
-        <Link to="/cost-intelligence" className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+        <Link to="/vehicles?tab=cost" className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
           {t('vehicleProfile.cost.wholeFleet')} <Icon.ArrowRight className="h-3.5 w-3.5 rtl:-scale-x-100" />
         </Link>
       )}
