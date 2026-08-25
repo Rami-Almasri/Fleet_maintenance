@@ -1,0 +1,104 @@
+/* =======================================================================
+   Role notifications rail — the "what has been raised for this seat"
+   panel on My Queue. Scoped under .opx so it inherits the Cockpit+ theme
+   variables (Platinum light / Cockpit dark) rather than carrying its own
+   palette.
+   ======================================================================= */
+
+.opx .qn-tools { display: flex; align-items: center; gap: 8px; margin-inline-start: auto; }
+.opx .qn-seg {
+  display: flex; gap: 2px; padding: 2px; border-radius: 9px;
+  background: var(--ov2); border: 1px solid var(--line);
+}
+.opx .qn-seg button {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 7px; border: none; background: none; cursor: pointer;
+  color: var(--ink-3); font-weight: 600;
+}
+.opx .qn-seg button:hover { color: var(--ink-2); }
+.opx .qn-seg button.on { background: var(--brand); color: #fff; }
+
+/* ---- lane block ---- */
+.opx .qn-lanes { display: flex; flex-direction: column; gap: 4px; }
+.opx .qn-lane + .qn-lane { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 4px; }
+.opx .qn-lane-hd {
+  display: flex; align-items: center; gap: 8px; padding: 4px 2px 7px;
+}
+.opx .qn-lane-hd .rail { width: 3px; height: 14px; border-radius: 2px; flex: none; }
+.opx .qn-lane-hd .nm {
+  font-size: 11.5px; font-weight: 700; color: var(--ink-2); letter-spacing: -.005em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.opx .qn-lane-hd .ct {
+  margin-inline-start: auto; font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+  min-width: 20px; height: 18px; padding: 0 6px; border-radius: 6px;
+  display: grid; place-items: center; background: var(--ov2); color: var(--ink-3); flex: none;
+}
+.opx .qn-lane-hd .ct.live { background: rgba(37, 99, 235, .14); color: var(--brand); }
+.opx .qn-lane-empty {
+  font-size: 11px; color: var(--ink-3); padding: 3px 2px 8px; margin: 0; line-height: 1.5;
+}
+
+/* ---- one notification row ---- */
+.opx .qn-row {
+  display: flex; gap: 9px; width: 100%; text-align: start; padding: 8px 8px 8px 7px;
+  border-radius: 10px; border: 1px solid transparent; background: none; cursor: pointer;
+  font-family: inherit; position: relative; transition: background .15s, border-color .15s;
+}
+.opx .qn-row:hover { background: var(--ov); border-color: var(--line); }
+.opx .qn-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: -1px; }
+.opx .qn-row.unread { background: var(--ov); }
+.opx .qn-row.unread::before {
+  content: ''; position: absolute; inset-inline-start: 0; top: 12px;
+  width: 3px; height: 16px; border-radius: 2px; background: var(--brand);
+}
+.opx .qn-row.settled { opacity: .55; }
+
+.opx .qn-ic {
+  flex: none; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+  background: var(--ov2); border: 1px solid var(--line); color: var(--ink-3);
+}
+.opx .qn-ic svg { width: 14px; height: 14px; }
+.opx .qn-ic.crit { background: rgba(225, 29, 72, .12); border-color: rgba(225, 29, 72, .3); color: var(--crit); }
+.opx .qn-ic.paused { background: rgba(217, 119, 6, .12); border-color: rgba(217, 119, 6, .3); color: var(--paused); }
+.opx .qn-ic.ok { background: rgba(5, 150, 105, .12); border-color: rgba(5, 150, 105, .3); color: var(--avail); }
+.opx .qn-ic.info { background: rgba(37, 99, 235, .12); border-color: rgba(37, 99, 235, .3); color: var(--brand); }
+
+.opx .qn-bd { flex: 1; min-width: 0; }
+.opx .qn-t {
+  font-size: 12px; font-weight: 600; color: var(--ink); line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.opx .qn-b {
+  margin: 3px 0 0; font-size: 11px; color: var(--ink-2); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.opx .qn-m {
+  margin-top: 5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .04em; color: var(--ink-3);
+}
+.opx .qn-m .plate { color: var(--cyan); font-weight: 700; }
+
+.opx .qn-x {
+  flex: none; align-self: flex-start; width: 22px; height: 22px; border-radius: 7px;
+  display: grid; place-items: center; border: none; background: none; cursor: pointer;
+  color: var(--ink-3); opacity: 0; transition: opacity .15s, color .15s, background .15s;
+}
+.opx .qn-row:hover .qn-x, .opx .qn-x:focus-visible { opacity: 1; }
+.opx .qn-x:hover { background: var(--ov2); color: var(--crit); }
+.opx .qn-x svg { width: 12px; height: 12px; }
+
+/* ---- lane footer + panel footer ---- */
+.opx .qn-more {
+  width: 100%; padding: 6px 10px; margin-top: 2px; border-radius: 8px;
+  border: 1px dashed var(--line); background: none; cursor: pointer; font-family: var(--mono);
+  font-size: 10px; letter-spacing: .06em; color: var(--ink-3);
+}
+.opx .qn-more:hover { border-color: var(--brand); color: var(--brand); }
+.opx .qn-foot {
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+}
+.opx .qn-foot a { color: var(--cyan); text-decoration: none; font-weight: 600; }
+.opx .qn-foot a:hover { text-decoration: underline; }

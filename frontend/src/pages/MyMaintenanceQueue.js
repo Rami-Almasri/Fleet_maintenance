@@ -13,10 +13,18 @@
 // A user holding several roles sees a tab per role. Actions reuse the shared modal. Every visible
 // string comes from the central i18n catalog via t() so the page stays fully bilingual + RTL.
 //
-// The premium surface (KPI strip, role selector, glassmorphism cards, per-ticket timeline, live
-// activity) is composed ENTIRELY from real ticket data — fault_severity for the priority rail,
-// `handoffs` for the timeline, workflow_status for the progress bar, `position` for the live location,
-// and the section `counts` for the KPIs. No fabricated telemetry.
+// The surface — seat band, headline numbers, view bar, cards and per-ticket timeline — is composed
+// ENTIRELY from real ticket data: fault_severity for the priority rail, `handoffs` for the timeline,
+// workflow_status for the progress bar, `position` for the live location, and the section `counts`
+// for the numbers. No fabricated telemetry.
+//
+// The right rail carries the seat's queue load and, in place of the old "Live Activity" feed, the
+// NOTIFICATIONS RAISED FOR THIS ROLE (see components/workflow/QueueNotifications). Activity replayed
+// the handoff stamps of the very cards listed beside it — it reported work you were already looking
+// at. A notification is the opposite: the thing addressed to your role that nobody has picked up.
+//
+// The view bar (search · sort) NARROWS what is drawn and never what is counted: the headline numbers
+// always describe the whole seat, and whenever the search hides a card the page says so.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -31,18 +39,22 @@ import Modal from '../components/ui/Modal';
 import Button from '../components/ui/Button';
 import { Input } from '../components/ui/Field';
 import {
-  CommandPanel, KpiTile, LiveActivityFeed, JourneyMap, OpsClock, severityTone,
+  CommandPanel, JourneyMap, OpsClock, severityTone,
 } from '../components/ops';
 import TicketActionModal from '../components/workflow/TicketActionModal';
 // The SAME full ticket the pipeline board opens — findings, suggested checks, parts, money, history
 // and every action. A card on this page is the same ticket as a card on /maintenance-workflow, so it
 // must open the same thing; anything less makes this page a list of stubs you have to leave to read.
 import TicketDetailDrawer from '../components/workflow/TicketDetailDrawer';
+// The rail that replaced "Live Activity": the alerts raised FOR the seat you are on, in the Action
+// Center's own role lanes. Activity replayed what had already happened to cards you were looking at;
+// this is the work nobody has picked up yet.
+import QueueNotifications from '../components/workflow/QueueNotifications';
 import TaskRoutingModal from '../components/workflow/TaskRoutingModal';
 import SendCarInModal from '../components/workflow/SendCarInModal';
 import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import ComplaintTriageModal from '../components/workflow/ComplaintTriageModal';
-import { resolveAction, stageAge, ago, custodyBlocked, custodyHolderName, assignmentBlocked, assignedDriverName, ORIGIN_LABEL } from '../components/workflow/meta';
+import { resolveAction, stageAge, stageSeconds, fmtDuration, ago, custodyBlocked, custodyHolderName, assignmentBlocked, assignedDriverName, ORIGIN_LABEL } from '../components/workflow/meta';
 // The oil change is recorded identically wherever it is recorded from — one dialog, one write path.
 import { OilChangeDialog } from './reminders/OilProjection';
 import './MyMaintenanceQueue.css';
@@ -63,6 +75,12 @@ const SECTIONS = [
   // (Duplicating one key across two tabs is the existing pattern — see final_reinspections.)
   { key: 'assigned_to_me',             role: 'dispatcher', tone: '#2563eb', supplementary: true },
   { key: 'awaiting_dispatch_decision', role: 'dispatcher', tone: '#a855f7' },
+  // The step AFTER the supervisor's call: garage picked, driver named (or left to the pool), the car
+  // still standing with us. It used to be the driver's lane alone, so the person who made the
+  // assignment could not see that nobody had acted on it — the one lane where a car sits still
+  // *because* a decision has already been taken. He can take the pickup himself or hand it to
+  // someone else (maySupersedeDriver), so it carries its real action, not a read-only status.
+  { key: 'awaiting_pickup',            role: 'dispatcher', tone: '#f59e0b' },
   // Temporary Vehicle Release — a car being taken out of the workshop (or brought back) needs the same
   // two decisions a garage run does: where does it go, and who drives it. Its own section because the
   // repair behind it is frozen: nothing on that ticket can move until the car does.
@@ -115,6 +133,44 @@ function sevOf(tk) {
   return severityTone(tk.fault_severity || tk.severity);
 }
 const SEV_COLOR = { crit: '#fb7185', paused: '#f5a524', ok: '#34d399', info: '#60a5fa' };
+// Priority order when the board is sorted by urgency: red first, then amber, then everything else.
+const SEV_RANK = { crit: 0, paused: 1, info: 2, ok: 3 };
+
+// Everything a card is worth searching by — the plate you were told on the phone, the car, the
+// fault, the garage it sits in, the complaint someone typed. One haystack, matched case-insensitively.
+const haystack = (tk) => [
+  tk.plate, tk.car, tk.status_label, tk.fault_severity_label, tk.customer_complaint,
+  tk.garage, tk.position?.label, `#${tk.id}`,
+].filter(Boolean).join(' ').toLowerCase();
+
+/**
+ * A headline number on the strip. Clickable tiles double as the view's filter — the professional
+ * shortcut on a busy queue is "show me only the four that are waiting on me", and the number that
+ * says there are four is the natural place to press.
+ */
+function QMetric({ label, value, foot, tone = '', icon: IconCmp, pct = null, active = false, onClick, title }) {
+  const clickable = !!onClick;
+  return (
+    <div
+      className={`qm ${tone} ${clickable ? 'click' : ''} ${active ? 'on' : ''}`}
+      title={title}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+    >
+      <div className="qm-hd">
+        {IconCmp ? <span className="qm-ic"><IconCmp className="h-4 w-4" /></span> : null}
+        <span className="qm-lbl">{label}</span>
+      </div>
+      <div className="qm-v tnum">{value}</div>
+      {pct != null && (
+        <div className="qm-bar"><i style={{ width: `${Math.max(2, Math.min(100, pct))}%` }} /></div>
+      )}
+      {foot ? <div className="qm-foot">{foot}</div> : null}
+    </div>
+  );
+}
 
 // How long the card has sat in its current stage — replaces the (misleading) creation date. Reddens
 // once a stage overstays its SLA (e.g. Pending Dispatch > 4h) so the owner sees they're slacking.
@@ -166,12 +222,20 @@ function collectionStage(task, userId) {
   return 'to_collect';   // dispatched / en_route — claimed, car still at the customer's
 }
 
-function CollectionsPanel({ tf, userId, onClaim, onReceive, onArrived, onOilChange, onReturned, tasks, loading, busyId }) {
+function CollectionsPanel({ tf, userId, onClaim, onReceive, onArrived, onOilChange, onReturned, tasks: allTasks, loading, busyId, query = '' }) {
+  // The page-wide search narrows this panel too — a plate you were given on the phone should find
+  // the car whether it is a ticket or a collection.
+  const q = query.trim().toLowerCase();
+  const tasks = q
+    ? allTasks.filter((task) => [task.plate, task.car, task.destination, task.status_label, task.notes]
+      .filter(Boolean).join(' ').toLowerCase().includes(q))
+    : allTasks;
+
   return (
     <CommandPanel
       title={tf('queue.section.collections.title', 'Cars to collect from customers')}
       dotColor="#f43f5e"
-      meta={tasks.length || null}
+      meta={q && tasks.length !== allTasks.length ? `${tasks.length}/${allTasks.length}` : (tasks.length || null)}
     >
       <p className="qsec-hint">
         {tf('queue.section.collections.hint',
@@ -507,6 +571,9 @@ function QueueCard({ tk, can, userId, onAct, onSelect, active = false, readonly 
   const reasonLabel = reasonChip ? t(`workflow.reasonShort.${tk.trigger_reason}`) : tk.trigger_reason;
   const pct = STAGE_PCT[tk.workflow_status] ?? 50;
   const pos = tk.position || {};
+  // A stage that has overstayed its SLA is the one fact on the card that is nobody's fault but the
+  // holder's — it gets a ribbon, not just a red number nobody reads.
+  const age = stageAge(tk, t);
 
   // Real timeline nodes from the ticket's handoff audit trail, capped with a pulsing "now" node.
   const nodes = useMemo(() => {
@@ -528,7 +595,7 @@ function QueueCard({ tk, can, userId, onAct, onSelect, active = false, readonly 
     // The whole card is the door to the ticket. The plate link, the action buttons and the timeline
     // toggle each stop the click so their own job still wins over opening the drawer.
     <div
-      className={`opx-card qc ${sevClass} ${active ? 'qc-open' : ''}`}
+      className={`opx-card qc ${sevClass} ${active ? 'qc-open' : ''} ${age?.over ? 'qc-late' : ''}`}
       role="button"
       tabIndex={0}
       title={t('queue.openTicket')}
@@ -555,6 +622,11 @@ function QueueCard({ tk, can, userId, onAct, onSelect, active = false, readonly 
         {reasonChip && <span className={`opx-chip ${reasonChip}`}><span className="cd" />{reasonLabel}</span>}
         {tk.is_recovery && <span className="opx-chip crit"><span className="cd" />{t('workflow.reasonShort.recovery') || 'Recovery'}</span>}
         {tk.temporarily_released && <span className="opx-chip paused"><span className="cd" />⤴</span>}
+        {age?.over && (
+          <span className="opx-chip crit" title={t('queue.timeInStage')}>
+            <span className="cd" />{t('queue.late', { age: age.label })}
+          </span>
+        )}
       </div>
 
       {/* The reported note, attributed to its source — an escalated Driver Observation must not read
@@ -621,6 +693,13 @@ export default function MyMaintenanceQueue() {
   const [locationCatalog, setLocationCatalog] = useState({ groups: [], policy: {}, maxQuantity: 40 });
   const [drivers, setDrivers] = useState([]);
   const [activeTab, setActiveTab] = useState('');
+
+  // ── The view controls ─────────────────────────────────────────────────────────────────────
+  // A queue with forty cars on it is a list you scroll, not a queue you work. Search narrows WHAT IS
+  // SHOWN and sort changes the ORDER; neither changes what is counted, so the headline numbers keep
+  // telling the truth about the whole seat while the board underneath shows the slice you asked for.
+  const [query, setQuery] = useState('');
+  const [sortBy, setSortBy] = useState('priority'); // priority | waiting | plate
 
   // Role-scoped queue: silent background revalidation every 8s (no skeleton flash, tab & scroll
   // preserved), paused while a modal is open so an in-flight action never shifts under us.
@@ -776,50 +855,64 @@ export default function MyMaintenanceQueue() {
     return out;
   }, [activeSections, sections]);
 
-  // KPIs — all derived from real queue data (no fabricated fleet-wide numbers).
+  // KPIs — all derived from real queue data (no fabricated fleet-wide numbers), and always over the
+  // WHOLE seat, never the filtered view.
   const kpi = useMemo(() => {
     const tickets = activeTickets.map((x) => x.tk);
     const vehicleIds = new Set(tickets.map((tk) => tk.vehicle_id));
-    const critical = tickets.filter((tk) => sevOf(tk) === 'crit').length;
-    const needsAction = activeTickets.filter(({ tk, section }) => {
-      if (section.readonly) return false;
-      const act = resolveAction(tk);
-      // A custody-locked leg, or a pickup assigned to someone else, is another driver's to complete —
-      // not this user's action item.
-      return act && allows(can, act.perm) && !custodyBlocked(tk, user?.id, can) && !assignmentBlocked(tk, user?.id, can);
-    }).length;
     const awaitingQa = (counts.final_reinspections ?? (sections.final_reinspections?.length || 0));
-    return { total: tickets.length, vehicles: vehicleIds.size, critical, needsAction, awaitingQa };
-  }, [activeTickets, counts, sections, can, user?.id]);
+    // The longest anything on this seat has sat in its current stage. The one number that says
+    // whether the queue is being worked or merely held.
+    const oldest = tickets.reduce((max, tk) => Math.max(max, stageSeconds(tk) || 0), 0);
+    const oldestTk = oldest ? (tickets.find((tk) => (stageSeconds(tk) || 0) === oldest) || null) : null;
+    return { total: tickets.length, vehicles: vehicleIds.size, awaitingQa, oldest, oldestTk };
+  }, [activeTickets, counts, sections]);
 
-  // Live activity — the most recent handoff stamps across the active tab's tickets. Real audit trail.
-  const feedEvents = useMemo(() => {
-    const evs = [];
-    activeTickets.forEach(({ tk }) => {
-      const hs = tk.handoffs || {};
-      HANDOFF_STEPS.forEach((k) => {
-        if (hs[k]?.at) {
-          evs.push({
-            id: `${tk.id}-${k}`,
-            plate: tk.plate || `#${tk.id}`,
-            description: t(`queue.step.${k}`),
-            stage: tk.status_label,
-            actor_name: hs[k].name || undefined,
-            time_label: ago(hs[k].at, t),
-            _at: hs[k].at,
-          });
-        }
-      });
-    });
-    return evs.sort((a, b) => new Date(b._at) - new Date(a._at)).slice(0, 12);
-  }, [activeTickets, t]);
+  // ── The view: search → sort. Search NARROWS what is drawn; it never edits a count. ──
+  const matches = useCallback((tk) => {
+    const q = query.trim().toLowerCase();
+    return !q || haystack(tk).includes(q);
+  }, [query]);
+
+  const orderTickets = useCallback((list) => {
+    const arr = [...list];
+    if (sortBy === 'plate') {
+      return arr.sort((a, b) => String(a.plate || '').localeCompare(String(b.plate || ''), undefined, { numeric: true }));
+    }
+    if (sortBy === 'waiting') {
+      return arr.sort((a, b) => (stageSeconds(b) || 0) - (stageSeconds(a) || 0));
+    }
+    // Priority: severity first, then whoever has been waiting longest inside that severity.
+    return arr.sort((a, b) => ((SEV_RANK[sevOf(a)] ?? 9) - (SEV_RANK[sevOf(b)] ?? 9))
+      || ((stageSeconds(b) || 0) - (stageSeconds(a) || 0)));
+  }, [sortBy]);
+
+  const filtering = query.trim() !== '';
+  // How many cards the search is currently hiding across the seat — so an empty-looking board can
+  // never be mistaken for an empty queue.
+  const shownCount = useMemo(
+    () => activeTickets.filter(({ tk }) => matches(tk)).length,
+    [activeTickets, matches]
+  );
 
   const roleCount = [isInspector, isDispatcher, isDriver].filter(Boolean).length;
   const subtitleKey = roleCount > 1 ? 'both' : isInspector ? 'inspector' : isDispatcher ? 'dispatcher' : isDriver ? 'driver' : 'none';
   const maxLoad = Math.max(1, ...activeSections.map((s) => sectionCount(s)));
 
+  // Red-graded work per role tab, so the role you are NOT looking at can still shout.
+  const roleUrgent = (roleKey) => {
+    const seen = new Set();
+    let n = 0;
+    SECTIONS.filter((s) => s.role === roleKey && !s.readonly).forEach((s) => (sections[s.key] || []).forEach((tk) => {
+      if (seen.has(tk.id)) return;
+      seen.add(tk.id);
+      if (sevOf(tk) === 'crit') n += 1;
+    }));
+    return n;
+  };
+
   return (
-    <div className="opx">
+    <div className="opx qpage">
       {/* Command header */}
       <div className="opx-head">
         <h1>
@@ -828,6 +921,10 @@ export default function MyMaintenanceQueue() {
         </h1>
         <OpsClock />
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button type="button" className="opx-btn" onClick={() => { reload(); loadCollections(); }}
+            title={t('queue.refresh')} aria-label={t('queue.refresh')}>
+            <Icon.Refresh className="h-4 w-4" />
+          </button>
           <Link to="/maintenance-workflow" className="opx-btn">{t('queue.fullPipeline')}</Link>
           {canRequest && (
             <button type="button" className="opx-btn primary" onClick={() => setModal({ action: 'request' })}>
@@ -838,8 +935,6 @@ export default function MyMaintenanceQueue() {
       </div>
 
       <div className="opx-body">
-        <p className="opx-hint" style={{ marginTop: -6, marginBottom: 16 }}>{t(`queue.subtitle.${subtitleKey}`)}</p>
-
         {error && (
           <div className="opx-panel" style={{ marginBottom: 18 }}>
             <div className="opx-panel-bd" style={{ color: 'var(--crit)' }}>{error}</div>
@@ -858,41 +953,97 @@ export default function MyMaintenanceQueue() {
 
         {availableTabs.length > 0 && (
           <>
-            {/* KPI strip — real queue metrics */}
-            <div className="opx-grid opx-c12" style={{ marginBottom: 18 }}>
-              <div className="opx-span-3">
-                <KpiTile label={t('queue.kpi.inQueue')} value={kpi.total}
-                  foot={t('queue.kpi.inQueueFoot', { vehicles: kpi.vehicles })} />
+            {/* ── The seat you are sitting in ──────────────────────────────────────────────
+                Who you are, what this page is for you, and — when you hold more than one role —
+                the seat you are currently reading. The role selector lives here rather than on a
+                row of its own because "which seat" is the single choice everything below obeys. */}
+            <div className="qhero">
+              <div className="qhero-id">
+                <span className="qhero-av">{(user?.name || '?').charAt(0).toUpperCase()}</span>
+                <div className="qhero-txt">
+                  <div className="qhero-name">{user?.name || t('queue.tab.' + (activeTab || 'inspector'))}</div>
+                  <p className="qhero-sub">{t(`queue.subtitle.${subtitleKey}`)}</p>
+                </div>
               </div>
-              <div className="opx-span-3">
-                <KpiTile label={t('queue.kpi.needsAction')} value={kpi.needsAction} tone="warm"
-                  foot={t('queue.kpi.needsActionFoot')} footTone={kpi.needsAction ? 'flat' : 'up'} />
-              </div>
-              <div className="opx-span-3">
-                <KpiTile label={t('queue.kpi.critical')} value={kpi.critical} tone={kpi.critical ? 'hot' : 'good'}
-                  foot={t('queue.kpi.criticalFoot')} footTone={kpi.critical ? 'down' : 'up'} />
-              </div>
-              <div className="opx-span-3">
-                <KpiTile label={t('queue.kpi.awaitingQa')} value={kpi.awaitingQa} tone="good"
-                  foot={t('queue.kpi.awaitingQaFoot')} />
+              <div className="qroles">
+                {availableTabs.map((tab) => {
+                  const active = activeTab === tab.key;
+                  const IconCmp = tab.icon;
+                  const urgent = roleUrgent(tab.key);
+                  return (
+                    <button key={tab.key} type="button" className={`qrole ${active ? 'on' : ''}`}
+                      style={{ '--rail': tab.rail }} onClick={() => setActiveTab(tab.key)} aria-pressed={active}
+                      title={urgent ? t('queue.roleUrgent', { n: urgent }) : undefined}>
+                      <span className="qrole-ic">
+                        <IconCmp className="h-5 w-5" />
+                        {urgent > 0 && <span className="qrole-dot" />}
+                      </span>
+                      <span className="qrole-txt">{t(`queue.tab.${tab.key}`)}</span>
+                      <span className="qrole-ct">{tabCount(tab.key)}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Role selector — icon + task counter per role the user holds */}
-            <div className="qroles">
-              {availableTabs.map((tab) => {
-                const active = activeTab === tab.key;
-                const IconCmp = tab.icon;
-                return (
-                  <button key={tab.key} type="button" className={`qrole ${active ? 'on' : ''}`}
-                    style={{ '--rail': tab.rail }} onClick={() => setActiveTab(tab.key)} aria-pressed={active}>
-                    <span className="qrole-ic"><IconCmp className="h-5 w-5" /></span>
-                    <span className="qrole-txt">{t(`queue.tab.${tab.key}`)}</span>
-                    <span className="qrole-ct">{tabCount(tab.key)}</span>
-                  </button>
-                );
-              })}
+            {/* Headline numbers for the WHOLE seat — counts, never a filter. The board is narrowed by
+                the search box and ordered by the sort; the numbers just tell you what is there. */}
+            <div className="qmetrics">
+              <QMetric
+                label={t('queue.kpi.inQueue')} value={kpi.total} icon={Icon.Car}
+                foot={t('queue.kpi.inQueueFoot', { vehicles: kpi.vehicles })}
+              />
+              <QMetric
+                label={t('queue.kpi.awaitingQa')} value={kpi.awaitingQa} tone="good" icon={Icon.Shield}
+                foot={t('queue.kpi.awaitingQaFoot')}
+              />
+              {/* The one number that says whether this queue is being worked or merely held. */}
+              <QMetric
+                label={t('queue.kpi.oldest')} value={kpi.oldest ? fmtDuration(kpi.oldest) : '—'}
+                icon={Icon.Clock} tone={kpi.oldest >= 86400 ? 'warm' : ''}
+                foot={kpi.oldestTk ? (kpi.oldestTk.plate || `#${kpi.oldestTk.id}`) : t('queue.kpi.oldestFoot')}
+                active={sortBy === 'waiting'} onClick={() => setSortBy(sortBy === 'waiting' ? 'priority' : 'waiting')}
+                title={t('queue.kpi.oldestHint')}
+              />
             </div>
+
+            {/* ── The view bar ────────────────────────────────────────────────────────────
+                Find a car, narrow to a slice, choose the order. None of it touches the numbers
+                above, and whenever it hides anything the bar says exactly how much. */}
+            <div className="qbar">
+              <label className="qbar-search">
+                <Icon.Search className="h-4 w-4" />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t('queue.searchPlaceholder')}
+                  aria-label={t('queue.searchPlaceholder')}
+                />
+                {query && (
+                  <button type="button" className="qbar-x" onClick={() => setQuery('')} aria-label={t('queue.clearFilter')}>
+                    <Icon.X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </label>
+
+              <div className="qbar-sort">
+                <span className="qbar-sort-lbl">{t('queue.sortBy')}</span>
+                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label={t('queue.sortBy')}>
+                  <option value="priority">{t('queue.sort.priority')}</option>
+                  <option value="waiting">{t('queue.sort.waiting')}</option>
+                  <option value="plate">{t('queue.sort.plate')}</option>
+                </select>
+              </div>
+            </div>
+
+            {filtering && (
+              <div className="qbar-note">
+                <Icon.Filter className="h-3.5 w-3.5" />
+                <span>{t('queue.showingOf', { shown: shownCount, total: kpi.total })}</span>
+                <button type="button" onClick={() => setQuery('')}>{t('queue.clearFilter')}</button>
+              </div>
+            )}
 
             {/* Main split: role sections + live side rail */}
             <div className="opx-grid opx-c12">
@@ -922,22 +1073,32 @@ export default function MyMaintenanceQueue() {
                       onArrived={arriveCollection}
                       onOilChange={setOilChanging}
                       onReturned={returnToCustomer}
+                      query={query}
                     />
                   )}
                   {activeSections.map((s) => {
                     const tickets = sections[s.key] || [];
                     const count = counts[s.key] ?? tickets.length;
+                    // The view's slice of this section, in the order the sort asked for. The panel's
+                    // meta shows shown/total the moment they differ, so a filtered section can never
+                    // be read as an empty one.
+                    const visible = orderTickets(tickets.filter((tk) => matches(tk)));
+                    const hidden = tickets.length - visible.length;
                     return (
                       <CommandPanel key={`${s.role}-${s.key}`} title={t(`queue.section.${s.key}.title`)}
-                        dotColor={s.tone} meta={count}>
+                        dotColor={s.tone} meta={hidden > 0 ? `${visible.length}/${count}` : (count || null)}>
                         <p className="qsec-hint">{t(`queue.section.${s.key}.hint`)}</p>
                         <div className="qgrid">
                           {loading ? (
                             <><div className="opx-skel" style={{ height: 128 }} /><div className="opx-skel" style={{ height: 128 }} /></>
                           ) : tickets.length === 0 ? (
                             <p className="opx-empty" style={{ gridColumn: '1 / -1', padding: '26px 10px' }}>{t('queue.nothingHere')}</p>
+                          ) : visible.length === 0 ? (
+                            <p className="opx-empty" style={{ gridColumn: '1 / -1', padding: '26px 10px' }}>
+                              {t('queue.noMatch', { n: hidden })}
+                            </p>
                           ) : (
-                            tickets.map((tk) => (
+                            visible.map((tk) => (
                               <QueueCard key={tk.id} tk={tk} can={can} userId={user?.id} readonly={s.readonly}
                                 active={detail?.id === tk.id}
                                 onSelect={(ticket) => setDetail({ id: ticket.id, summary: ticket })}
@@ -957,7 +1118,7 @@ export default function MyMaintenanceQueue() {
               <div className="opx-span-4">
                 <div className="qside">
                   {/* Queue load — real per-section counts as horizontal bars */}
-                  <CommandPanel title={t('queue.queueLoad')} label={t(`queue.tab.${activeTab}`)}>
+                  <CommandPanel title={t('queue.queueLoad')} label={t(`queue.tab.${activeTab}`)} meta={kpi.total || null}>
                     <div className="qload">
                       {activeSections.map((s) => {
                         const c = sectionCount(s);
@@ -972,13 +1133,16 @@ export default function MyMaintenanceQueue() {
                     </div>
                   </CommandPanel>
 
-                  {/* Live activity — real handoff stamps across the active tab */}
-                  <CommandPanel title={t('queue.liveActivity')} dotColor="#34d399"
-                    meta={feedEvents.length || null}>
-                    {feedEvents.length === 0
-                      ? <p className="opx-empty" style={{ padding: '22px 10px' }}>{t('queue.noActivity')}</p>
-                      : <LiveActivityFeed events={feedEvents} freshCount={loading ? 0 : 2} />}
-                  </CommandPanel>
+                  {/* WHAT HAS BEEN RAISED FOR THIS SEAT — the Action Center's own role lanes, on the
+                      page where the role already works. This replaced the old Live Activity feed,
+                      which replayed handoff stamps of the very cards listed alongside it: it told
+                      you about work you were already looking at. A notification is the opposite —
+                      the thing addressed to your role that nobody has picked up yet. */}
+                  <QueueNotifications
+                    role={activeTab}
+                    can={can}
+                    roleLabel={activeTab ? t(`queue.tab.${activeTab}`) : ''}
+                  />
                 </div>
               </div>
             </div>
