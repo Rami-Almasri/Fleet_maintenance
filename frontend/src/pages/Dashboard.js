@@ -15,6 +15,7 @@ import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
 import RecentlyFixedCard from '../components/RecentlyFixedCard';
 import RepeatPartPurchases from '../components/dashboard/RepeatPartPurchases';
+import RepeatLeaderboard from '../components/dashboard/RepeatLeaderboard';
 import PipelinePanel from '../components/analytics/PipelinePanel';
 import { aed, fmtDate } from '../lib/format';
 import { useCheckpointVocab, resolveCheckpointTicket } from '../lib/maintenanceCheckpoints';
@@ -1274,6 +1275,13 @@ export default function Dashboard() {
             downtime. The good-news counterpart to the pipeline cards above; the full ledger (with the
             date filter and the per-fault story) lives on /completed-repairs. */}
         <RecentlyFixedCard limit={3} />
+
+        {/* What Keeps Coming Back — the repeat leaderboard: the fault that returned after its repair,
+            the part that went on the same car twice, the service that was done again too soon. Sits
+            directly above Most Frequent Faults on purpose, because the two answer neighbouring but
+            different questions: this one is "what does not stay fixed", that one is "what happens most".
+            Self-fetching and permission-gated per tab. */}
+        <RepeatLeaderboard />
 
         {/* Most Maintained Cars (by downtime) beside the Most Frequent Faults donut KPI. */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

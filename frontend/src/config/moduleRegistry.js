@@ -119,31 +119,14 @@ export const MODULES = [
       { name: 'Reports', route: '/apps/reports', permission: 'insights.view', icon: Icon.Chart, desc: 'Operational reports, audit trails and data-quality surfaces in one place.' },
     ],
   },
-  {
-    id: 'fleet-intelligence',
-    name: 'Fleet Intelligence',
-    icon: Icon.Spark,
-    tone: 'violet',
-    tagline: 'Operational analytics — cost, prediction, faults and utilization',
-    sections: [
-      // Vehicle Locations is a Control Desk section now (Maintenance module) — the WHERE half of the
-      // fault vocabulary, kept beside the Keyword Risk library that owns the WHAT.
-      { name: 'Recurring Faults', route: '/recurring-fault-reviews', permission: 'maintenance.recurring.view', icon: Icon.Refresh, desc: 'Cars back with the same confirmed fault after a repair — for a management ruling.' },
-      { name: 'Maintenance Analytics', route: null, permission: 'maintenance.view', icon: Icon.Chart, status: 'soon', desc: 'Deeper trends across repairs, cost and turnaround — coming soon.' },
-      { name: 'Health Scores', route: null, permission: 'insights.view', icon: Icon.Scale, status: 'soon', desc: 'A single per-car condition score rolled up from every signal — coming soon.' },
-    ],
-  },
-  {
-    id: 'finance',
-    name: 'Finance',
-    icon: Icon.Cash,
-    tone: 'emerald',
-    tagline: 'Running cost, accounting data and reports',
-    sections: [
-      { name: 'Reports', route: '/apps/reports', permission: 'insights.view', icon: Icon.Chart, desc: 'Operational reports, audit trails and data-quality surfaces in one place.' },
-      { name: 'Accounting Data', route: null, permission: 'insights.view', icon: Icon.Invoice, status: 'soon', desc: 'Direct feed from the accounting system — coming soon.' },
-    ],
-  },
+  // Fleet Intelligence is gone from the launcher too. Two of its three sections were
+  // unbuilt "soon" tiles, so the module was really a wrapper around Recurring Faults —
+  // and that is a management-ruling review, which is what Reports is for. It moved
+  // there. Vehicle Locations had already left for the Control Desk (Maintenance).
+  // Finance is gone from the launcher: its one live section was a second door onto
+  // /apps/reports, which the Reports module below already owns, and the only other
+  // entry was an unbuilt "soon" tile. A card advertising one borrowed section is
+  // noise. Bring it back when accounting data actually lands.
   {
     id: 'reports',
     name: 'Reports',
@@ -159,6 +142,10 @@ export const MODULES = [
       { name: 'Daily Report', route: '/reports/daily-maintenance', permission: 'maintenance.view', icon: Icon.Activity, desc: "The morning report — every car the day touched plus every car still out, with severity, garage, days and the work recorded. Prints straight to PDF." },
       // The five accountability reports are tabs on one page now; each old URL redirects into its tab.
       { name: 'Workflow Oversight', route: '/oversight', permission: 'insights.view', icon: Icon.Flag, desc: 'Did the process hold? Five checks in one page: cars that left the garage with the contract still open, the severity QC gate, faults later marked incorrect, transfers with every fault fixed, and supervisors who never answered the "due back" reminder.' },
+      // Arrived from the retired Fleet Intelligence module. It sits beside Workflow Oversight
+      // because it asks the same kind of question — did the repair actually hold? — and ends
+      // the same way, in a ruling rather than a job.
+      { name: 'Recurring Faults', route: '/recurring-fault-reviews', permission: 'maintenance.recurring.view', icon: Icon.Refresh, desc: 'Cars back with the same confirmed fault after a repair — for a management ruling.' },
       { name: 'Data Health', route: '/data-health', permission: 'insights.view', icon: Icon.Activity, desc: 'Overall data quality — incomplete records, status mismatches, and the history of every sync run.' },
       { name: 'Mileage & Fuel', route: '/mileage', permission: 'insights.view', icon: Icon.Gauge, desc: 'Every odometer and fuel tool — travel vs. contract km, leakage, chain audit and the readings that do not line up.' },
     ],

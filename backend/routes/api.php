@@ -1357,6 +1357,9 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained-models', [DashboardController::class, 'mostMaintainedModels']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained-cars', [DashboardController::class, 'mostMaintainedCars']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/top-faults', [DashboardController::class, 'topFaults']);
+// "What keeps coming back" — the repeat leaderboards (fault after a repair / part on the same car /
+// service done again). Each SECTION is permission-gated inside the controller, not here.
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/repeats', [DashboardController::class, 'repeats']);
 // Maintenance Progress: the workshop monitoring centre (cars in maintenance + checkpoint status + ETA)
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-progress', [DashboardController::class, 'maintenanceProgress']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/fault-cars', [DashboardController::class, 'faultCars']);

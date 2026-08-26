@@ -1461,6 +1461,306 @@ class DashboardService
         });
     }
 
+    // ── "What keeps coming back" ───────────────────────────────────────────────────────────────────────
+    //
+    // Most Frequent Faults above answers HOW OFTEN a thing happens. This answers a different question the
+    // fleet asks every week: WHICH THING CAME BACK. Three ledgers, three tabs — the fault that returned
+    // after it was repaired, the part that went on the same car twice, the service that was done again
+    // too soon.
+    //
+    // ── Each tab is a WINDOW ONTO AN EXISTING ANSWER, never a second opinion ─────────────────────────
+    //   • Faults   — RecurringFaultService. That service already decides fleet-wide what "came back"
+    //                means (a confirmed fault returning after a verified repair, its own review window),
+    //                and /recurring-fault-reviews renders the full ruling queue. This card re-ranks the
+    //                SAME rows; it must never compute its own recurrence, or the dashboard and the
+    //                review page would disagree about the same fleet.
+    //   • Parts    — PartIntelligenceService::repeatPurchases(), which owns "is this the same part?"
+    //                (catalog id → name key → raw name, in that order) and the consumable exclusion.
+    //                Filters and wipers are MEANT to come round again, so they stay out unless asked for.
+    //   • Services — no engine owned this question, so it is answered here: the same service, on the same
+    //                car, done again inside the window. That IS the signal — a car back for periodic
+    //                maintenance three weeks after its last one either was not finished or was not
+    //                needed. Both ledgers are read (see servicesComingBack) because the sheet holds the
+    //                past and the tickets hold the future.
+    //
+    // The three tabs therefore do NOT share one rule, and the payload says so per section: each carries
+    // its own `rule` CODE (never English — the UI translates it) and `window_days`, so a reader is never
+    // left guessing which definition produced the number in front of them.
+
+    /** Default "again within" gap for the parts and services tabs. The faults tab is engine-owned. */
+    public const REPEAT_WINDOW_DAYS = 30;
+
+    /**
+     * Planned-work vocabulary, the service-side sibling of FAULT_CATEGORIES above and used for exactly
+     * the same reason: the sheet says "Oil & Fillter Change" and a ticket says "Oil Change", and they
+     * are one service, not two. First match wins.
+     *
+     * Ordered specific → generic on purpose: 'Periodic Service' carries the catch-all /service|routine/
+     * and must sit last, or "Battery service" would be filed as periodic upkeep.
+     */
+    private const SERVICE_CATEGORIES = [
+        ['Oil & Filter',          '/oil|fillter|filter/'],
+        ['Battery',               '/batter/'],
+        ['Tires & Wheels',        '/tire|tyre|wheel|align|balanc|puncture/'],
+        ['Brakes',                '/brake|pad|disc/'],
+        ['Cleaning & Detailing',  '/clean|wash|polish|detail/'],
+        ['Programming & Software','/programm|software|coding|\bacc\b|calibrat/'],
+        ['Inspection & Testing',  '/inspect|test|check.?up/'],
+        ['Periodic Service',      '/periodic|routine|scheduled|service|maintenance/'],
+    ];
+
+    /** Map any raw service text to its canonical category label (first-match-wins, else "Other Service"). */
+    private static function serviceCategory(?string $text): string
+    {
+        $t = strtolower(trim((string) $text));
+        foreach (self::SERVICE_CATEGORIES as [$label, $re]) {
+            if ($t !== '' && preg_match($re, $t)) {
+                return $label;
+            }
+        }
+
+        return 'Other Service';
+    }
+
+    /**
+     * The three "keeps coming back" leaderboards, each ranked by how many times something returned.
+     *
+     * $only lets the CALLER drop a section the signed-in user may not read (the parts ledger is
+     * `parts.view`, the recurrence queue is `maintenance.recurring.view`). Gating here rather than
+     * hiding it in the UI means an unauthorised section is never computed, let alone serialised.
+     *
+     * @param  array<int,string>  $only  any of: faults, parts, services
+     * @return array{window_days:int, sections:array<string,array<string,mixed>>}
+     */
+    public function repeats(int $windowDays = self::REPEAT_WINDOW_DAYS, int $limit = 6, array $only = ['faults', 'parts', 'services']): array
+    {
+        $windowDays = max(1, min(365, $windowDays));
+        $limit      = max(1, min(20, $limit));
+        $key        = 'repeats:v1:' . $windowDays . ':' . $limit . ':' . implode(',', $only);
+
+        return $this->remember($key, self::CACHE_TTL, function () use ($windowDays, $limit, $only) {
+            $sections = [];
+
+            if (in_array('faults', $only, true)) {
+                $sections['faults'] = $this->faultsComingBack($limit);
+            }
+            if (in_array('parts', $only, true)) {
+                $sections['parts'] = $this->partsComingBack($windowDays, $limit);
+            }
+            if (in_array('services', $only, true)) {
+                $sections['services'] = $this->servicesComingBack($windowDays, $limit);
+            }
+
+            return ['window_days' => $windowDays, 'sections' => $sections];
+        });
+    }
+
+    /**
+     * Faults that came back — the recurrence engine's OWN ranking, re-shaped for the card.
+     *
+     * `value` is cases (a fault that returned), `cars` the distinct vehicles behind them. Deliberately
+     * NOT recomputed here: see the contract note above the constant block.
+     */
+    private function faultsComingBack(int $limit): array
+    {
+        $stats = app(RecurringFaultService::class)->stats();
+
+        $items = collect($stats['faults'] ?? [])->take($limit)->map(fn ($f) => [
+            'label'        => (string) $f['label'],
+            'value'        => (int) $f['value'],
+            'cars'         => (int) ($f['cars'] ?? 0),
+            'fastest_days' => null,   // per-fault speed lives on the review page's histogram, not here
+        ])->all();
+
+        return [
+            'items'       => $items,
+            'total'       => (int) ($stats['kpi']['total'] ?? 0),
+            'open'        => (int) ($stats['kpi']['open'] ?? 0),
+            'median_days' => $stats['kpi']['median_days'] ?? null,
+            // A CODE, not a sentence — the UI owns the wording in both languages.
+            'rule'        => 'REPEAT_FAULT_AFTER_REPAIR',
+            'origin'      => 'recurring_fault_reviews',
+            'window_days' => $stats['kpi']['window_days'] ?? null,
+            'route'       => '/recurring-fault-reviews',
+        ];
+    }
+
+    /**
+     * Parts bought again for the same car inside the window, ranked by part rather than by buy.
+     *
+     * The pair sweep is capped (it is a list endpoint), so `truncated` is passed straight through: a
+     * ranking built off a truncated sweep must SAY it was truncated rather than read as the whole fleet.
+     */
+    private function partsComingBack(int $windowDays, int $limit): array
+    {
+        $sweep = app(PartIntelligenceService::class)->repeatPurchases($windowDays, 365, 200);
+        $rows  = $sweep['rows'] ?? [];
+
+        $by = [];
+        foreach ($rows as $r) {
+            // The catalog name when both buys were identified as one part (the strongest claim), else
+            // whatever the buyer typed.
+            $label = $r['catalog_part']['name'] ?? $r['part_name'] ?? null;
+            $label = trim((string) $label);
+            if ($label === '') {
+                continue;
+            }
+            $k = mb_strtolower($label);
+            $by[$k] ??= ['label' => $label, 'value' => 0, 'cars' => [], 'fastest_days' => null];
+            $by[$k]['value']++;
+            if ($vid = $r['vehicle']['id'] ?? null) {
+                $by[$k]['cars'][$vid] = true;
+            }
+            $days = $r['days_between'] ?? null;
+            if ($days !== null && ($by[$k]['fastest_days'] === null || $days < $by[$k]['fastest_days'])) {
+                $by[$k]['fastest_days'] = (int) $days;
+            }
+        }
+
+        return [
+            'items'       => $this->rankRepeats($by, $limit),
+            'total'       => count($rows),
+            'truncated'   => (bool) ($sweep['truncated'] ?? false),
+            'rule'        => 'REPEAT_PART_SAME_CAR',
+            'origin'      => 'part_purchases',
+            'window_days' => $windowDays,
+            'route'       => '/parts',
+        ];
+    }
+
+    /**
+     * Services done again on the same car inside the window — planned work that did not stay done.
+     *
+     * BOTH ledgers are read, for the reason VehicleFaultRecurrenceService gives: the sheet holds the
+     * past and the tickets hold the future, so a panel reading one of them quietly stops counting as
+     * the workflow takes over. A `maintenances` row the ticket workflow owns (a task points at it) is
+     * read ONLY through the ticket side, so a service that exists in both places counts once.
+     *
+     * Labels from the two ledgers are folded through serviceCategory() before anything is compared —
+     * otherwise "Oil & Fillter Change" and "Oil Change" would be two services that each never repeat.
+     */
+    private function servicesComingBack(int $windowDays, int $limit): array
+    {
+        $classifier = app(EventClassificationService::class);
+
+        // Sheet rows the ticket workflow has taken over — excluded here, counted on the ticket side.
+        $ownedByTicket = DB::table('maintenance_tasks')
+            ->whereNotNull('maintenance_id')->distinct()->pluck('maintenance_id')->all();
+
+        // events[vehicleId][category][Y-m-d] = true — a SET of days, not a list of rows.
+        //
+        // The workshop log is event-grained: one visit is several rows sharing an out_date, and a car
+        // moved between two garages that morning is several more. Counting rows would have reported a
+        // service "repeating" 173 times at a gap of zero days, which is one visit described in detail,
+        // not a car serviced twice. So the sheet is collapsed to VISITS (vehicle + day + service) first,
+        // exactly as VehicleFaultRecurrenceService collapses it, and a same-day pair can no longer exist.
+        $events = [];
+        $add = function ($vehicleId, string $label, $at) use (&$events) {
+            if (! $vehicleId || ! $at) {
+                return;
+            }
+            $events[(int) $vehicleId][self::serviceCategory($label)][Carbon::parse($at)->toDateString()] = true;
+        };
+
+        $serviceReasonIds = $classifier->serviceReasonIds();
+        if ($serviceReasonIds) {
+            $sheet = DB::table('maintenances as m')
+                ->join('maintenance_reasons as r', 'r.id', '=', 'm.maintenance_reason_id')
+                ->join('vehicles as v', 'v.id', '=', 'm.vehicle_id')
+                ->whereNull('m.deleted_at')
+                ->whereNull('v.deleted_at')
+                ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+                ->whereIn('m.maintenance_reason_id', $serviceReasonIds)
+                ->whereNotNull('m.out_date')
+                ->when($ownedByTicket, fn ($q) => $q->whereNotIn('m.id', $ownedByTicket))
+                ->select('m.vehicle_id', 'r.reason_en', 'm.out_date')
+                ->get();
+            foreach ($sheet as $row) {
+                $add($row->vehicle_id, $row->reason_en, $row->out_date);
+            }
+        }
+
+        $tickets = DB::table('maintenance_tasks as t')
+            ->join('vehicles as v', 'v.id', '=', 't.vehicle_id')
+            ->whereNull('v.deleted_at')
+            ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+            ->where('t.kind', MaintenanceTask::KIND_SERVICE)
+            // A service the workshop cancelled or could not find never happened — same gate the fault
+            // leaderboard applies, for the same reason.
+            ->whereNotIn('t.status', MaintenanceTask::NON_REPAIR_TERMINAL)
+            ->select('t.vehicle_id', 't.symptom', 't.category_key', 't.resolved_at', 't.identified_at', 't.created_at')
+            ->get();
+        foreach ($tickets as $row) {
+            $add(
+                $row->vehicle_id,
+                // The typed symptom first: it is what a human wrote ("Oil Change"). `category_key` is the
+                // fallback and is coarse ("routine"), which folds to Periodic Service.
+                trim((string) $row->symptom) !== '' ? $row->symptom : $row->category_key,
+                $row->resolved_at ?: ($row->identified_at ?: $row->created_at)
+            );
+        }
+
+        // Consecutive gaps per car per service. A pair counts when the SECOND one landed within the
+        // window; three services 20 days apart are two returns, which is what "came back twice" means.
+        $by    = [];
+        $pairs = 0;
+        foreach ($events as $vehicleId => $byCategory) {
+            foreach ($byCategory as $label => $days) {
+                if (count($days) < 2) {
+                    continue;
+                }
+                $dates = array_keys($days);
+                sort($dates);   // Y-m-d strings sort chronologically
+                for ($i = 1; $i < count($dates); $i++) {
+                    $gap = (int) Carbon::parse($dates[$i - 1])->diffInDays(Carbon::parse($dates[$i]));
+                    // Same day is one visit (already deduped) and beyond the window is a car on schedule.
+                    if ($gap < 1 || $gap > $windowDays) {
+                        continue;
+                    }
+                    $pairs++;
+                    $by[$label] ??= ['label' => $label, 'value' => 0, 'cars' => [], 'fastest_days' => null];
+                    $by[$label]['value']++;
+                    $by[$label]['cars'][$vehicleId] = true;
+                    if ($by[$label]['fastest_days'] === null || $gap < $by[$label]['fastest_days']) {
+                        $by[$label]['fastest_days'] = (int) $gap;
+                    }
+                }
+            }
+        }
+
+        return [
+            'items'       => $this->rankRepeats($by, $limit),
+            'total'       => $pairs,
+            'rule'        => 'REPEAT_SERVICE_SAME_CAR',
+            'origin'      => 'workshop_log_and_tickets',
+            'window_days' => $windowDays,
+            'route'       => '/vehicles?tab=per-car',
+        ];
+    }
+
+    /**
+     * Shared tail for the parts / services tallies: distinct-car sets become counts, then rank by
+     * returns, breaking ties on how many cars are affected (fleet-wide beats one bad car) and finally
+     * on the label so the order is stable between two identical reads.
+     *
+     * @param  array<string,array{label:string,value:int,cars:array<int,bool>,fastest_days:?int}>  $by
+     * @return array<int,array<string,mixed>>
+     */
+    private function rankRepeats(array $by, int $limit): array
+    {
+        return collect($by)
+            ->map(fn ($c) => [
+                'label'        => $c['label'],
+                'value'        => (int) $c['value'],
+                'cars'         => count($c['cars']),
+                'fastest_days' => $c['fastest_days'],
+            ])
+            ->sort(fn ($a, $b) => [$b['value'], $b['cars'], $a['label']] <=> [$a['value'], $a['cars'], $b['label']])
+            ->take($limit)
+            ->values()
+            ->all();
+    }
+
     /**
      * Drill-down for ONE fault category on the Fault Leaderboard: "which cars fixed this fault the most".
      *

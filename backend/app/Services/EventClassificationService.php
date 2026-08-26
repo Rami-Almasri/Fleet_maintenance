@@ -43,7 +43,8 @@ class EventClassificationService
     private ?array $damageMap = null;    // normalized name|slug => damage_catalog_id (null when config-only)
     private ?array $labelMap = null;     // normalized legacy sheet label => service|context|damage
     private ?array $aliasMap = null;     // normalized second wording => ['kind' =>, 'id' =>]
-    private ?array $faultReasonIds = null; // maintenance_reasons ids whose name is a fault
+    private ?array $faultReasonIds = null;   // maintenance_reasons ids whose name is a fault
+    private ?array $serviceReasonIds = null; // …and whose name is planned work
 
     /**
      * NORMAL path — the user picked a catalog row. Returns the attribute set to persist on the task:
@@ -398,6 +399,33 @@ class EventClassificationService
         }
 
         return $this->faultReasonIds;
+    }
+
+    /**
+     * The `maintenance_reasons` rows that name PLANNED WORK, as ids ready for a whereIn().
+     *
+     * The mirror of faultReasonIds() and typed the same way — through labelKind(), never through
+     * `level`. Today that is the four the sheet actually uses (Periodic Maintenance, Oil & Fillter
+     * Change, Cleaning, ACC Programming); it is derived, not a list, so a reason added to the sheet
+     * tomorrow lands on the right side without anyone editing code here.
+     *
+     * `damage` and `context` reasons belong to NEITHER set: this is not the complement of
+     * faultReasonIds(), and using it as one would count body damage as a service.
+     *
+     * @return array<int,int>
+     */
+    public function serviceReasonIds(): array
+    {
+        if ($this->serviceReasonIds === null) {
+            $this->serviceReasonIds = \App\Models\MaintenanceReason::query()
+                ->get(['id', 'reason_en'])
+                ->filter(fn ($r) => $this->labelKind($r->reason_en) === MaintenanceTask::KIND_SERVICE)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        }
+
+        return $this->serviceReasonIds;
     }
 
     /**
