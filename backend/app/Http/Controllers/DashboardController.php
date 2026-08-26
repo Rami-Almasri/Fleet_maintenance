@@ -177,6 +177,48 @@ class DashboardController extends Controller
     }
 
     /**
+     * "What keeps coming back" — the fault that returned after its repair, the part that went on the
+     * same car twice, and the service that was done again too soon. One card, three ranked tabs.
+     *
+     * `dashboard.view` opens the endpoint; each SECTION is then gated on the permission that owns its
+     * ledger, and a section the caller cannot read is never computed. A dispatcher with `maintenance.view`
+     * but no `parts.view` therefore gets the faults and services tabs and no parts tab at all — rather
+     * than a parts tab that 403s, or worse, one that renders the parts ledger to someone without it.
+     */
+    public function repeats(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $windowDays = min(365, max(1, (int) $request->query('window_days', DashboardService::REPEAT_WINDOW_DAYS)));
+            $limit      = min(20, max(1, (int) $request->query('limit', 6)));
+
+            $user = $request->user();
+            $only = array_values(array_filter([
+                $user?->can('maintenance.recurring.view') ? 'faults' : null,
+                $user?->can('parts.view') ? 'parts' : null,
+                $user?->can('maintenance.view') ? 'services' : null,
+            ]));
+
+            if (! $only) {
+                // Nothing this user may read. An empty card is the honest answer — not a 403, which would
+                // read as "something went wrong" on a dashboard the user is legitimately allowed to open.
+                return ResponseHelper::SuccessResponse(
+                    ['window_days' => $windowDays, 'sections' => []],
+                    'Repeat leaderboards retrieved successfully',
+                    200
+                );
+            }
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->repeats($windowDays, $limit, $only),
+                'Repeat leaderboards retrieved successfully',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * DAMAGE dashboard — externally-caused damage, which is deliberately absent from every fault figure.
      *
      * Damage is not a reliability signal, so it never appears in Top Faults, health, recurrence or
