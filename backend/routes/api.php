@@ -1360,6 +1360,8 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 // "What keeps coming back" — the repeat leaderboards (fault after a repair / part on the same car /
 // service done again). Each SECTION is permission-gated inside the controller, not here.
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/repeats', [DashboardController::class, 'repeats']);
+// One row of that card, opened: the cars behind a single fault / part / service. Same per-section gate.
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/repeat-cars', [DashboardController::class, 'repeatCars']);
 // Maintenance Progress: the workshop monitoring centre (cars in maintenance + checkpoint status + ETA)
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-progress', [DashboardController::class, 'maintenanceProgress']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/fault-cars', [DashboardController::class, 'faultCars']);

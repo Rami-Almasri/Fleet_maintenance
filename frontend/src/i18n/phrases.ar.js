@@ -5239,6 +5239,11 @@ const phrasesAr = {
   'Open the full list': 'افتح القائمة الكاملة',
   'Nothing has come back after a repair.': 'لا شيء عاد بعد الإصلاح.',
   'Nothing repeated inside {days} days.': 'لا شيء تكرّر خلال {days} يوم.',
+  // A row opened: the cars behind one fault / part / service.
+  'The cars behind it': 'السيارات وراء ذلك',
+  '{n} returns': '{n} مرّة عودة',
+  'and {n} more cars': 'و{n} سيارة أخرى',
+  'No cars to show for this one.': 'لا توجد سيارات لعرضها لهذا البند.',
   'Could not load this right now.': 'تعذّر تحميل هذا الآن.',
 };
 

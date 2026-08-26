@@ -8,6 +8,7 @@ use App\Models\Customer;
 use App\Models\InspectionSchedule;
 use App\Models\Maintenance;
 use App\Models\MaintenanceTask;
+use App\Models\RecurringFaultReview;
 use App\Models\Vehicle;
 use App\Models\VehicleRegistration;
 use Carbon\Carbon;
@@ -1639,7 +1640,7 @@ class DashboardService
      * Labels from the two ledgers are folded through serviceCategory() before anything is compared —
      * otherwise "Oil & Fillter Change" and "Oil Change" would be two services that each never repeat.
      */
-    private function servicesComingBack(int $windowDays, int $limit): array
+    private function serviceEvents(): array
     {
         $classifier = app(EventClassificationService::class);
 
@@ -1700,6 +1701,19 @@ class DashboardService
             );
         }
 
+        return $events;
+    }
+
+    /**
+     * The services tab itself: the visit set above, reduced to "which service came back, and how often".
+     *
+     * The sweep lives in serviceEvents() rather than here because the drill-down below re-reads the SAME
+     * set. A second copy of this query would let the row say 38 cars and the panel behind it say 41.
+     */
+    private function servicesComingBack(int $windowDays, int $limit): array
+    {
+        $events = $this->serviceEvents();
+
         // Consecutive gaps per car per service. A pair counts when the SECOND one landed within the
         // window; three services 20 days apart are two returns, which is what "came back twice" means.
         $by    = [];
@@ -1746,6 +1760,186 @@ class DashboardService
      * @param  array<string,array{label:string,value:int,cars:array<int,bool>,fastest_days:?int}>  $by
      * @return array<int,array<string,mixed>>
      */
+    /**
+     * Drill-down for ONE row of the repeat leaderboard: "which cars are behind this?"
+     *
+     * The card ranks THINGS; this ranks the CARS under one of them, which is the question a supervisor
+     * asks the moment they read the bar — "Periodic Service came back 56 times" is a shrug until you can
+     * see whether that is 38 cars once each (a schedule problem) or one car eight times (a car problem).
+     *
+     * Each section re-enters its OWN parent sweep rather than re-deriving the number a second way, so the
+     * panel always reconciles with the bar above it: `total` here equals that row's `value`, and `cars`
+     * equals its `cars`. A second query shaped "close enough" is how the two quietly disagree.
+     *
+     * @return array{label:string, total:int, cars:int, items:array<int,array<string,mixed>>}
+     */
+    public function repeatCars(string $section, string $label, int $windowDays, int $limit = 10): array
+    {
+        $windowDays = max(1, min(365, $windowDays));
+        $limit      = max(1, min(50, $limit));
+        $label      = trim($label);
+        $empty      = ['label' => $label, 'total' => 0, 'cars' => 0, 'items' => []];
+
+        if ($label === '') {
+            return $empty;
+        }
+
+        $key = 'repeat-cars:v1:' . $section . ':' . mb_strtolower($label) . ':' . $windowDays . ':' . $limit;
+
+        return $this->remember($key, self::CACHE_TTL, function () use ($section, $label, $windowDays, $limit, $empty) {
+            $by = match ($section) {
+                'faults'   => $this->faultRepeatCars($label),
+                'parts'    => $this->partRepeatCars($label, $windowDays),
+                'services' => $this->serviceRepeatCars($label, $windowDays),
+                default    => null,
+            };
+
+            if ($by === null) {
+                return $empty;
+            }
+
+            $items = collect($by)
+                ->sort(fn ($a, $b) => [$b['count'], $a['fastest_days'] ?? PHP_INT_MAX, $a['plate']]
+                    <=> [$a['count'], $b['fastest_days'] ?? PHP_INT_MAX, $b['plate']])
+                ->values();
+
+            return [
+                'label' => $label,
+                // Counted off the WHOLE set, never the truncated list — a panel showing the top 10 of 38
+                // cars must still report 38, or the footer contradicts the bar it opened from.
+                'total' => (int) $items->sum('count'),
+                'cars'  => $items->count(),
+                'items' => $items->take($limit)->values()->all(),
+            ];
+        });
+    }
+
+    /**
+     * Cars behind one recurring FAULT. Mirrors the key/label rule RecurringFaultService ranks by — the
+     * ontology category when it tagged the fault, else the raw symptom — so the labels match the card.
+     */
+    private function faultRepeatCars(string $label): array
+    {
+        $rows = RecurringFaultReview::query()
+            ->select(['id', 'vehicle_id', 'symptom', 'category_key', 'days_since_repair', 'opened_at'])
+            ->with(['vehicle:id,plate_no,make,model'])
+            ->whereNotNull('vehicle_id')
+            ->get()
+            ->filter(function ($r) use ($label) {
+                $name = $r->category_key
+                    ? str_replace('_', ' ', (string) $r->category_key)
+                    : trim((string) $r->symptom);
+
+                return strcasecmp($name, $label) === 0;
+            });
+
+        $by = [];
+        foreach ($rows as $r) {
+            $vid = (int) $r->vehicle_id;
+            $by[$vid] ??= [
+                'id'           => $vid,
+                'plate'        => $r->vehicle?->plate_no ?: '#' . $vid,
+                'car'          => trim(($r->vehicle?->make ?? '') . ' ' . ($r->vehicle?->model ?? '')) ?: null,
+                'count'        => 0,
+                'fastest_days' => null,
+            ];
+            $by[$vid]['count']++;
+            // For a fault, "fastest" is how quickly it returned after the repair — the recurrence engine
+            // already measured that, so it is read rather than recomputed.
+            $d = $r->days_since_repair;
+            if ($d !== null && ($by[$vid]['fastest_days'] === null || $d < $by[$vid]['fastest_days'])) {
+                $by[$vid]['fastest_days'] = (int) $d;
+            }
+        }
+
+        return $by;
+    }
+
+    /**
+     * Cars behind one repeated PART — the same sweep partsComingBack ranks, filtered to one part label.
+     */
+    private function partRepeatCars(string $label, int $windowDays): array
+    {
+        $sweep = app(PartIntelligenceService::class)->repeatPurchases($windowDays, 365, 200);
+
+        $by = [];
+        foreach ($sweep['rows'] ?? [] as $r) {
+            $name = trim((string) ($r['catalog_part']['name'] ?? $r['part_name'] ?? ''));
+            if ($name === '' || strcasecmp($name, $label) !== 0) {
+                continue;
+            }
+            $vid = $r['vehicle']['id'] ?? null;
+            if (! $vid) {
+                continue;
+            }
+            $vid = (int) $vid;
+            $by[$vid] ??= [
+                'id'           => $vid,
+                'plate'        => $r['vehicle']['plate'] ?: '#' . $vid,
+                'car'          => $r['vehicle']['car'] ?? null,
+                'count'        => 0,
+                'fastest_days' => null,
+            ];
+            $by[$vid]['count']++;
+            $d = $r['days_between'] ?? null;
+            if ($d !== null && ($by[$vid]['fastest_days'] === null || $d < $by[$vid]['fastest_days'])) {
+                $by[$vid]['fastest_days'] = (int) $d;
+            }
+        }
+
+        return $by;
+    }
+
+    /**
+     * Cars behind one repeated SERVICE. Re-enters serviceEvents() and applies the identical pair rule —
+     * same visit collapsing, same gap bounds — so this panel and its bar count the same returns.
+     */
+    private function serviceRepeatCars(string $label, int $windowDays): array
+    {
+        $events = $this->serviceEvents();
+        $target = self::serviceCategory($label);
+
+        $by = [];
+        foreach ($events as $vehicleId => $byCategory) {
+            foreach ($byCategory as $category => $days) {
+                if (strcasecmp((string) $category, (string) $target) !== 0 || count($days) < 2) {
+                    continue;
+                }
+                $dates = array_keys($days);
+                sort($dates);
+                for ($i = 1; $i < count($dates); $i++) {
+                    $gap = (int) Carbon::parse($dates[$i - 1])->diffInDays(Carbon::parse($dates[$i]));
+                    if ($gap < 1 || $gap > $windowDays) {
+                        continue;
+                    }
+                    $vid = (int) $vehicleId;
+                    $by[$vid] ??= ['id' => $vid, 'plate' => null, 'car' => null, 'count' => 0, 'fastest_days' => null];
+                    $by[$vid]['count']++;
+                    if ($by[$vid]['fastest_days'] === null || $gap < $by[$vid]['fastest_days']) {
+                        $by[$vid]['fastest_days'] = $gap;
+                    }
+                }
+            }
+        }
+
+        if (! $by) {
+            return $by;
+        }
+
+        // Plates resolved in ONE query at the end rather than per row — the sweep is fleet-wide and the
+        // event map holds ids only.
+        $vehicles = DB::table('vehicles')->whereIn('id', array_keys($by))
+            ->select('id', 'plate_no', 'make', 'model')->get()->keyBy('id');
+
+        foreach ($by as $vid => &$row) {
+            $v = $vehicles[$vid] ?? null;
+            $row['plate'] = $v->plate_no ?: '#' . $vid;
+            $row['car']   = $v ? (trim(($v->make ?? '') . ' ' . ($v->model ?? '')) ?: null) : null;
+        }
+
+        return $by;
+    }
+
     private function rankRepeats(array $by, int $limit): array
     {
         return collect($by)

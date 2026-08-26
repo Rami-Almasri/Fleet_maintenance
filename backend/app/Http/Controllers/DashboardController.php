@@ -219,6 +219,48 @@ class DashboardController extends Controller
     }
 
     /**
+     * The cars behind ONE row of the repeat leaderboard — "which cars keep bringing this back".
+     *
+     * Gated on the SAME permission that owns the section's ledger as `repeats()` above, and re-checked
+     * here rather than trusted from the caller: the card only offers a tab the user may read, but the
+     * endpoint is reachable directly, so a user without `parts.view` asking for a parts drill-down gets
+     * the same empty answer they would get from the card.
+     */
+    public function repeatCars(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $section = (string) $request->query('section', '');
+            $label   = (string) $request->query('label', '');
+
+            $permission = match ($section) {
+                'faults'   => 'maintenance.recurring.view',
+                'parts'    => 'parts.view',
+                'services' => 'maintenance.view',
+                default    => null,
+            };
+
+            if (! $permission || ! $request->user()?->can($permission)) {
+                return ResponseHelper::SuccessResponse(
+                    ['label' => $label, 'total' => 0, 'cars' => 0, 'items' => []],
+                    'Repeat drill-down retrieved successfully',
+                    200
+                );
+            }
+
+            $windowDays = min(365, max(1, (int) $request->query('window_days', DashboardService::REPEAT_WINDOW_DAYS)));
+            $limit      = min(50, max(1, (int) $request->query('limit', 10)));
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->repeatCars($section, $label, $windowDays, $limit),
+                'Repeat drill-down retrieved successfully',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * DAMAGE dashboard — externally-caused damage, which is deliberately absent from every fault figure.
      *
      * Damage is not a reliability signal, so it never appears in Top Faults, health, recurrence or
