@@ -21,7 +21,7 @@
 // Everything here reads GET /Dashboard/repeats, which gates each section on the permission that owns its
 // ledger. A tab the user cannot read is never sent, so it is simply not offered.
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
@@ -51,10 +51,107 @@ const TONE = {
   sky:   { bar: 'from-sky-400 to-sky-600',     chip: 'bg-sky-50 text-sky-700 ring-sky-200',       on: 'bg-white text-sky-700' },
 };
 
+// One opened row: the cars behind a single fault / part / service, ranked by how many times it came back
+// on that car. Same shape for all three tabs, because the question is the same one — the difference
+// between "38 cars once each" and "one car eight times" is the whole reason the row opens.
+//
+// The plate links to the car's profile: a supervisor who finds the offender wants to go there next, and
+// making them copy the plate into the search box is the kind of dead end that stops a card being used.
+function RepeatCarPanel({ detail, tone, t, num }) {
+  if (!detail || detail.loading) {
+    return (
+      <div className="mt-2 space-y-1.5 rounded-xl bg-white p-2 ring-1 ring-slate-200/70">
+        {[0, 1, 2].map((i) => <Skeleton key={i} className="h-8 rounded-lg" />)}
+      </div>
+    );
+  }
+  if (detail.error) {
+    return (
+      <p className="mt-2 rounded-xl bg-white px-3 py-2.5 text-xs text-rose-600 ring-1 ring-slate-200/70">
+        {t('Could not load this right now.')}
+      </p>
+    );
+  }
+  if (!detail.items.length) {
+    return (
+      <p className="mt-2 rounded-xl bg-white px-3 py-2.5 text-xs text-slate-400 ring-1 ring-slate-200/70">
+        {t('No cars to show for this one.')}
+      </p>
+    );
+  }
+
+  const top = detail.items[0]?.count || 1;
+  // The panel lists the top N; the header still reports the full car count, so a truncated list never
+  // reads as the whole set.
+  const hidden = Math.max(0, detail.cars - detail.items.length);
+
+  return (
+    <div className="mt-2 overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/70 px-3 py-1.5">
+        <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          <Icon.Car className="h-3.5 w-3.5 text-slate-400" />
+          {t('The cars behind it')}
+        </span>
+        <span className="text-[11px] font-medium tabular-nums text-slate-400">
+          {t('{n} cars', { n: num(detail.cars) })} · {t('{n} returns', { n: num(detail.total) })}
+        </span>
+      </div>
+
+      <ol className="divide-y divide-slate-50">
+        {detail.items.map((c, i) => (
+          <li key={c.id}>
+            <Link
+              to={`/vehicles/${c.id}`}
+              className="group/car flex items-center gap-2.5 px-3 py-1.5 transition-colors hover:bg-indigo-50/50"
+            >
+              <span className="w-4 shrink-0 text-right text-[11px] font-bold tabular-nums text-slate-400">{i + 1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="flex min-w-0 items-baseline gap-1.5">
+                    <span className="truncate font-mono text-[13px] font-semibold text-slate-900 group-hover/car:text-indigo-600">
+                      {c.plate}
+                    </span>
+                    {c.car && <span className="truncate text-[11px] text-slate-400">{c.car}</span>}
+                  </span>
+                  <span className="flex shrink-0 items-baseline gap-1.5 tabular-nums">
+                    {c.fastest_days != null && (
+                      <span className="text-[10px] font-medium text-slate-400">
+                        {t('fastest {n}d', { n: c.fastest_days })}
+                      </span>
+                    )}
+                    <span className="text-sm font-extrabold text-slate-900">{num(c.count)}×</span>
+                  </span>
+                </div>
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className={`h-full rounded-full bg-gradient-to-r ${tone.bar}`}
+                    style={{ width: `${Math.max(8, Math.round((c.count / top) * 100))}%` }}
+                  />
+                </div>
+              </div>
+              <Icon.ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover/car:translate-x-0.5 group-hover/car:text-indigo-500" />
+            </Link>
+          </li>
+        ))}
+      </ol>
+
+      {hidden > 0 && (
+        <div className="border-t border-slate-100 bg-slate-50/60 px-3 py-1.5 text-[11px] text-slate-400">
+          {t('and {n} more cars', { n: num(hidden) })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function RepeatLeaderboard({ limit = 6 }) {
   const { t } = useI18n();
   const [tab, setTab] = useState('faults');
   const [windowDays, setWindowDays] = useState(30);
+  // Which row is open, and the fetched cars behind each one. Keyed by tab+label+window because all three
+  // change what the answer is — reusing a cached parts list after the window moved would be a lie.
+  const [openLabel, setOpenLabel] = useState(null);
+  const [cars, setCars] = useState({});
 
   const fetcher = useCallback(async () => {
     const res = await api.get('/Dashboard/repeats', { params: { window_days: windowDays, limit } });
@@ -62,6 +159,10 @@ export default function RepeatLeaderboard({ limit = 6 }) {
   }, [windowDays, limit]);
 
   const { data, loading, error } = useFetch(fetcher, [windowDays, limit]);
+
+  // Switching tab or window closes the open row: the label belongs to the ledger it was opened from, and
+  // leaving it open would show the parts panel under a services bar.
+  useEffect(() => { setOpenLabel(null); }, [tab, windowDays]);
 
   const sections = data?.sections || {};
   // Only offer a tab the API actually returned — that is how permission gating reaches the UI.
@@ -84,6 +185,26 @@ export default function RepeatLeaderboard({ limit = 6 }) {
     recurring_fault_reviews: t('Recurring-fault reviews'),
     part_purchases: t('The parts purchase ledger'),
     workshop_log_and_tickets: t('The workshop log and the ticket workflow'),
+  };
+
+  // Open a row and fetch the cars behind it once; afterwards the cache answers instantly.
+  const toggleRow = (label) => {
+    const key = `${active?.key}:${label}:${windowDays}`;
+    setOpenLabel((cur) => (cur === label ? null : label));
+    if (!cars[key]) {
+      setCars((c) => ({ ...c, [key]: { loading: true, items: [], error: false } }));
+      api.get('/Dashboard/repeat-cars', {
+        params: { section: active?.key, label, window_days: windowDays, limit: 10 },
+      })
+        .then((res) => {
+          const d = res.data.data || {};
+          setCars((c) => ({
+            ...c,
+            [key]: { loading: false, items: d.items || [], total: d.total || 0, cars: d.cars || 0, error: false },
+          }));
+        })
+        .catch(() => setCars((c) => ({ ...c, [key]: { loading: false, items: [], error: true } })));
+    }
   };
 
   if (!loading && !error && available.length === 0) return null;
@@ -156,37 +277,61 @@ export default function RepeatLeaderboard({ limit = 6 }) {
         </p>
       ) : (
         <ul className="space-y-2.5">
-          {items.map((it, i) => (
+          {items.map((it, i) => {
+            const open = openLabel === it.label;
+            return (
             <li key={it.label}>
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="flex min-w-0 items-center gap-2 font-medium text-slate-800">
-                  <span className="w-4 shrink-0 text-right text-xs font-bold tabular-nums text-slate-400">{i + 1}</span>
-                  <span className="truncate">{it.label}</span>
-                </span>
-                <span className="flex shrink-0 items-center gap-2">
-                  {/* How fast it came back, when we know — a part back in 2 days is a different story
-                      from one back in 29, and the rank alone cannot tell them apart. */}
-                  {it.fastest_days != null && (
-                    <span className="text-[11px] font-medium tabular-nums text-slate-400">
-                      {t('fastest {n}d', { n: it.fastest_days })}
+              {/* The whole row is the control: the car count is the thing being asked about, so making
+                  only that number clickable would hide the affordance on the smallest target. */}
+              <button
+                type="button"
+                onClick={() => toggleRow(it.label)}
+                aria-expanded={open}
+                className="w-full rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-slate-50"
+              >
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="flex min-w-0 items-center gap-2 font-medium text-slate-800">
+                    <span className="w-4 shrink-0 text-right text-xs font-bold tabular-nums text-slate-400">{i + 1}</span>
+                    <span className="truncate">{it.label}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    {/* How fast it came back, when we know — a part back in 2 days is a different story
+                        from one back in 29, and the rank alone cannot tell them apart. */}
+                    {it.fastest_days != null && (
+                      <span className="text-[11px] font-medium tabular-nums text-slate-400">
+                        {t('fastest {n}d', { n: it.fastest_days })}
+                      </span>
+                    )}
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ring-1 ${tone.chip}`}>
+                      {t('{n} cars', { n: num(it.cars) })}
                     </span>
-                  )}
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ring-1 ${tone.chip}`}>
-                    {t('{n} cars', { n: num(it.cars) })}
+                    <span className="w-10 text-right text-base font-extrabold tabular-nums text-slate-900">
+                      {num(it.value)}×
+                    </span>
+                    <Icon.ChevronDown
+                      className={`h-3.5 w-3.5 shrink-0 text-slate-300 transition-transform ${open ? 'rotate-180' : ''}`}
+                    />
                   </span>
-                  <span className="w-10 text-right text-base font-extrabold tabular-nums text-slate-900">
-                    {num(it.value)}×
-                  </span>
-                </span>
-              </div>
-              <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
-                <div
-                  className={`h-full rounded-full bg-gradient-to-r ${tone.bar} transition-[width] duration-700 ease-out`}
-                  style={{ width: `${Math.max(4, Math.round((it.value / max) * 100))}%` }}
+                </div>
+                <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className={`h-full rounded-full bg-gradient-to-r ${tone.bar} transition-[width] duration-700 ease-out`}
+                    style={{ width: `${Math.max(4, Math.round((it.value / max) * 100))}%` }}
+                  />
+                </div>
+              </button>
+
+              {open && (
+                <RepeatCarPanel
+                  detail={cars[`${active?.key}:${it.label}:${windowDays}`]}
+                  tone={tone}
+                  t={t}
+                  num={num}
                 />
-              </div>
+              )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
 
