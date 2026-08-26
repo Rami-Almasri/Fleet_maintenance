@@ -16,15 +16,34 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
-    <!-- Apply saved theme before paint to avoid a flash of the wrong theme. -->
+    <!-- Apply saved theme + palette before paint to avoid a flash of the wrong
+         colours. `fv:palette:vars` is a pre-flattened map of the --brand-*/
+         --accent-* custom properties, written by ThemeContext, so the palette
+         tables stay in JS and this script only has to replay key/value pairs. -->
     <script>
       (function () {
+        var root = document.documentElement;
         try {
-          var t = localStorage.getItem('fv:theme') || 'light';
-          document.documentElement.setAttribute('data-theme', t);
+          root.setAttribute('data-theme', localStorage.getItem('fv:theme') || 'light');
         } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'light');
+          root.setAttribute('data-theme', 'light');
         }
+        try {
+          var vars = JSON.parse(localStorage.getItem('fv:palette:vars') || 'null');
+          if (vars) for (var k in vars) if (k.indexOf('--') === 0) root.style.setProperty(k, vars[k]);
+        } catch (e) { /* fall back to the :root defaults in index.css */ }
+        try {
+          // Dark shell shade. A rule, not inline vars — it must apply only under
+          // data-theme='dark'. Its selector is html-qualified so it beats
+          // index.css on specificity even though this tag lands first.
+          var css = localStorage.getItem('fv:dark:css');
+          if (css && css.indexOf('html[data-theme') === 0) {
+            var s = document.createElement('style');
+            s.id = 'fv-dark-shell';
+            s.textContent = css;
+            document.head.appendChild(s);
+          }
+        } catch (e) { /* fall back to the [data-theme='dark'] block in index.css */ }
       })();
     </script>
     <!--

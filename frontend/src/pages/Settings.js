@@ -11,6 +11,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../auth/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
 import ThemeToggle from '../components/ThemeToggle';
+import { ThemeStudioInline } from '../components/ThemePicker';
 import LanguageToggle from '../components/LanguageToggle';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
@@ -96,9 +97,20 @@ export default function Settings() {
                 <ThemeToggle />
               </div>
             </Row>
-            <Row title={t('settings.appearance.language')} desc={t('settings.appearance.languageDesc')} last>
+            <Row title={t('settings.appearance.language')} desc={t('settings.appearance.languageDesc')}>
               <LanguageToggle />
             </Row>
+            {/* Colours get the full row width rather than the right-hand control
+                slot — the swatch grids and the live preview need it. */}
+            <div className="py-4">
+              <p className="text-sm font-semibold text-slate-900">{t('Colours')}</p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {t('Choose the primary and accent colours the whole app is painted in. Saved on this device only.')}
+              </p>
+              <div className="mt-4">
+                <ThemeStudioInline />
+              </div>
+            </div>
           </div>
         </SectionCard>
 
