@@ -91,7 +91,20 @@ class ResponseHelper
         }
 
         if ($e instanceof ModelNotFoundException) {
-            return self::FailureResponse(null, 'The requested resource was not found.', 404);
+            return self::FailureResponse(null, self::missingRecordMessage($e), 404);
+        }
+
+        // ROUTE-MODEL BINDING misses land here, not in the branch above. When `{ticket}` can't be
+        // resolved, SubstituteBindings throws ModelNotFoundException — but Laravel's handler has already
+        // repackaged it as a NotFoundHttpException by the time render callbacks run, carrying the
+        // Eloquent text verbatim: "No query results for model [App\Models\Maintenance] 20873". That is
+        // the internal class name and a raw id shown to an operator who only clicked a card, and it
+        // reads like a crash rather than the truth ("that record is gone"). Unwrap it and answer with
+        // the same clean 404 a directly-thrown ModelNotFoundException gets.
+        if ($e instanceof HttpExceptionInterface
+            && $e->getStatusCode() === 404
+            && $e->getPrevious() instanceof ModelNotFoundException) {
+            return self::FailureResponse(null, self::missingRecordMessage($e->getPrevious()), 404);
         }
 
         // abort(404/403/409/…) and any framework HttpException keep their own status code.
@@ -115,5 +128,28 @@ class ResponseHelper
             config('app.debug') ? $e->getMessage() : 'Something went wrong on our end. Please try again.',
             500
         );
+    }
+
+    /**
+     * A plain-language 404 for a record that isn't there. Says WHAT is missing in the operator's own
+     * vocabulary ("maintenance ticket"), never the model class or namespace, and keeps the id so a
+     * screenshot is still enough to trace it. A miss on these routes is almost never a bug — it is a
+     * stale link or a cached card pointing at a record that has since been closed, merged away or
+     * rebuilt by a re-import — so the wording says so rather than implying a fault.
+     */
+    private static function missingRecordMessage(ModelNotFoundException $e): string
+    {
+        $labels = [
+            \App\Models\Maintenance::class => 'maintenance ticket',
+            \App\Models\Vehicle::class     => 'vehicle',
+            \App\Models\Contract::class    => 'contract',
+        ];
+
+        $model = (string) $e->getModel();
+        $label = $labels[$model] ?? 'record';
+        $ids   = array_filter((array) $e->getIds(), fn ($id) => $id !== null && $id !== '');
+        $which = $ids ? ' #' . implode(', #', $ids) : '';
+
+        return "This {$label}{$which} no longer exists. It may have been closed or removed — reload the page to refresh what you're looking at.";
     }
 }

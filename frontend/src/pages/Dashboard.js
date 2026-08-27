@@ -508,6 +508,9 @@ function ProactiveFlags({ data, loading, onReload }) {
           subtitle={active.sub || undefined}
           onClose={() => setActive(null)}
           onDone={(msg) => { setActive(null); toast.success(msg || t('dash.repair.checkpointFiled')); onReload?.(); }}
+          // The card pointed at a ticket that is gone. The modal explains it; refresh the flags behind
+          // it so the dead card drops off instead of waiting for the next visit to this page.
+          onMissing={() => onReload?.()}
         />
       )}
     </SectionCard>

@@ -524,6 +524,9 @@ export default function Notifications() {
           title={t('Checkpoint · {name}', { name: checkpointTicket.label })}
           subtitle={checkpointTicket.sub}
           onClose={() => setCheckpointTicket(null)}
+          // The reminder outlived its ticket. The modal says so; reload the feed so the card that
+          // can never be actioned isn't left sitting in the lane pretending it can.
+          onMissing={() => { setPage(1); fetchPage(1, true); refresh(); }}
           onDone={(msg) => {
             if (msg) toast.success(msg);
             setPage(1);
