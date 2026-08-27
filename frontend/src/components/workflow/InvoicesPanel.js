@@ -457,9 +457,14 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, presetTaskId
 // view of the work (the Invoice Matching desk highlights the faults a hovered bill covers). `addRequest`
 // ({ nonce, taskIds }) opens the create modal from outside with those faults pre-ticked; a new nonce is
 // what triggers it, so the same set can be asked for twice.
+//
+// `showAdd` lets a host page turn OFF this panel's own add button. A page that already puts a per-garage
+// "enter this garage's bill" button next to the work — the Invoice Matching desk does — otherwise shows
+// two buttons that open the identical form, one of them blank, and the reader has to work out that the
+// choice doesn't matter. One door per job.
 export default function InvoicesPanel({
   ticket, garages = [], findingsCatalog = [], canManage = false, onChanged,
-  activeInvoiceId = null, onHoverInvoice, addRequest = null,
+  activeInvoiceId = null, onHoverInvoice, addRequest = null, showAdd = true,
 }) {
   const { t } = useI18n();
   const [editor, setEditor] = useState(null); // null | { invoice?, presetTaskIds? }
@@ -522,7 +527,7 @@ export default function InvoicesPanel({
           <span className="text-sm font-bold tabular-nums text-slate-900">{money(total)}</span>
           {allReconciled && <Badge tone="green">{t('workflow.invoices.allReconciled')}</Badge>}
         </div>
-        {canManage && (
+        {canManage && showAdd && (
           <Button size="sm" variant="primary" onClick={() => setEditor({})}>
             <Icon.Plus className="h-3.5 w-3.5" />{t('workflow.invoices.add')}
           </Button>
@@ -533,7 +538,7 @@ export default function InvoicesPanel({
 
       {invoices.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400">
-          {t('workflow.invoices.empty')}
+          {t(showAdd ? 'workflow.invoices.empty' : 'workflow.invoices.emptyPerGarage')}
         </div>
       ) : (
         <div className="space-y-2.5">

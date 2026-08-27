@@ -2389,6 +2389,9 @@ const en = {
       editTitle: 'Edit invoice',
       create: 'Create invoice',
       empty: 'No invoices yet. Add one per garage bill — each covering only the work that garage did.',
+      // Same emptiness, said where the add button ISN'T. On a page that puts the button on each garage
+      // card instead, "add one" points at nothing — so point at the card.
+      emptyPerGarage: 'No bills yet. Enter each one on its garage below.',
       unassignedGarage: 'Unassigned garage',
       internal: 'In-House (no external garage)',
       internalBadge: 'In-House',
@@ -7432,6 +7435,7 @@ const ar = {
       editTitle: 'تعديل الفاتورة',
       create: 'إنشاء الفاتورة',
       empty: 'لا توجد فواتير بعد. أضف فاتورة لكل ورشة — تغطّي فقط العمل الذي نفّذته تلك الورشة.',
+      emptyPerGarage: 'لا توجد فواتير بعد. أدخل فاتورة كل ورشة من بطاقتها أدناه.',
       unassignedGarage: 'ورشة غير محددة',
       internal: 'داخلي (بدون ورشة خارجية)',
       internalBadge: 'داخلي',
