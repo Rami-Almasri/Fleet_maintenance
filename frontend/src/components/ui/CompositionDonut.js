@@ -10,7 +10,12 @@
 //     total={384533}                    // defaults to the sum of segments
 //     format={aed2}                     // how each value + the centre total print
 //     centerLabel="Total"
+//     onSelect={(seg) => …}              // optional: makes arcs + legend rows a drill-down
 //   />
+//
+// onSelect receives the segment that was clicked. For a folded "Other" row the legend keeps its
+// existing expand-on-click (the arrow reveals the children) and each CHILD row is what drills;
+// clicking the "Other" ARC selects the whole folded group, children and all.
 
 import { useEffect, useState } from 'react';
 import { palette, LINE } from './chartUtils';
@@ -27,6 +32,7 @@ export default function CompositionDonut({
   size = 176,
   stroke = 24,
   className = '',
+  onSelect = null,
 }) {
   const data = segments.filter((s) => (s.value || 0) > 0);
   const sum = total != null ? total : data.reduce((a, s) => a + (s.value || 0), 0);
@@ -94,6 +100,8 @@ export default function CompositionDonut({
                 opacity={dim ? 0.35 : 1}
                 onMouseMove={showTip(a)}
                 onMouseLeave={clear}
+                onClick={onSelect ? () => { clear(); onSelect(a); } : undefined}
+                cursor={onSelect ? 'pointer' : undefined}
                 style={{ transition: 'stroke-dasharray 1.1s cubic-bezier(0.22,1,0.36,1), stroke-dashoffset 1.1s cubic-bezier(0.22,1,0.36,1), opacity 0.2s' }}
               />
             );
@@ -114,14 +122,21 @@ export default function CompositionDonut({
           const dim = active != null && active !== a.i;
           const kids = Array.isArray(a.children) ? a.children.filter((k) => (k.value || 0) > 0) : [];
           const isOpen = expanded === a.i;
+          // A row with folded children keeps click-to-expand; only a leaf row drills.
+          const act = kids.length
+            ? () => setExpanded(isOpen ? null : a.i)
+            : onSelect ? () => onSelect(a) : null;
           return (
             <div key={a.label}>
               <div
-                className={`flex items-center gap-2.5 transition ${kids.length ? 'cursor-pointer select-none' : ''}`}
+                className={`flex items-center gap-2.5 transition ${act ? 'cursor-pointer select-none rounded-md hover:bg-slate-500/5' : ''}`}
                 style={{ opacity: dim ? 0.45 : 1 }}
                 onMouseEnter={() => setActive(a.i)}
                 onMouseLeave={() => setActive(null)}
-                onClick={kids.length ? () => setExpanded(isOpen ? null : a.i) : undefined}
+                onClick={act || undefined}
+                role={act ? 'button' : undefined}
+                tabIndex={act ? 0 : undefined}
+                onKeyDown={act ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } } : undefined}
               >
                 <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: a.color }} />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-600">
@@ -137,7 +152,14 @@ export default function CompositionDonut({
               {isOpen && kids.length > 0 && (
                 <div className="mt-1 space-y-1 border-s border-slate-200 ps-3 ms-1.5">
                   {kids.map((k) => (
-                    <div key={k.key || k.label} className="flex items-center gap-2.5">
+                    <div
+                      key={k.key || k.label}
+                      className={`flex items-center gap-2.5 ${onSelect ? 'cursor-pointer select-none rounded-md hover:bg-slate-500/5' : ''}`}
+                      onClick={onSelect ? () => onSelect(k) : undefined}
+                      role={onSelect ? 'button' : undefined}
+                      tabIndex={onSelect ? 0 : undefined}
+                      onKeyDown={onSelect ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(k); } } : undefined}
+                    >
                       <span className="min-w-0 flex-1 truncate text-xs text-slate-500">{k.label}</span>
                       <span className="shrink-0 text-[11px] tabular-nums text-slate-400">
                         {format(k.value)} · {(sum ? (k.value / sum) * 100 : 0).toFixed(1)}%

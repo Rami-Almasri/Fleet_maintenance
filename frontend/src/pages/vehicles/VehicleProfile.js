@@ -24,7 +24,7 @@ import MulkiyaCard from '../../components/vehicles/MulkiyaCard';
 import VehicleCostIntelligence from './VehicleCostIntelligence';
 import { aed2, fmtDate, fmtClock, fmtSeconds, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
-import { faultTagSegments, isServiceOnlyVisit } from '../../lib/faultCategories';
+import { faultTagSegments, isServiceOnlyVisit, visitsForFault } from '../../lib/faultCategories';
 import { useI18n } from '../../i18n/I18nContext';
 import { openVehicleProfileReport } from '../../lib/vehicleProfileReport';
 import { SHOW_FINANCIALS } from '../../config/features';
@@ -398,6 +398,9 @@ export default function VehicleProfile() {
   const [showAllContracts, setShowAllContracts] = useState(false); // collapse the Contract History table by default
   const [contractType, setContractType] = useState('all'); // Contract History type filter: all | C | U | R
   const [bridgeOpen, setBridgeOpen] = useState(false); // "how is Lifetime Net Profit calculated" drill-down
+  // Fault-distribution drill-down: a slice of the hero donut, opened to the maintenance contracts
+  // that fault was recorded on. { label, keys } — `keys` are RAW fault labels, never the localized ones.
+  const [faultDrill, setFaultDrill] = useState(null);
 
   const VISITS_PREVIEW = 5;    // rows shown before "Show all"
   const CONTRACTS_PREVIEW = 5; // contract rows shown before "Show all"
@@ -634,6 +637,23 @@ export default function VehicleProfile() {
 
   // ── Command-deck telemetry ── everything below is derived from the payload already loaded.
   const totalFaults = faultSegments.reduce((a, s) => a + (s.value || 0), 0);
+  // Clicking a slice answers "which visits is that fault in?" — every maintenance contract the
+  // label was recorded on. A folded "Other" slice drills to all the types it hides at once; its
+  // legend row still expands, so each individual type inside it can be opened on its own.
+  const openFaultDrill = (seg) => {
+    const kids = Array.isArray(seg.children) ? seg.children : [];
+    setFaultDrill({
+      label: seg.label,
+      keys: kids.length ? kids.map((k) => k.key) : [seg.key],
+    });
+  };
+  // Resolved live off the loaded payload — the drill-down is a view of the same visits the donut
+  // counted, never a second fetch. Newest visit first, matching the Maintenance History table.
+  const faultDrillVisits = faultDrill
+    ? visitsForFault(maintenance, faultDrill.keys)
+        .slice()
+        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+    : [];
   // Health LEDs — same thresholds as the Overview health card (30-day amber window).
   const ledFromDays = (label, d) => ({
     label,
@@ -756,11 +776,15 @@ export default function VehicleProfile() {
                   size={168}
                   stroke={24}
                   format={(n) => num(Math.round(n))}
+                  onSelect={openFaultDrill}
                 />
               ) : (
                 <div className="flex h-[168px] items-center justify-center text-xs text-slate-400">
                   {t('No fault history recorded yet.')}
                 </div>
+              )}
+              {faultSegments.length > 0 && (
+                <p className="mt-3 text-[11px] text-slate-400">{t('vehicleProfile.faults.drillHint')}</p>
               )}
               {/* Always-available: generate the printable Vehicle Report (Save-as-PDF) from this dossier. */}
               <div className="mt-5 space-y-2">
@@ -1232,6 +1256,71 @@ export default function VehicleProfile() {
             onChange={(e) => { setMaintForm((f) => ({ ...f, expected_return_date: e.target.value })); setConflict(null); }}
           />
         </div>
+      </Modal>
+
+      {/* Fault distribution drill-down — the maintenance contracts one slice is made of.
+          Pure view of the already-loaded `maintenance` payload: same visits, same fault rules
+          (faultCategories.faultLabelsOf), so the row count here always equals the slice's count.
+          Every row links to the contract itself, which is where the visit's full story lives. */}
+      <Modal
+        open={!!faultDrill}
+        onClose={() => setFaultDrill(null)}
+        size="lg"
+        title={faultDrill ? t('vehicleProfile.faults.drillTitle', { fault: faultDrill.label }) : ''}
+        subtitle={faultDrill
+          ? `${tp('vehicleProfile.faults.drillCount', faultDrillVisits.length, { n: num(faultDrillVisits.length) })}${v.plate_display || v.plate_no ? ` · ${v.plate_display || v.plate_no}` : ''}`
+          : ''}
+        footer={<Button variant="secondary" onClick={() => setFaultDrill(null)}>{t('vehicleProfile.close')}</Button>}
+      >
+        {faultDrill && (
+          faultDrillVisits.length ? (
+            <div className="space-y-2">
+              {faultDrillVisits.map((m) => {
+                const p = PRIO[m.priority] || PRIO.routine;
+                // Only the faults that put this visit in THIS slice are highlighted; the rest of
+                // the visit's faults stay visible but muted, so a shared visit reads honestly.
+                const wanted = new Set(faultDrill.keys.map(String));
+                const faults = (Array.isArray(m.fault_tags) ? m.fault_tags : m.tags) || [];
+                return (
+                  <Link
+                    key={m.id}
+                    to={`/contracts/${m.id}`}
+                    onClick={() => setFaultDrill(null)}
+                    className="block rounded-xl p-3 ring-1 ring-inset ring-slate-200 transition hover:bg-indigo-50/40 hover:ring-indigo-200"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-indigo-600">#{m.contract_no || m.id}</span>
+                      <Badge tone={p.tone} dot title={m.reason || ''}>{t(p.label)}</Badge>
+                      {m.stage && <Badge tone={EVENT_TONE[m.stage] || 'gray'}>{m.stage}</Badge>}
+                      <span className="text-xs text-slate-500">
+                        {fmtDate(m.date)}
+                        {m.in_date && <span className="text-slate-400"> → {fmtDate(m.in_date)}</span>}
+                      </span>
+                      {SHOW_FINANCIALS && Number(m.total) > 0 && (
+                        <span className="ms-auto text-sm font-semibold tabular-nums text-slate-900">{aed2(m.total)}</span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {m.garage || t('vehicleProfile.faults.drillNoGarage')}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {faults.map((tag) => (
+                        <Badge key={tag} tone={wanted.has(String(tag).trim()) ? 'indigo' : 'gray'}>{tag}</Badge>
+                      ))}
+                      {/* A visit with nothing recorded is exactly what "Unspecified" means — say so
+                          rather than showing an empty strip that reads like a rendering bug. */}
+                      {faults.length === 0 && (
+                        <Badge tone="gray">{m.reason || tf('faultCategories.unspecified', 'Unspecified')}</Badge>
+                      )}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="py-8 text-center text-sm text-slate-400">{t('vehicleProfile.faults.drillEmpty')}</p>
+          )
+        )}
       </Modal>
 
       {/* Maintenance Log — event detail */}
