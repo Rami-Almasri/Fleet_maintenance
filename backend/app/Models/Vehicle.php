@@ -500,6 +500,24 @@ class Vehicle extends Model
         return $this->hasOne(VehicleRegistration::class)->latestOfMany();
     }
 
+    /** Every scanned document ever filed for this car — newest first, superseded versions included. */
+    public function documents(): HasMany
+    {
+        return $this->hasMany(VehicleDocument::class)->orderByDesc('id');
+    }
+
+    /**
+     * The Mulkiya scan in force — the card a manager or a traffic officer would be shown today.
+     * Superseded versions stay reachable through documents(); see [[VehicleDocument]].
+     */
+    public function mulkiya(): HasOne
+    {
+        return $this->hasOne(VehicleDocument::class)
+            ->where('kind', VehicleDocument::KIND_MULKIYA)
+            ->whereNull('superseded_at')
+            ->latestOfMany();
+    }
+
     /**
      * The single currently-open contract (the car's current movement), if any.
      * Uses ofMany so the "latest" is the latest AMONG open contracts — otherwise a

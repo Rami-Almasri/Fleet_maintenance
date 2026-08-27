@@ -14,6 +14,7 @@ import { SectionCard } from '../ui/Table';
 import { Skeleton } from '../ui/Skeleton';
 import FindingsList from '../workflow/FindingsList';
 import { fmtDate, num, aed2 } from '../../lib/format';
+import storageSrc from '../../lib/storageUrl';
 
 // workflow_status → chip label + colour (the "lifecycle stage with colour coding").
 // `t` is threaded in because these live outside the component body.
@@ -36,20 +37,9 @@ const reasonMap = (t) => ({
 
 const odo = (n) => (n ? `${num(n)} km` : '—');
 
-// The backend origin behind the API client (e.g. http://127.0.0.1:8000), so local `public`-disk
-// photo URLs resolve to the dev backend regardless of APP_URL. S3 signed URLs (different host,
-// carrying a signature) are left exactly as-is.
-const API_ORIGIN = (api.defaults.baseURL || '').replace(/\/api\/?$/, '');
-function photoSrc(url) {
-  if (!url) return null;
-  try {
-    const u = new URL(url, API_ORIGIN || window.location.origin);
-    if (API_ORIGIN && u.pathname.startsWith('/storage/')) return `${API_ORIGIN}${u.pathname}`;
-    return u.href;
-  } catch {
-    return url;
-  }
-}
+// Resolving a stored photo's URL onto the API origin lives in lib/storageUrl — the Mulkiya card
+// needs the same rule, and a subtly-different copy of it would eventually drift.
+const photoSrc = storageSrc;
 
 // Which blocks to render. Lets the tabbed Vehicle Profile put Health/Findings/Workflow on the
 // Maintenance tab and the Condition Timeline photos on the Media tab, from the same component.
