@@ -1362,6 +1362,8 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/repeats', [DashboardController::class, 'repeats']);
 // One row of that card, opened: the cars behind a single fault / part / service. Same per-section gate.
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/repeat-cars', [DashboardController::class, 'repeatCars']);
+// And one car on that row, opened: the visits / buys / recurrences themselves.
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/repeat-events', [DashboardController::class, 'repeatEvents']);
 // Maintenance Progress: the workshop monitoring centre (cars in maintenance + checkpoint status + ETA)
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-progress', [DashboardController::class, 'maintenanceProgress']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/fault-cars', [DashboardController::class, 'faultCars']);

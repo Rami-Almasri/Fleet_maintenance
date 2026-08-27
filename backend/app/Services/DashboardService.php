@@ -1940,6 +1940,195 @@ class DashboardService
         return $by;
     }
 
+    /**
+     * The third level: the actual RECORDS behind one car on one row — "47194 came back 4 times, show me
+     * the four".
+     *
+     * A count is an argument-ender only when you can see what it is made of. The panel above says a car
+     * had a service four times too soon; this says WHICH visits those were, when, what each was called
+     * and where it was read from — the point at which a supervisor can go argue with the garage.
+     *
+     * Services are listed as VISITS rather than as returns, with the gap from the previous visit on each
+     * and a flag for the ones that counted. Four returns is five visits, and a list that silently showed
+     * four of them would be answering a different question than the one the row asked.
+     *
+     * @return array{label:string, vehicle:array|null, counted:int, items:array<int,array<string,mixed>>}
+     */
+    public function repeatEvents(string $section, string $label, int $vehicleId, int $windowDays): array
+    {
+        $windowDays = max(1, min(365, $windowDays));
+        $label      = trim($label);
+        $empty      = ['label' => $label, 'vehicle' => null, 'counted' => 0, 'items' => []];
+
+        if ($label === '' || $vehicleId < 1) {
+            return $empty;
+        }
+
+        $key = 'repeat-events:v1:' . $section . ':' . mb_strtolower($label) . ':' . $vehicleId . ':' . $windowDays;
+
+        return $this->remember($key, self::CACHE_TTL, function () use ($section, $label, $vehicleId, $windowDays, $empty) {
+            $v = DB::table('vehicles')->where('id', $vehicleId)->select('id', 'plate_no', 'make', 'model')->first();
+            if (! $v) {
+                return $empty;
+            }
+
+            $items = match ($section) {
+                'faults'   => $this->faultRepeatEvents($label, $vehicleId),
+                'parts'    => $this->partRepeatEvents($label, $vehicleId, $windowDays),
+                'services' => $this->serviceRepeatEvents($label, $vehicleId, $windowDays),
+                default    => null,
+            };
+
+            if ($items === null) {
+                return $empty;
+            }
+
+            return [
+                'label'   => $label,
+                'vehicle' => [
+                    'id'    => (int) $v->id,
+                    'plate' => $v->plate_no ?: '#' . $v->id,
+                    'car'   => trim(($v->make ?? '') . ' ' . ($v->model ?? '')) ?: null,
+                ],
+                // How many of these records the row above actually counted as a return.
+                'counted' => count(array_filter($items, fn ($i) => ! empty($i['counted']))),
+                'items'   => $items,
+            ];
+        });
+    }
+
+    /** Every visit of one service on one car, oldest first, each carrying the gap that preceded it. */
+    private function serviceRepeatEvents(string $label, int $vehicleId, int $windowDays): array
+    {
+        $classifier = app(EventClassificationService::class);
+        $target     = self::serviceCategory($label);
+
+        $ownedByTicket = DB::table('maintenance_tasks')
+            ->whereNotNull('maintenance_id')->distinct()->pluck('maintenance_id')->all();
+
+        // Same two ledgers, same gates as serviceEvents() — narrowed to one car.
+        $visits = [];
+        $put = function ($at, string $detail, string $source) use (&$visits, $target) {
+            if (! $at || strcasecmp((string) self::serviceCategory($detail), (string) $target) !== 0) {
+                return;
+            }
+            $day = Carbon::parse($at)->toDateString();
+            // One visit per day: the sheet describes a single visit over several rows, exactly as the
+            // parent sweep collapses it. First writer wins so the detail stays stable between reads.
+            $visits[$day] ??= ['at' => $day, 'detail' => trim($detail) ?: null, 'source' => $source];
+        };
+
+        $serviceReasonIds = $classifier->serviceReasonIds();
+        if ($serviceReasonIds) {
+            $sheet = DB::table('maintenances as m')
+                ->join('maintenance_reasons as r', 'r.id', '=', 'm.maintenance_reason_id')
+                ->where('m.vehicle_id', $vehicleId)
+                ->whereNull('m.deleted_at')
+                ->whereIn('m.maintenance_reason_id', $serviceReasonIds)
+                ->whereNotNull('m.out_date')
+                ->when($ownedByTicket, fn ($q) => $q->whereNotIn('m.id', $ownedByTicket))
+                ->select('r.reason_en', 'm.out_date')
+                ->get();
+            foreach ($sheet as $row) {
+                $put($row->out_date, (string) $row->reason_en, 'sheet');
+            }
+        }
+
+        $tickets = DB::table('maintenance_tasks as t')
+            ->where('t.vehicle_id', $vehicleId)
+            ->where('t.kind', MaintenanceTask::KIND_SERVICE)
+            ->whereNotIn('t.status', MaintenanceTask::NON_REPAIR_TERMINAL)
+            ->select('t.symptom', 't.category_key', 't.resolved_at', 't.identified_at', 't.created_at')
+            ->get();
+        foreach ($tickets as $row) {
+            $put(
+                $row->resolved_at ?: ($row->identified_at ?: $row->created_at),
+                trim((string) $row->symptom) !== '' ? (string) $row->symptom : (string) $row->category_key,
+                'ticket'
+            );
+        }
+
+        ksort($visits);
+        $out  = [];
+        $prev = null;
+        foreach ($visits as $day => $visit) {
+            $gap = $prev ? (int) Carbon::parse($prev)->diffInDays(Carbon::parse($day)) : null;
+            $out[] = $visit + [
+                'gap_days' => $gap,
+                // The gap rule the bar counted by: inside the window and not the same day.
+                'counted'  => $gap !== null && $gap >= 1 && $gap <= $windowDays,
+            ];
+            $prev = $day;
+        }
+
+        return $out;
+    }
+
+    /** Each time this part was bought again for this car — both sides of the pair, with the approval. */
+    private function partRepeatEvents(string $label, int $vehicleId, int $windowDays): array
+    {
+        $sweep = app(PartIntelligenceService::class)->repeatPurchases($windowDays, 365, 200, $vehicleId);
+
+        $out = [];
+        foreach ($sweep['rows'] ?? [] as $r) {
+            $name = trim((string) ($r['catalog_part']['name'] ?? $r['part_name'] ?? ''));
+            if ($name === '' || strcasecmp($name, $label) !== 0) {
+                continue;
+            }
+            $out[] = [
+                'at'         => $r['current']['purchased_at'] ?? null,
+                'detail'     => $r['part_name'] ?? $name,
+                'source'     => 'purchase',
+                'gap_days'   => $r['days_between'] ?? null,
+                'counted'    => true,
+                'previous_at' => $r['previous']['purchased_at'] ?? null,
+                'by'         => $r['current']['purchased_by'] ?? null,
+                'vendor'     => $r['current']['source_name'] ?? null,
+                'price'      => $r['current']['total_price'] ?? null,
+                'same_fault' => (bool) ($r['same_fault'] ?? false),
+            ];
+        }
+
+        usort($out, fn ($a, $b) => ($a['at'] ?? '') <=> ($b['at'] ?? ''));
+
+        return $out;
+    }
+
+    /** Each recorded recurrence of this fault on this car, with how long the previous repair held. */
+    private function faultRepeatEvents(string $label, int $vehicleId): array
+    {
+        $rows = RecurringFaultReview::query()
+            ->select(['id', 'vehicle_id', 'symptom', 'category_key', 'status', 'decision',
+                'days_since_repair', 'previous_garage_name', 'opened_at'])
+            ->where('vehicle_id', $vehicleId)
+            ->get()
+            ->filter(function ($r) use ($label) {
+                $name = $r->category_key
+                    ? str_replace('_', ' ', (string) $r->category_key)
+                    : trim((string) $r->symptom);
+
+                return strcasecmp($name, $label) === 0;
+            })
+            ->sortBy(fn ($r) => optional($r->opened_at)->toDateString() ?? '');
+
+        $out = [];
+        foreach ($rows as $r) {
+            $out[] = [
+                'at'       => optional($r->opened_at)->toDateString(),
+                'detail'   => trim((string) $r->symptom) ?: $label,
+                'source'   => 'review',
+                // For a fault the gap that matters is how long the previous repair lasted.
+                'gap_days' => $r->days_since_repair === null ? null : (int) $r->days_since_repair,
+                'counted'  => true,
+                'garage'   => $r->previous_garage_name,
+                'status'   => $r->status,
+                'decision' => $r->decision,
+            ];
+        }
+
+        return $out;
+    }
+
     private function rankRepeats(array $by, int $limit): array
     {
         return collect($by)

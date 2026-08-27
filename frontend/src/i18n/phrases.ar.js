@@ -5244,6 +5244,16 @@ const phrasesAr = {
   '{n} returns': '{n} مرّة عودة',
   'and {n} more cars': 'و{n} سيارة أخرى',
   'No cars to show for this one.': 'لا توجد سيارات لعرضها لهذا البند.',
+  'Open the car': 'افتح صفحة السيارة',
+  // A car opened: the records themselves — the visits, buys or recurrences behind its count.
+  'No records to show.': 'لا توجد سجلات لعرضها.',
+  'Workshop log': 'سجل الورشة',
+  'Ticket': 'تذكرة',
+  'Purchase': 'عملية شراء',
+  'Recurrence review': 'مراجعة التكرار',
+  'first on record': 'الأولى في السجل',
+  '{n}d after': 'بعد {n} يوم',
+  'counted': 'محتسبة',
   'Could not load this right now.': 'تعذّر تحميل هذا الآن.',
 };
 

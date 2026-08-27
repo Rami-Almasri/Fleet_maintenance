@@ -261,6 +261,45 @@ class DashboardController extends Controller
     }
 
     /**
+     * The records behind ONE car on one repeat row — the visits, buys or recurrences themselves.
+     *
+     * Same per-section gate as the two levels above it, re-checked here for the same reason.
+     */
+    public function repeatEvents(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $section = (string) $request->query('section', '');
+            $label   = (string) $request->query('label', '');
+
+            $permission = match ($section) {
+                'faults'   => 'maintenance.recurring.view',
+                'parts'    => 'parts.view',
+                'services' => 'maintenance.view',
+                default    => null,
+            };
+
+            if (! $permission || ! $request->user()?->can($permission)) {
+                return ResponseHelper::SuccessResponse(
+                    ['label' => $label, 'vehicle' => null, 'counted' => 0, 'items' => []],
+                    'Repeat records retrieved successfully',
+                    200
+                );
+            }
+
+            $windowDays = min(365, max(1, (int) $request->query('window_days', DashboardService::REPEAT_WINDOW_DAYS)));
+            $vehicleId  = (int) $request->query('vehicle_id', 0);
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->repeatEvents($section, $label, $vehicleId, $windowDays),
+                'Repeat records retrieved successfully',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * DAMAGE dashboard — externally-caused damage, which is deliberately absent from every fault figure.
      *
      * Damage is not a reliability signal, so it never appears in Top Faults, health, recurrence or
