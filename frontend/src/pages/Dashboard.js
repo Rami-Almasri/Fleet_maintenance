@@ -14,7 +14,6 @@ import LineChart from '../components/ui/LineChart';
 import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
 import RecentlyFixedCard from '../components/RecentlyFixedCard';
-import RepeatPartPurchases from '../components/dashboard/RepeatPartPurchases';
 import RepeatLeaderboard from '../components/dashboard/RepeatLeaderboard';
 import PipelinePanel from '../components/analytics/PipelinePanel';
 import { aed, fmtDate } from '../lib/format';
@@ -1265,11 +1264,6 @@ export default function Dashboard() {
             app's own tickets) and how it is tracking against its repair ETA, with the checkpoint form
             on each card. Same source list as the notification bell; every card opens its ticket. */}
         <ProactiveFlags data={proactive} loading={loading} onReload={reload} />
-
-        {/* Bought Again — the same part fitted to the same car twice inside the window, with the
-            approval behind each buy. Self-fetching and permission-gated (renders nothing without
-            `parts.view`), so it costs nothing for a user who can't see the parts ledger. */}
-        <RepeatPartPurchases />
 
         {/* Recently Fixed — the cars that came back working: the problem, the fix, the garage and the
             downtime. The good-news counterpart to the pipeline cards above; the full ledger (with the

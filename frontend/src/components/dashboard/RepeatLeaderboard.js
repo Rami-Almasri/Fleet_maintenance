@@ -51,13 +51,92 @@ const TONE = {
   sky:   { bar: 'from-sky-400 to-sky-600',     chip: 'bg-sky-50 text-sky-700 ring-sky-200',       on: 'bg-white text-sky-700' },
 };
 
+// Where each record was read from. Named rather than tagged with a raw column value, because "sheet" is
+// our word for it and the workshop's word is "the log".
+const SOURCE_KEY = {
+  sheet: 'Workshop log',
+  ticket: 'Ticket',
+  purchase: 'Purchase',
+  review: 'Recurrence review',
+};
+
+// The third level: the records themselves. A count is only an argument-ender once you can see what it is
+// made of — these are the visits/buys/recurrences, with the gap that preceded each and a mark on the ones
+// the row above actually counted.
+//
+// Services list EVERY visit, not just the counted ones: four returns is five visits, and showing four of
+// them would answer a different question than the row asked.
+function RepeatEventList({ detail, t, num }) {
+  if (!detail || detail.loading) {
+    return (
+      <div className="space-y-1 px-3 py-2">
+        {[0, 1].map((i) => <Skeleton key={i} className="h-6 rounded" />)}
+      </div>
+    );
+  }
+  if (detail.error) {
+    return <p className="px-3 py-2 text-[11px] text-rose-600">{t('Could not load this right now.')}</p>;
+  }
+  if (!detail.items.length) {
+    return <p className="px-3 py-2 text-[11px] text-slate-400">{t('No records to show.')}</p>;
+  }
+
+  return (
+    <ol className="space-y-1 border-t border-slate-100 bg-slate-50/70 px-3 py-2">
+      {detail.items.map((e, i) => (
+        <li key={`${e.at}-${i}`} className="flex items-baseline justify-between gap-2 text-[11px]">
+          <span className="flex min-w-0 items-baseline gap-1.5">
+            <span className="shrink-0 font-mono tabular-nums text-slate-500">{e.at || '—'}</span>
+            {e.detail && <span className="truncate text-slate-600">{e.detail}</span>}
+            {e.source && SOURCE_KEY[e.source] && (
+              <span className="shrink-0 rounded bg-white px-1 py-px text-[10px] text-slate-400 ring-1 ring-slate-200">
+                {t(SOURCE_KEY[e.source])}
+              </span>
+            )}
+          </span>
+          <span className="flex shrink-0 items-baseline gap-1.5 tabular-nums">
+            <span className="text-slate-400">
+              {e.gap_days == null ? t('first on record') : t('{n}d after', { n: num(e.gap_days) })}
+            </span>
+            {e.counted && (
+              <span className="rounded-full bg-rose-50 px-1.5 py-px text-[10px] font-semibold text-rose-600 ring-1 ring-rose-200">
+                {t('counted')}
+              </span>
+            )}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 // One opened row: the cars behind a single fault / part / service, ranked by how many times it came back
 // on that car. Same shape for all three tabs, because the question is the same one — the difference
 // between "38 cars once each" and "one car eight times" is the whole reason the row opens.
 //
-// The plate links to the car's profile: a supervisor who finds the offender wants to go there next, and
-// making them copy the plate into the search box is the kind of dead end that stops a card being used.
-function RepeatCarPanel({ detail, tone, t, num }) {
+// Each car opens again into its own records, and the arrow at the end goes to the car itself: "show me
+// the four" and "take me to this car" are different intentions, so they get different targets.
+function RepeatCarPanel({ detail, tone, t, num, section, label, windowDays }) {
+  // Which car is opened to its records, and the records fetched so far. Scoped to this panel, so closing
+  // the parent row and reopening it starts clean rather than restoring a stale sub-expansion.
+  const [openCar, setOpenCar] = useState(null);
+  const [events, setEvents] = useState({});
+
+  const toggleCar = (vehicleId) => {
+    setOpenCar((cur) => (cur === vehicleId ? null : vehicleId));
+    if (!events[vehicleId]) {
+      setEvents((e) => ({ ...e, [vehicleId]: { loading: true, items: [], error: false } }));
+      api.get('/Dashboard/repeat-events', {
+        params: { section, label, vehicle_id: vehicleId, window_days: windowDays },
+      })
+        .then((res) => {
+          const d = res.data.data || {};
+          setEvents((e) => ({ ...e, [vehicleId]: { loading: false, items: d.items || [], error: false } }));
+        })
+        .catch(() => setEvents((e) => ({ ...e, [vehicleId]: { loading: false, items: [], error: true } })));
+    }
+  };
+
   if (!detail || detail.loading) {
     return (
       <div className="mt-2 space-y-1.5 rounded-xl bg-white p-2 ring-1 ring-slate-200/70">
@@ -98,19 +177,24 @@ function RepeatCarPanel({ detail, tone, t, num }) {
       </div>
 
       <ol className="divide-y divide-slate-50">
-        {detail.items.map((c, i) => (
+        {detail.items.map((c, i) => {
+          const open = openCar === c.id;
+          return (
           <li key={c.id}>
-            <Link
-              to={`/vehicles/${c.id}`}
-              className="group/car flex items-center gap-2.5 px-3 py-1.5 transition-colors hover:bg-indigo-50/50"
-            >
-              <span className="w-4 shrink-0 text-right text-[11px] font-bold tabular-nums text-slate-400">{i + 1}</span>
-              <div className="min-w-0 flex-1">
+            <div className="group/car flex items-center gap-2.5 px-3 py-1.5 transition-colors hover:bg-indigo-50/50">
+              <span className="w-4 shrink-0 text-end text-[11px] font-bold tabular-nums text-slate-400">{i + 1}</span>
+
+              {/* The row opens the records; the arrow at the end still goes to the car. Two targets on
+                  purpose — "show me the four" and "take me to this car" are different intentions. */}
+              <button
+                type="button"
+                onClick={() => toggleCar(c.id)}
+                aria-expanded={open}
+                className="min-w-0 flex-1 text-start"
+              >
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="flex min-w-0 items-baseline gap-1.5">
-                    <span className="truncate font-mono text-[13px] font-semibold text-slate-900 group-hover/car:text-indigo-600">
-                      {c.plate}
-                    </span>
+                    <span className="truncate font-mono text-[13px] font-semibold text-slate-900">{c.plate}</span>
                     {c.car && <span className="truncate text-[11px] text-slate-400">{c.car}</span>}
                   </span>
                   <span className="flex shrink-0 items-baseline gap-1.5 tabular-nums">
@@ -120,6 +204,9 @@ function RepeatCarPanel({ detail, tone, t, num }) {
                       </span>
                     )}
                     <span className="text-sm font-extrabold text-slate-900">{num(c.count)}×</span>
+                    <Icon.ChevronDown
+                      className={`h-3 w-3 shrink-0 text-slate-300 transition-transform ${open ? 'rotate-180' : ''}`}
+                    />
                   </span>
                 </div>
                 <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
@@ -128,11 +215,21 @@ function RepeatCarPanel({ detail, tone, t, num }) {
                     style={{ width: `${Math.max(8, Math.round((c.count / top) * 100))}%` }}
                   />
                 </div>
-              </div>
-              <Icon.ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover/car:translate-x-0.5 group-hover/car:text-indigo-500" />
-            </Link>
+              </button>
+
+              <Link
+                to={`/vehicles/${c.id}`}
+                title={t('Open the car')}
+                className="shrink-0 rounded p-0.5 text-slate-300 transition hover:text-indigo-500"
+              >
+                <Icon.ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+
+            {open && <RepeatEventList detail={events[c.id]} t={t} num={num} />}
           </li>
-        ))}
+          );
+        })}
       </ol>
 
       {hidden > 0 && (
@@ -287,11 +384,11 @@ export default function RepeatLeaderboard({ limit = 6 }) {
                 type="button"
                 onClick={() => toggleRow(it.label)}
                 aria-expanded={open}
-                className="w-full rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-slate-50"
+                className="w-full rounded-lg px-1 py-0.5 text-start transition-colors hover:bg-slate-50"
               >
                 <div className="flex items-center justify-between gap-3 text-sm">
                   <span className="flex min-w-0 items-center gap-2 font-medium text-slate-800">
-                    <span className="w-4 shrink-0 text-right text-xs font-bold tabular-nums text-slate-400">{i + 1}</span>
+                    <span className="w-4 shrink-0 text-end text-xs font-bold tabular-nums text-slate-400">{i + 1}</span>
                     <span className="truncate">{it.label}</span>
                   </span>
                   <span className="flex shrink-0 items-center gap-2">
@@ -305,7 +402,7 @@ export default function RepeatLeaderboard({ limit = 6 }) {
                     <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ring-1 ${tone.chip}`}>
                       {t('{n} cars', { n: num(it.cars) })}
                     </span>
-                    <span className="w-10 text-right text-base font-extrabold tabular-nums text-slate-900">
+                    <span className="w-10 text-end text-base font-extrabold tabular-nums text-slate-900">
                       {num(it.value)}×
                     </span>
                     <Icon.ChevronDown
@@ -327,6 +424,9 @@ export default function RepeatLeaderboard({ limit = 6 }) {
                   tone={tone}
                   t={t}
                   num={num}
+                  section={active?.key}
+                  label={it.label}
+                  windowDays={windowDays}
                 />
               )}
             </li>
