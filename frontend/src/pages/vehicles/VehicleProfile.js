@@ -371,7 +371,7 @@ function HeroLed({ label, status, detail }) {
 }
 
 export default function VehicleProfile() {
-  const { t, tf, tp } = useI18n();
+  const { t, tf, tp, lang } = useI18n();
   const { id } = useParams();
   const fetcher = useCallback(async () => {
     const { data } = await api.get(`/Vehicle/${id}/profile`);
@@ -763,7 +763,7 @@ export default function VehicleProfile() {
               )}
               {/* Always-available: generate the printable Vehicle Report (Save-as-PDF) from this dossier. */}
               <div className="mt-5 space-y-2">
-                <Button variant="secondary" className="w-full justify-center" onClick={() => openVehicleProfileReport(data)}>
+                <Button variant="secondary" className="w-full justify-center" onClick={() => openVehicleProfileReport(data, t, lang)}>
                   <Icon.Download className="h-4 w-4" /> {t('Vehicle Report')}
                 </Button>
                 {/* The donut above says WHICH systems fail on this car; this opens the one that answers
