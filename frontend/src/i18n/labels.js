@@ -1242,6 +1242,11 @@ const en = {
       currentStage: 'current stage',
     },
     notes: { none: 'No notes' },
+    // The Mulkiya (UAE Vehicle Licence) scan card. Only the COUNT lives here — Arabic needs six
+    // plural forms for it; every other string on the card is an English phrase key in phrases.ar.js.
+    mulkiya: {
+      previousCount: { one: '1 previous licence', other: '{n} previous licences' },
+    },
     hero: {
       dossier: 'Vehicle Dossier',
       forSale: 'For sale',
@@ -5275,6 +5280,12 @@ const ar = {
       currentStage: 'المرحلة الحالية',
     },
     notes: { none: 'لا ملاحظات' },
+    mulkiya: {
+      previousCount: {
+        zero: 'لا رخص سابقة', one: 'رخصة سابقة واحدة', two: 'رخصتان سابقتان',
+        few: '{n} رخص سابقة', many: '{n} رخصة سابقة', other: '{n} رخصة سابقة',
+      },
+    },
     hero: {
       dossier: 'ملف المركبة',
       forSale: 'للبيع',

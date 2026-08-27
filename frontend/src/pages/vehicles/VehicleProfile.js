@@ -20,6 +20,7 @@ import VehicleComplaintsPanel from '../../components/vehicles/VehicleComplaintsP
 import VehicleInvestigationTimeline from '../../components/vehicles/VehicleInvestigationTimeline';
 import VehicleComponentsPanel from '../../components/vehicles/VehicleComponentsPanel';
 import ComponentRepeatAlert from '../../components/vehicles/ComponentRepeatAlert';
+import MulkiyaCard from '../../components/vehicles/MulkiyaCard';
 import VehicleCostIntelligence from './VehicleCostIntelligence';
 import { aed2, fmtDate, fmtClock, fmtSeconds, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
@@ -837,6 +838,11 @@ export default function VehicleProfile() {
           showFinancials={SHOW_FINANCIALS}
           onNavigate={changeTab}
         />
+
+        {/* The Mulkiya scan — the car's UAE Vehicle Licence, add/changeable. Sits directly under the
+            Registration & Insurance block above so the dates and the document that carries them read
+            together. Self-fetching (the scan is not in the profile payload). */}
+        <MulkiyaCard vehicleId={id} plateHint={v?.plate_display || v?.plate_no} />
 
         {/* Financial Performance deep-dive — lifetime revenue vs. every cost this car has
             incurred: ROI ring + interactive cost-composition donut (drill-through).

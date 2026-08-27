@@ -5261,6 +5261,33 @@ const phrasesAr = {
   '{n}d after': 'بعد {n} يوم',
   'counted': 'محتسبة',
   'Could not load this right now.': 'تعذّر تحميل هذا الآن.',
+
+  // The Mulkiya card on the vehicle profile — the car's UAE Vehicle Licence scan.
+  // ("Mulkiya" itself is already Arabic; the key stays the English spelling used in the source.)
+  'Mulkiya': 'الملكية',
+  'The car’s UAE Vehicle Licence — the scan currently in force': 'رخصة مركبة السيارة — النسخة السارية حاليًا',
+  'Add photo': 'إضافة صورة',
+  'Change photo': 'تغيير الصورة',
+  'Click to view full size': 'اضغط لعرض الصورة بالحجم الكامل',
+  'Mulkiya for {plate}': 'ملكية اللوحة {plate}',
+  'In force': 'سارية',
+  // ('PDF' itself needs no entry — it is the same acronym in both languages.)
+  'PDF document — no inline preview': 'ملف PDF — لا توجد معاينة داخل الصفحة',
+  'Preview unavailable': 'المعاينة غير متاحة',
+  'Open full size': 'فتح بالحجم الكامل',
+  // ('Remove' already has an entry above and reads the same here.)
+  'Open scan': 'فتح النسخة',
+  'No Mulkiya on file for this car': 'لا توجد ملكية محفوظة لهذه السيارة',
+  'Upload a photo or PDF of the licence card — drag it here, or use Add photo.': 'ارفع صورة أو ملف PDF لبطاقة الملكية — اسحبه إلى هنا أو استخدم «إضافة صورة».',
+  'Ask a fleet manager to add the licence scan.': 'اطلب من مسؤول الأسطول إضافة نسخة الملكية.',
+  'Filed by {name}': 'رفعها {name}',
+  'No upload details recorded': 'لا توجد تفاصيل رفع مسجّلة',
+  'Replaced {when}': 'استُبدلت في {when}',
+  'Mulkiya saved': 'تم حفظ الملكية',
+  'Mulkiya replaced — the previous licence is kept in the history': 'تم استبدال الملكية — الرخصة السابقة محفوظة في السجل',
+  'Could not upload the Mulkiya': 'تعذّر رفع الملكية',
+  'Scan removed': 'تم حذف النسخة',
+  'Could not remove the scan': 'تعذّر حذف النسخة',
 };
 
 export default phrasesAr;

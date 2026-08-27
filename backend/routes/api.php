@@ -114,6 +114,17 @@ Route::middleware('auth:sanctum')->prefix('Vehicle')->controller(VehicleControll
     Route::delete('/{vehicle}', 'destroy')->middleware('permission:vehicles.manage');
 });
 
+// VEHICLE DOCUMENTS — the car's paperwork scan, today the Mulkiya (UAE Vehicle Licence).
+// Reads follow vehicles.view (anyone who can open the car card can see its licence); writes need
+// vehicles.manage. A replacement supersedes the outgoing card rather than overwriting it, so the
+// renewal trail survives — see VehicleDocumentController.
+Route::middleware('auth:sanctum')->prefix('Vehicle')
+    ->controller(\App\Http\Controllers\VehicleDocumentController::class)->group(function () {
+        Route::get('/{vehicle}/documents', 'index')->middleware('permission:vehicles.view');
+        Route::post('/{vehicle}/documents', 'store')->middleware('permission:vehicles.manage');           // add OR change the current card
+        Route::delete('/{vehicle}/documents/{document}', 'destroy')->middleware('permission:vehicles.manage'); // remove a wrong upload
+    });
+
 // SYSTEM CHECK REQUIREMENTS — the obligation layer ([[VehicleCheckRequirement]]).
 // A check is RESOLVED only on the inspection report (Decide step), never here: there is exactly one
 // place a check can be answered, and it is the same transaction that files the report answering it.
