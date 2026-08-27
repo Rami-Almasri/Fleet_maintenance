@@ -8,6 +8,7 @@ import ShortcutsHelp from '../components/ShortcutsHelp';
 import ErrorBoundary from '../components/ErrorBoundary';
 import NotificationBell from '../components/NotificationBell';
 import ThemeToggle from '../components/ThemeToggle';
+import ThemePicker from '../components/ThemePicker';
 import LanguageToggle from '../components/LanguageToggle';
 import Brand from '../components/Brand';
 import { PageStatProvider, PageStatGauge } from '../components/PageStat';
@@ -506,6 +507,8 @@ export default function AppLayout() {
             <LanguageToggle />
 
             <ThemeToggle />
+
+            <ThemePicker className="hidden sm:block" />
 
             <button
               onClick={() => setHelpOpen(true)}
