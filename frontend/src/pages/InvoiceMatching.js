@@ -447,11 +447,18 @@ function GarageSlot({ slot, canManage, onCreateBill, onIssueLink, linkBusy, copi
 
       {canManage && (
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-2.5">
-          {slot.unbilled.length > 0 && (
-            <Button size="sm" variant="primary" onClick={() => onCreateBill(slot)}>
-              <Icon.Plus className="h-3.5 w-3.5" />{t('Key this garage’s bill')}
-            </Button>
-          )}
+          {/* Two jobs, two buttons, said the way the floor says them: I have the paper in my hand, or
+              the garage should type it itself. The action stays on the card even when everything is
+              already billed — a garage sending a second bill for the same visit is ordinary, and with
+              the panel's own add button gone this card is the ONLY way in. */}
+          <Button
+            size="sm"
+            variant={slot.unbilled.length > 0 ? 'primary' : 'secondary'}
+            onClick={() => onCreateBill(slot)}
+          >
+            <Icon.Plus className="h-3.5 w-3.5" />
+            {slot.unbilled.length > 0 ? t('I have this garage’s bill') : t('Add another bill')}
+          </Button>
           {/* Or let the garage fill it in itself — the same tokenised link the ticket issues, scoped to
               this garage so it only ever sees (and bills) its own work. */}
           {slot.vendor_id && (slot.link || slot.linkable) && (
@@ -460,6 +467,9 @@ function GarageSlot({ slot, canManage, onCreateBill, onIssueLink, linkBusy, copi
                  browser has no clipboard API at all, and a copy button that silently does nothing is
                  how a link the server already issued ends up looking like it was never created. */
               <div className="w-full space-y-1.5">
+                <p className="text-[10.5px] text-slate-500">
+                  {t('Send this to the garage — it opens a page where they type their own bill, and they see only their own work.')}
+                </p>
                 <div className="flex items-center gap-1.5">
                   <input
                     readOnly
@@ -488,12 +498,12 @@ function GarageSlot({ slot, canManage, onCreateBill, onIssueLink, linkBusy, copi
                   disabled={linkBusy === slot.vendor_id}
                   className="text-[10.5px] font-semibold text-slate-400 transition hover:text-slate-600 disabled:text-slate-300"
                 >
-                  {t('Issue a new link')}
+                  {t('Replace this link — the old one stops working')}
                 </button>
               </div>
             ) : (
               <Button size="sm" variant="secondary" loading={linkBusy === slot.vendor_id} onClick={() => onIssueLink(slot)}>
-                <Icon.Route className="h-3.5 w-3.5" />{t('Send link to garage')}
+                <Icon.Route className="h-3.5 w-3.5" />{t('Let the garage type it')}
               </Button>
             )
           )}
@@ -1517,6 +1527,11 @@ export default function InvoiceMatching() {
                         activeInvoiceId={activeInvoiceId}
                         onHoverInvoice={(inv) => setActiveInvoiceId(inv?.id || null)}
                         addRequest={addRequest}
+                        // The garage cards on the left already carry the add button, on the row that
+                        // names the work being billed. A second, blank one up here opens the SAME form
+                        // and only asks the reader to guess which is right. Keep it solely for the case
+                        // where there are no cards to hang it on.
+                        showAdd={garageSlots.length === 0}
                       />
                     </div>
                     <ChargedLines invoices={invoices} activeInvoiceId={activeInvoiceId} onHover={setActiveInvoiceId} />
