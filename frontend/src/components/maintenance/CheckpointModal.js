@@ -78,13 +78,17 @@ function ChaseBar({ chase }) {
   );
 }
 
-export default function CheckpointModal({ open, ticketId, title, subtitle, onClose, onDone }) {
+export default function CheckpointModal({ open, ticketId, title, subtitle, onClose, onDone, onMissing }) {
   const { statusOptions, delayReasons } = useCheckpointVocab();
   const { t } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  // The ticket behind this card is GONE (404), not merely slow or forbidden. Tracked separately from
+  // `err` because it is a different situation with a different answer: there is nothing to retry and
+  // nothing to fix — the card that opened this modal is stale and needs to disappear.
+  const [gone, setGone] = useState(false);
 
   // Submit form — the answer to the daily question, then the date it implies (no manual "outcome").
   // answer: '' (not chosen yet) | RESPONSE_CONFIRMED | RESPONSE_RESCHEDULED.
@@ -104,9 +108,16 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
   const [expDate, setExpDate] = useState('');
   const [showManage, setShowManage] = useState(false);
 
+  // `onMissing` fires at most once per ticket — the board only needs telling that this card is dead once,
+  // and a ref keeps it out of load()'s dependency list (a parent passing an inline arrow would otherwise
+  // re-create load on every render and re-fetch in a loop).
+  const onMissingRef = useRef(onMissing);
+  useEffect(() => { onMissingRef.current = onMissing; }, [onMissing]);
+
   const load = useMemo(() => async () => {
     setLoading(true);
     setErr('');
+    setGone(false);
     try {
       const d = await getTicketCheckpoints(ticketId);
       setData(d);
@@ -122,6 +133,16 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
       setNextDate(expired ? '' : (d.monitor?.expected_on || ''));
       setAnswer(spent ? RESPONSE_RESCHEDULED : '');
     } catch (e) {
+      // A 404 means the ticket itself is gone — the row that offered this card was built before the
+      // ticket was closed/removed (or before a re-import renumbered it). Everything below depends on
+      // `data`, so leaving it null and rendering the normal body would show "Default supervisors",
+      // "you are not a responsible user" and an empty timeline — three statements about a ticket that
+      // does not exist. Say what actually happened instead.
+      setData(null);
+      if (e?.response?.status === 404) {
+        setGone(true);
+        onMissingRef.current?.(ticketId);
+      }
       setErr(e?.response?.data?.message || t('Failed to load checkpoints.'));
     } finally {
       setLoading(false);
@@ -258,6 +279,30 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
     <Modal open={open} onClose={onClose} title={title || t('Maintenance Checkpoint')} subtitle={subtitle} size="xl">
       {loading ? (
         <p className="py-10 text-center text-sm text-slate-400">{t('Loading checkpoints…')}</p>
+      ) : !data ? (
+        /* Nothing loaded. Two different situations, two different answers — a dead ticket has nothing
+           to retry, a failed request has nothing to explain. Never the normal body: without `data`
+           every panel below would assert something false about a ticket we could not read. */
+        gone ? (
+          <div className="space-y-3 py-6 text-center">
+            <p className="text-sm font-semibold text-slate-700">{t('This ticket no longer exists.')}</p>
+            <p className="mx-auto max-w-md text-sm text-slate-500">
+              {t('The maintenance visit was closed or the ticket was removed, so there is no progress left to file on it. The card you opened this from is out of date.')}
+            </p>
+            <div className="flex justify-center gap-2 pt-1">
+              <Button type="button" variant="secondary" onClick={onClose}>{t('Close')}</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3 py-6 text-center">
+            <p className="text-sm font-semibold text-slate-700">{t('Failed to load checkpoints.')}</p>
+            {err && <p className="mx-auto max-w-md text-sm text-slate-500">{err}</p>}
+            <div className="flex justify-center gap-2 pt-1">
+              <Button type="button" variant="secondary" onClick={load}>{t('Try again')}</Button>
+              <Button type="button" variant="secondary" onClick={onClose}>{t('Close')}</Button>
+            </div>
+          </div>
+        )
       ) : (
         <div className="space-y-5">
           <MonitorBar monitor={data?.monitor} />
