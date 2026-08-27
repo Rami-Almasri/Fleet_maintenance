@@ -1,6 +1,6 @@
 import { eventKind } from './vehicleTimeline';
 import {
-  visitFaults, visitDamage, isServiceOnlyVisit, isNonFaultVisit, faultTagSegments,
+  visitFaults, visitDamage, isServiceOnlyVisit, isNonFaultVisit, faultTagSegments, visitsForFault,
 } from './faultCategories';
 
 /**
@@ -94,6 +94,48 @@ describe('vehicle dossier — the fault donut counts faults only', () => {
     const segments = faultTagSegments([{ fault_tags: [], service_tags: [] }]);
 
     expect(segments.map((s) => s.label)).toEqual(['Unspecified']);
+  });
+});
+
+// Clicking a slice must land on exactly the visits that slice was counted from — if the drill-down
+// applied its own rules, a user could open an "8 faults" slice and be shown 5 contracts.
+describe('a fault slice drills down to the contracts behind it', () => {
+  const brakes = { id: 1, contract_no: 'U-100', fault_tags: ['Brake Pad Wear'], service_tags: [] };
+  const both = { id: 2, contract_no: 'U-101', fault_tags: ['Brake Pad Wear', 'Coolant leak'], service_tags: [] };
+  const serviceOnly = { id: 3, contract_no: 'U-102', fault_tags: [], service_tags: ['Oil & Fillter Change'] };
+  const blank = { id: 4, contract_no: 'U-103', fault_tags: [], service_tags: [] };
+  const byReason = { id: 5, contract_no: 'U-104', fault_tags: [], service_tags: [], reason: 'Engine noise' };
+  const visits = [brakes, both, serviceOnly, blank, byReason];
+
+  it('returns every contract carrying the fault, and no others', () => {
+    expect(visitsForFault(visits, ['Brake Pad Wear']).map((v) => v.contract_no)).toEqual(['U-100', 'U-101']);
+  });
+
+  it('lists a visit once even when two of its faults are in the same slice', () => {
+    expect(visitsForFault(visits, ['Brake Pad Wear', 'Coolant leak']).map((v) => v.contract_no))
+      .toEqual(['U-100', 'U-101']);
+  });
+
+  // "Unspecified" is the visit nothing was recorded about — never the service-only one, which is
+  // exactly the distinction the donut itself makes.
+  it('opens Unspecified to the visit with nothing recorded, not the service visit', () => {
+    expect(visitsForFault(visits, ['Unspecified']).map((v) => v.contract_no)).toEqual(['U-103']);
+  });
+
+  it('finds the visit whose slice came from its reason', () => {
+    expect(visitsForFault(visits, ['Engine noise']).map((v) => v.contract_no)).toEqual(['U-104']);
+  });
+
+  // The contract that makes the drill-down trustworthy: rows shown === the slice's own count.
+  it('matches the slice count for every segment on the donut', () => {
+    faultTagSegments(visits).forEach((s) => {
+      expect(visitsForFault(visits, [s.key])).toHaveLength(s.value);
+    });
+  });
+
+  it('returns nothing for a fault no visit carries', () => {
+    expect(visitsForFault(visits, ['Turbo failure'])).toEqual([]);
+    expect(visitsForFault(visits, [])).toEqual([]);
   });
 });
 

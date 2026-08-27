@@ -1267,6 +1267,13 @@ const en = {
       subtitle: 'Each fault by share of all faults recorded',
       faultsOnly: 'Faults only — scheduled service is not a fault',
       serviceExcluded: { one: '{n} service visit excluded', other: '{n} service visits excluded' },
+      // The slice → contracts drill-down. A percentage answers "how often"; these answer "in which
+      // visit", which is the question that actually gets asked next.
+      drillHint: 'Click a fault to see the contracts it was recorded on',
+      drillTitle: '{fault}',
+      drillCount: { one: 'Recorded on {n} maintenance contract', other: 'Recorded on {n} maintenance contracts' },
+      drillNoGarage: 'No garage recorded',
+      drillEmpty: 'No maintenance contract carries this fault.',
     },
     history: {
       title: 'Maintenance History',
@@ -5300,6 +5307,14 @@ const ar = {
         zero: 'لا زيارات خدمة مستبعدة', one: 'استُبعدت زيارة خدمة واحدة', two: 'استُبعدت زيارتا خدمة',
         few: 'استُبعدت {n} زيارات خدمة', many: 'استُبعدت {n} زيارة خدمة', other: 'استُبعدت {n} زيارة خدمة',
       },
+      drillHint: 'اضغط على عطل لعرض العقود التي سُجّل فيها',
+      drillTitle: '{fault}',
+      drillCount: {
+        zero: 'لم يُسجّل في أي عقد صيانة', one: 'مسجّل في عقد صيانة واحد', two: 'مسجّل في عقدَي صيانة',
+        few: 'مسجّل في {n} عقود صيانة', many: 'مسجّل في {n} عقد صيانة', other: 'مسجّل في {n} عقد صيانة',
+      },
+      drillNoGarage: 'لا كراج مسجّل',
+      drillEmpty: 'لا يوجد عقد صيانة يحمل هذا العطل.',
     },
     history: {
       title: 'سجل الصيانة',

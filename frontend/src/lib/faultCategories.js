@@ -95,6 +95,31 @@ export function isNonFaultVisit(visit) {
     && (arr(visit?.service_tags).length > 0 || visitDamage(visit).length > 0);
 }
 
+// The fault labels ONE visit contributes to a fault chart — the single rule both the donut and its
+// drill-down read from, so a slice and the visits behind it can never disagree.
+//   • A visit with no fault at all — only planned service and/or externally-caused damage —
+//     contributes NOTHING. It has no fault, known or unknown, so it must neither be counted nor
+//     inflate "Unspecified" (which means "we don't know what this visit was about", and here we do).
+//   • A visit with no fault tag but a reason falls back to that reason.
+//   • Anything else is "Unspecified" — a visit that happened with nothing recorded about it.
+// Returns raw, untranslated labels: these ARE the segment keys.
+export function faultLabelsOf(visit) {
+  let faults = visitFaults(visit);
+  if (!faults.length && isNonFaultVisit(visit)) return [];
+  if (!faults.length && visit?.reason) faults = [visit.reason];
+  if (!faults.length) faults = ['Unspecified'];
+  return faults.map((f) => String(f).trim()).filter(Boolean);
+}
+
+// The visits behind one or more fault labels — the drill-down from a donut slice back to the
+// records. `keys` are the RAW labels (a segment's `key`, or every child key of a folded "Other"
+// slice). A visit carrying two of the wanted faults still appears once.
+export function visitsForFault(visits = [], keys = []) {
+  const want = new Set((Array.isArray(keys) ? keys : [keys]).map((k) => String(k)));
+  if (!want.size) return [];
+  return visits.filter((v) => faultLabelsOf(v).some((l) => want.has(l)));
+}
+
 // Per-FAULT distribution — instead of bucketing each visit into one broad mechanical category,
 // this tallies the INDIVIDUAL fault tags recorded across all visits, so a car's donut shows each
 // distinct fault and its share of every fault logged (the slices sum to 100%). Services are excluded
@@ -105,16 +130,8 @@ export function faultTagSegments(visits = [], { top = 10, tf = null, tp = null }
   const loc = (key, en, vars) => (tf ? tf(key, en, vars) : en);
   const totals = {};
   visits.forEach((v) => {
-    let faults = visitFaults(v);
-    // A visit with no fault — only planned service and/or externally-caused damage — contributes
-    // nothing at all. It has no fault, known or unknown, so it must neither be counted nor inflate
-    // "Unspecified" (which means "we don't know what this visit was about", and here we do).
-    if (!faults.length && isNonFaultVisit(v)) return;
-    if (!faults.length && v?.reason) faults = [v.reason];
-    if (!faults.length) faults = ['Unspecified'];
-    faults.forEach((f) => {
-      const label = String(f).trim();
-      if (label) totals[label] = (totals[label] || 0) + 1;
+    faultLabelsOf(v).forEach((label) => {
+      totals[label] = (totals[label] || 0) + 1;
     });
   });
 
