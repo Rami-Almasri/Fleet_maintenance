@@ -96,7 +96,7 @@ class VehicleSystemDashboardService
 
         $events  = $this->events($vehicle, $system);
         $repairs = $this->repairs($vehicle, $system, $events);
-        $risk    = $this->risk($events);
+        $risk    = $this->risk($events, $system);
 
         return [
             'vehicle'    => $this->vehicleHeader($vehicle),
@@ -235,6 +235,7 @@ class VehicleSystemDashboardService
             'finding'     => $t->symptom ?: 'Fault recorded without a finding',
             'detail'      => collect([$t->notes, $t->resolution_note])->filter()->implode(' · ') ?: 'No notes recorded',
             'outcome'     => $this->taskOutcome($t),
+            'outcome_i18n'=> $this->taskOutcomeI18n($t),
             'recurred'    => (bool) $t->recurrence_flagged,
             'major_work'  => $this->looksMajor($t->symptom . ' ' . $t->resolution_note),
         ];
@@ -252,6 +253,9 @@ class VehicleSystemDashboardService
             'finding'     => $this->systemFinding($m, $system),
             'detail'      => collect([$m->garage_feedback, $m->maintenance_notes, $m->spare_part])->filter()->implode(' · ') ?: 'No notes recorded',
             'outcome'     => $m->actual_in_date ? 'Car returned ' . $m->actual_in_date->toDateString() : 'No return logged',
+            'outcome_i18n'=> $m->actual_in_date
+                ? $this->tr('reportSystem.outcome.carReturned', ['date' => $m->actual_in_date->toDateString()])
+                : $this->tr('reportSystem.outcome.noReturnLogged'),
             'recurred'    => false,
             'major_work'  => $this->looksMajor(($m->service_sup ?? '') . ' ' . ($m->spare_part ?? '') . ' ' . ($m->maintenance_notes ?? '')),
         ];
@@ -321,6 +325,24 @@ class VehicleSystemDashboardService
         };
     }
 
+    /** @see taskOutcome — the same outcomes as catalog keys. */
+    private function taskOutcomeI18n(MaintenanceTask $t): array
+    {
+        $resolved = $t->resolved_at ? Carbon::parse($t->resolved_at)->toDateString() : null;
+
+        return match ($t->status) {
+            MaintenanceTask::STATUS_COMPLETED   => $resolved
+                ? $this->tr('reportSystem.outcome.repairedOn', ['date' => $resolved])
+                : $this->tr('reportSystem.outcome.repaired'),
+            MaintenanceTask::STATUS_NOT_FOUND   => $this->tr('reportSystem.outcome.noFaultFound'),
+            MaintenanceTask::STATUS_CANCELLED   => $this->tr('reportSystem.outcome.notARealFault'),
+            MaintenanceTask::STATUS_IN_PROGRESS => $this->tr('reportSystem.outcome.inProgress'),
+            MaintenanceTask::STATUS_PENDING     => $this->tr('reportSystem.outcome.pending'),
+            // An unmapped status is raw data, not a phrase we can promise a translation for.
+            default                             => $this->raw('Status: ' . ($t->status ?: 'not recorded')),
+        };
+    }
+
     private function looksMajor(?string $text): bool
     {
         $text = mb_strtolower((string) $text);
@@ -359,13 +381,77 @@ class VehicleSystemDashboardService
         return in_array($system, $this->categories->extractCategories($m->service_main, $m->service_sup, $m->findings), true);
     }
 
+    // ── Translatable text ───────────────────────────────────────────────────────────────────────
+
+    /**
+     * WHY THIS SERVICE DOES NOT RETURN ENGLISH SENTENCES.
+     *
+     * Every generated line on this page carries a number — "3 recorded events", "144 days apart".
+     * The frontend phrase catalog matches whole sentences exactly, so a baked-in number makes a line
+     * permanently untranslatable: "3 recorded events" and "4 recorded events" are two different
+     * misses. The page could therefore never render in Arabic while the wording was assembled here.
+     *
+     * So the service emits a CODE plus its PARAMS and the catalog owns the wording, per
+     * [[reason-code-contract]]. Three node shapes cover everything, and `tx()` on the frontend
+     * renders all three:
+     *
+     *   tr()   — translatable: a catalog key and the values to interpolate.
+     *   raw()  — verbatim: a garage's name, a fault as the fitter wrote it, a date. RECORDED DATA,
+     *            never translated. Arabic UI showing an English garage note is correct — that note
+     *            is what the record says, and rewriting it would be inventing evidence.
+     *   joinTr() — several nodes rendered in order with a separator.
+     *
+     * `plural` marks a count-bearing string: Arabic has six plural categories to English's two, so
+     * those resolve through tp() rather than plain interpolation.
+     */
+    private function tr(string $code, array $params = [], bool $plural = false): array
+    {
+        return ['code' => $code, 'params' => (object) $params, 'plural' => $plural];
+    }
+
+    /** Recorded data, reproduced exactly as logged and never translated. */
+    private function raw(?string $text): array
+    {
+        return ['text' => (string) $text];
+    }
+
+    /**
+     * A garage name is data — except when there isn't one. "Not recorded" is this report's own words
+     * for an empty column, so it translates; the workshop's actual name never does.
+     */
+    private function garageNode(?string $garage): array
+    {
+        return ($garage === null || $garage === '' || $garage === 'Not recorded')
+            ? $this->tr('reportSystem.notRecorded')
+            : $this->raw($garage);
+    }
+
+    /** @param  array<int, array>  $parts */
+    private function joinTr(array $parts, string $sep = ' · '): array
+    {
+        return ['parts' => array_values(array_filter($parts)), 'sep' => $sep];
+    }
+
+    /** The catalog key for a severity, including the "never rated" case. */
+    private function severityCode(?string $severity): string
+    {
+        return 'reportSystem.severity.' . ($severity ?: 'unrated');
+    }
+
     // ── The score ───────────────────────────────────────────────────────────────────────────────
 
     /**
-     * Risk as five auditable components. Every one reports the count it read and the points that
-     * count earned, so the total can be checked by hand against the timeline above it.
+     * Risk as five auditable components. Every one reports the count it read, the points that count
+     * earned, AND the specific records that produced the count.
+     *
+     * ON SHOWING THE EVIDENCE: a component that says only "0 rated Critical" is unreadable — the
+     * reader cannot tell whether nothing serious happened or whether nobody filled the severity field
+     * in. So each component carries `evidence` (the rows it counted, named and dated) and, where the
+     * count could not have been anything else, a `caveat` saying so. A zero that was structurally
+     * impossible to beat is a different fact from a zero that was earned, and the two must not print
+     * the same way.
      */
-    private function risk(Collection $events): array
+    private function risk(Collection $events, string $system): array
     {
         $total     = $events->count();
         $criticals = $events->where('severity', Maintenance::FAULT_SEVERITY_CRITICAL)->count();
@@ -373,6 +459,8 @@ class VehicleSystemDashboardService
         $last      = $events->last();
         $daysSince = $last && $last['date'] ? Carbon::parse($last['date'])->diffInDays(Carbon::today()) : null;
         $postRepair= $this->postRepairFailures($events);
+        $firstMajor= $events->first(fn (array $e) => $e['major_work']);
+        $unrated   = $events->whereNull('severity')->count();
 
         $components = [
             [
@@ -382,6 +470,16 @@ class VehicleSystemDashboardService
                 'points'      => (int) round(min($total, 10) / 10 * self::RISK_WEIGHTS['volume']),
                 'max'         => self::RISK_WEIGHTS['volume'],
                 'rule'        => '10 or more events reaches the full ' . self::RISK_WEIGHTS['volume'] . ' points.',
+                'detail'      => $this->spanDetail($events),
+                'evidence'    => $this->volumeEvidence($events),
+                'caveat'      => null,
+                'i18n'        => [
+                    'label'  => $this->tr('reportSystem.risk.volume.label'),
+                    'input'  => $this->tr('reportSystem.risk.volume.input', ['n' => $total], true),
+                    'rule'   => $this->tr('reportSystem.risk.volume.rule', ['max' => self::RISK_WEIGHTS['volume']]),
+                    'detail' => $this->spanDetailI18n($events),
+                    'caveat' => null,
+                ],
             ],
             [
                 'key'         => 'severity',
@@ -390,6 +488,21 @@ class VehicleSystemDashboardService
                 'points'      => (int) round(min($criticals, 5) / 5 * self::RISK_WEIGHTS['severity']),
                 'max'         => self::RISK_WEIGHTS['severity'],
                 'rule'        => '5 or more Critical events reaches the full ' . self::RISK_WEIGHTS['severity'] . ' points.',
+                'detail'      => $this->severityDetail($events),
+                'evidence'    => $this->severityEvidence($events),
+                // The distinction that decides whether a low severity score is reassuring.
+                'caveat'      => $unrated === 0 ? null : $unrated . ' of these ' . $total . ' '
+                    . Str::plural('event', $total) . ' ' . ($unrated === 1 ? 'carries' : 'carry')
+                    . ' no severity rating at all. This component counts only what was'
+                    . ' rated, so an unrated failure scores nothing here however serious it was.',
+                'i18n'        => [
+                    'label'  => $this->tr('reportSystem.risk.severity.label'),
+                    'input'  => $this->tr('reportSystem.risk.severity.input', ['n' => $criticals], true),
+                    'rule'   => $this->tr('reportSystem.risk.severity.rule', ['max' => self::RISK_WEIGHTS['severity']]),
+                    'detail' => $this->severityDetailI18n($events),
+                    'caveat' => $unrated === 0 ? null
+                        : $this->tr('reportSystem.risk.severity.caveat', ['n' => $unrated, 'total' => $total], true),
+                ],
             ],
             [
                 'key'         => 'recurrence',
@@ -398,6 +511,20 @@ class VehicleSystemDashboardService
                 'points'      => (int) round(min($repeats, 4) / 4 * self::RISK_WEIGHTS['recurrence']),
                 'max'         => self::RISK_WEIGHTS['recurrence'],
                 'rule'        => '4 or more repeated findings reaches the full ' . self::RISK_WEIGHTS['recurrence'] . ' points.',
+                'detail'      => $repeats === 0
+                    ? 'No finding has been logged twice. Findings are matched on their exact wording, so the same fault written up two different ways reads as two findings here.'
+                    : 'Matched on the finding wording, ignoring case.',
+                'evidence'    => $this->recurrenceEvidence($events),
+                'caveat'      => $this->genericRepeatCaveat($events, $system),
+                'i18n'        => [
+                    'label'  => $this->tr('reportSystem.risk.recurrence.label'),
+                    'input'  => $this->tr('reportSystem.risk.recurrence.input', ['n' => $repeats], true),
+                    'rule'   => $this->tr('reportSystem.risk.recurrence.rule', ['max' => self::RISK_WEIGHTS['recurrence']]),
+                    'detail' => $this->tr($repeats === 0
+                        ? 'reportSystem.risk.recurrence.detailNone'
+                        : 'reportSystem.risk.recurrence.detail'),
+                    'caveat' => $this->genericRepeatCaveatI18n($events, $system),
+                ],
             ],
             [
                 'key'         => 'recency',
@@ -406,6 +533,22 @@ class VehicleSystemDashboardService
                 'points'      => $this->recencyPoints($daysSince),
                 'max'         => self::RISK_WEIGHTS['recency'],
                 'rule'        => 'Within 90 days scores full; 91–180 scores two thirds; 181–365 a third; older scores nothing.',
+                'detail'      => $last && $last['date']
+                    ? 'Measured from ' . $last['date'] . ' to today.'
+                    : 'No event on this system carries a date, so recency cannot be measured.',
+                'evidence'    => $this->recencyEvidence($last),
+                'caveat'      => null,
+                'i18n'        => [
+                    'label'  => $this->tr('reportSystem.risk.recency.label'),
+                    'input'  => $daysSince === null
+                        ? $this->tr('reportSystem.risk.recency.inputNone')
+                        : $this->tr('reportSystem.risk.recency.input', ['n' => $daysSince], true),
+                    'rule'   => $this->tr('reportSystem.risk.recency.rule'),
+                    'detail' => $last && $last['date']
+                        ? $this->tr('reportSystem.risk.recency.detail', ['date' => $last['date']])
+                        : $this->tr('reportSystem.risk.recency.detailNone'),
+                    'caveat' => null,
+                ],
             ],
             [
                 'key'         => 'post_repair',
@@ -414,6 +557,25 @@ class VehicleSystemDashboardService
                 'points'      => (int) round(min($postRepair, 3) / 3 * self::RISK_WEIGHTS['post_repair']),
                 'max'         => self::RISK_WEIGHTS['post_repair'],
                 'rule'        => '3 or more failures after a replacement reaches the full ' . self::RISK_WEIGHTS['post_repair'] . ' points.',
+                'detail'      => $firstMajor
+                    ? 'Counting events dated after ' . $firstMajor['date'] . ', the first entry describing a replacement or overhaul.'
+                    : 'Nothing to count from.',
+                'evidence'    => $this->postRepairEvidence($events, $firstMajor),
+                // A structural zero, not an earned one: without a replacement on record this component
+                // can never contribute, and the score's real ceiling is lower than 100.
+                'caveat'      => $firstMajor ? null : 'No replacement or overhaul has ever been recorded on this system,'
+                    . ' so this component cannot score above 0 — the highest total this car could reach is '
+                    . (100 - self::RISK_WEIGHTS['post_repair']) . ', not 100.',
+                'i18n'        => [
+                    'label'  => $this->tr('reportSystem.risk.postRepair.label'),
+                    'input'  => $this->tr('reportSystem.risk.postRepair.input', ['n' => $postRepair], true),
+                    'rule'   => $this->tr('reportSystem.risk.postRepair.rule', ['max' => self::RISK_WEIGHTS['post_repair']]),
+                    'detail' => $firstMajor
+                        ? $this->tr('reportSystem.risk.postRepair.detail', ['date' => $firstMajor['date']])
+                        : $this->tr('reportSystem.risk.postRepair.detailNone'),
+                    'caveat' => $firstMajor ? null
+                        : $this->tr('reportSystem.risk.postRepair.caveat', ['ceiling' => 100 - self::RISK_WEIGHTS['post_repair']]),
+                ],
             ],
         ];
 
@@ -422,9 +584,265 @@ class VehicleSystemDashboardService
         return [
             'score'      => $score,
             'health'     => 100 - $score,
+            'ceiling'    => 100 - ($firstMajor ? 0 : self::RISK_WEIGHTS['post_repair']),
             'components' => $components,
-            'basis'      => 'Sum of five counts over the timeline below. No model, no prediction — the arithmetic is printed beside each component.',
+            'basis'      => 'Sum of five counts over the timeline below. No model, no prediction — the arithmetic is printed beside each component, with the records it counted.',
+            'basis_i18n' => $this->tr('reportSystem.risk.basis'),
         ];
+    }
+
+    // ── The evidence behind each component ──────────────────────────────────────────────────────
+
+    /**
+     * One evidence row. `date` may be null for a row that summarises rather than points at a day.
+     *
+     * @return array{date: ?string, text: string, meta: ?string}
+     */
+    private function evidenceRow(?string $date, string $text, ?string $meta = null, ?array $textI18n = null, ?array $metaI18n = null): array
+    {
+        return [
+            'date'      => $date,
+            'text'      => $text,
+            'meta'      => $meta,
+            // Null where the row is pure recorded data — the frontend then prints `text` verbatim.
+            'text_i18n' => $textI18n,
+            'meta_i18n' => $metaI18n,
+        ];
+    }
+
+    /** The catalog key for where an entry came from — a per-fault ticket or the workshop log. */
+    private function sourceNode(string $source): array
+    {
+        return $this->tr('reportSystem.source.' . ($source === 'ticket' ? 'ticket' : 'workshopLog'));
+    }
+
+    /** How far apart the events are — three failures in a month is not three across four years. */
+    private function spanDetail(Collection $events): ?string
+    {
+        $dated = $events->pluck('date')->filter()->sort()->values();
+
+        if ($dated->count() < 2) {
+            return $dated->count() === 1 ? 'A single dated event, on ' . $dated->first() . '.' : null;
+        }
+
+        $days = Carbon::parse($dated->first())->diffInDays(Carbon::parse($dated->last()));
+
+        return 'From ' . $dated->first() . ' to ' . $dated->last() . ' — ' . $days . ' days apart.';
+    }
+
+    /** @see spanDetail — the same three cases, as catalog keys. */
+    private function spanDetailI18n(Collection $events): ?array
+    {
+        $dated = $events->pluck('date')->filter()->sort()->values();
+
+        if ($dated->count() < 2) {
+            return $dated->count() === 1
+                ? $this->tr('reportSystem.risk.volume.detailOne', ['date' => $dated->first()])
+                : null;
+        }
+
+        return $this->tr('reportSystem.risk.volume.detail', [
+            'from' => $dated->first(),
+            'to'   => $dated->last(),
+            'n'    => Carbon::parse($dated->first())->diffInDays(Carbon::parse($dated->last())),
+        ], true);
+    }
+
+    /** Every event the volume component counted, most recent first. */
+    private function volumeEvidence(Collection $events): array
+    {
+        return $events
+            ->sortByDesc('date')
+            ->take(12)
+            ->map(fn (array $e) => $this->evidenceRow(
+                $e['date'],
+                $e['finding'],
+                $e['garage'] . ' · ' . $e['source'] . ' · ' . $e['outcome'],
+                null, // the finding is the garage's own wording — never translated
+                $this->joinTr([
+                    $this->garageNode($e['garage']),
+                    $this->sourceNode($e['source']),
+                    $e['outcome_i18n'] ?? $this->raw($e['outcome']),
+                ])
+            ))
+            ->values()
+            ->all();
+    }
+
+    /** What the severities actually were — including how many were never rated. */
+    private function severityDetail(Collection $events): ?string
+    {
+        if ($events->isEmpty()) {
+            return null;
+        }
+
+        $counts = $events
+            ->groupBy(fn (array $e) => $e['severity'] ?? 'unrated')
+            ->map(fn (Collection $g) => $g->count());
+
+        return $counts
+            ->map(fn (int $n, string $sev) => $n . ' ' . Str::ucfirst($sev))
+            ->implode(' · ');
+    }
+
+    /** @see severityDetail — one node per severity, joined by the frontend. */
+    private function severityDetailI18n(Collection $events): ?array
+    {
+        if ($events->isEmpty()) {
+            return null;
+        }
+
+        return $this->joinTr(
+            $events
+                ->groupBy(fn (array $e) => $e['severity'] ?? 'unrated')
+                ->map(fn (Collection $g, string $sev) => $this->tr(
+                    'reportSystem.severityCount.' . $sev,
+                    ['n' => $g->count()],
+                    true
+                ))
+                ->values()
+                ->all()
+        );
+    }
+
+    /** The events that carry each severity, so a rating can be traced to the day it was given. */
+    private function severityEvidence(Collection $events): array
+    {
+        return $events
+            ->groupBy(fn (array $e) => $e['severity'] ?? 'unrated')
+            ->map(fn (Collection $g, string $sev) => $this->evidenceRow(
+                null,
+                Str::ucfirst($sev) . ' — ' . $g->count() . ' ' . Str::plural('event', $g->count()),
+                $g->sortByDesc('date')->pluck('date')->filter()->implode(', ') ?: null,
+                $this->tr('reportSystem.evidence.severityGroup.' . $sev, ['n' => $g->count()], true)
+            ))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * A repeat that is only the sheet's CATEGORY word is a much weaker claim than a repeat of a real
+     * finding, and the score cannot tell them apart.
+     *
+     * systemFinding() falls back to service_main — the sheet's own word for the visit, "Engine" — when
+     * a row named no specific fault. Two such visits then match each other exactly and read as "the
+     * same finding came back", when all the record actually says is that the car went in for engine
+     * work twice. The points are left alone deliberately: changing how recurrence is matched would move
+     * every dashboard, and that is a decision to take once, in the open, not a side effect of this
+     * report. What the report can do is refuse to let the number pass unqualified.
+     */
+    private function genericRepeatCaveat(Collection $events, string $system): ?string
+    {
+        $label   = mb_strtolower(self::SYSTEMS[$system]);
+        $generic = $events
+            ->groupBy(fn (array $e) => mb_strtolower(trim($e['finding'])))
+            ->filter(fn (Collection $g) => $g->count() > 1)
+            ->keys()
+            ->filter(fn (string $finding) => $finding === $label || str_contains($finding, 'named no specific finding'))
+            ->values();
+
+        if ($generic->isEmpty()) {
+            return null;
+        }
+
+        return 'Counted as repeats, but weakly: '
+            . $generic->map(fn ($f) => '"' . Str::ucfirst($f) . '"')->implode(', ')
+            . ' is the log\'s category word for the visit, not a specific fault. Those entries recorded no'
+            . ' finding of their own, so this says the car went in for ' . $label . ' work more than once —'
+            . ' not that one identified fault came back.';
+    }
+
+    /** @see genericRepeatCaveat */
+    private function genericRepeatCaveatI18n(Collection $events, string $system): ?array
+    {
+        if ($this->genericRepeatCaveat($events, $system) === null) {
+            return null;
+        }
+
+        // The system name is itself translatable, so it goes in as a NODE rather than a word. tx()
+        // resolves node-valued params before interpolating, which keeps Arabic word order intact —
+        // building the sentence by concatenating translated fragments here would not.
+        return $this->tr('reportSystem.risk.recurrence.caveatGeneric', [
+            'system' => $this->tr('reportSystem.systems.' . $system),
+        ]);
+    }
+
+    /** Each finding that appeared more than once, with every date it appeared on. */
+    private function recurrenceEvidence(Collection $events): array
+    {
+        return $events
+            ->groupBy(fn (array $e) => mb_strtolower(trim($e['finding'])))
+            ->filter(fn (Collection $g) => $g->count() > 1)
+            ->sortByDesc(fn (Collection $g) => $g->count())
+            ->map(fn (Collection $g) => $this->evidenceRow(
+                null,
+                trim($g->first()['finding']) . ' — ' . $g->count() . ' times',
+                $g->sortBy('date')->map(fn (array $e) => $e['date'] . ' (' . $e['garage'] . ')')->implode(' → '),
+                // The finding stays the garage's word; only the "— N times" tail is translated.
+                $this->tr('reportSystem.evidence.repeatedFinding', [
+                    'finding' => trim($g->first()['finding']),
+                    'n'       => $g->count(),
+                ], true)
+            ))
+            ->values()
+            ->all();
+    }
+
+    /** The single event the recency clock is measured from. */
+    private function recencyEvidence(?array $last): array
+    {
+        if (! $last || ! $last['date']) {
+            return [];
+        }
+
+        return [$this->evidenceRow(
+            $last['date'],
+            $last['finding'],
+            $last['garage'] . ' · ' . $last['outcome'],
+            null,
+            $this->joinTr([
+                $this->garageNode($last['garage']),
+                $last['outcome_i18n'] ?? $this->raw($last['outcome']),
+            ])
+        )];
+    }
+
+    /**
+     * The replacement itself, then every failure recorded after it — the sequence that the component
+     * is actually claiming. Without the replacement row printed alongside, "2 events after replacement
+     * work" cannot be checked against anything.
+     */
+    private function postRepairEvidence(Collection $events, ?array $firstMajor): array
+    {
+        if (! $firstMajor) {
+            return [];
+        }
+
+        $rows = [$this->evidenceRow(
+            $firstMajor['date'],
+            'The replacement: ' . $firstMajor['finding'],
+            $firstMajor['garage'] . ' · everything below is dated after this',
+            $this->tr('reportSystem.evidence.theReplacement', ['finding' => $firstMajor['finding']]),
+            $this->joinTr([
+                $this->garageNode($firstMajor['garage']),
+                $this->tr('reportSystem.evidence.datedAfterThis'),
+            ])
+        )];
+
+        foreach ($events->filter(fn (array $e) => $e['date'] > $firstMajor['date'])->sortBy('date') as $e) {
+            $rows[] = $this->evidenceRow(
+                $e['date'],
+                $e['finding'],
+                $e['garage'] . ' · ' . $e['outcome'],
+                null,
+                $this->joinTr([
+                    $this->garageNode($e['garage']),
+                    $e['outcome_i18n'] ?? $this->raw($e['outcome']),
+                ])
+            );
+        }
+
+        return $rows;
     }
 
     private function recencyPoints(?int $daysSince): int
@@ -476,25 +894,31 @@ class VehicleSystemDashboardService
 
         if ($events->isEmpty()) {
             return [
-                'decision' => 'NOTHING RECORDED',
-                'tone'     => 'neutral',
-                'status'   => 'No history on this system',
-                'rule'     => 'No event for this system has ever been logged against this car.',
+                'decision'      => 'NOTHING RECORDED',
+                'tone'          => 'neutral',
+                'status'        => 'No history on this system',
+                'rule'          => 'No event for this system has ever been logged against this car.',
+                'decision_i18n' => $this->tr('reportSystem.verdict.none.decision'),
+                'status_i18n'   => $this->tr('reportSystem.verdict.none.status'),
+                'rule_i18n'     => $this->tr('reportSystem.verdict.none.rule'),
             ];
         }
 
-        [$decision, $tone, $status] = match (true) {
-            $score >= 80 => ['STOP INVESTMENT',   'danger',  'CRITICAL / UNSTABLE'],
-            $score >= 55 => ['MANAGEMENT REVIEW', 'warn',    'REPEATED FAILURES'],
-            $score >= 30 => ['REPAIR AND WATCH',  'warn',    'ACTIVE HISTORY'],
-            default      => ['NORMAL',            'ok',      'STABLE'],
+        [$decision, $tone, $status, $key] = match (true) {
+            $score >= 80 => ['STOP INVESTMENT',   'danger',  'CRITICAL / UNSTABLE', 'stop'],
+            $score >= 55 => ['MANAGEMENT REVIEW', 'warn',    'REPEATED FAILURES',   'review'],
+            $score >= 30 => ['REPAIR AND WATCH',  'warn',    'ACTIVE HISTORY',      'watch'],
+            default      => ['NORMAL',            'ok',      'STABLE',              'normal'],
         };
 
         return [
-            'decision' => $decision,
-            'tone'     => $tone,
-            'status'   => $status,
-            'rule'     => 'Risk 80+ = stop investment · 55–79 = management review · 30–54 = repair and watch · under 30 = normal.',
+            'decision'      => $decision,
+            'tone'          => $tone,
+            'status'        => $status,
+            'rule'          => 'Risk 80+ = stop investment · 55–79 = management review · 30–54 = repair and watch · under 30 = normal.',
+            'decision_i18n' => $this->tr('reportSystem.verdict.' . $key . '.decision'),
+            'status_i18n'   => $this->tr('reportSystem.verdict.' . $key . '.status'),
+            'rule_i18n'     => $this->tr('reportSystem.verdict.rule'),
         ];
     }
 
@@ -505,13 +929,24 @@ class VehicleSystemDashboardService
         $open     = $events->filter(fn ($e) => in_array($e['outcome'], ['Open, not started', 'Still being worked'], true))->count();
         $garages  = $events->pluck('garage')->reject(fn ($g) => $g === 'Not recorded')->unique()->count();
 
+        $kpi = fn (string $key, string $label, $value, string $note, ?string $noteKey = null) => [
+            'key'        => $key,
+            'label'      => $label,
+            'value'      => $value,
+            'note'       => $note,
+            'label_i18n' => $this->tr('reportSystem.kpi.' . $key . '.label'),
+            'note_i18n'  => $this->tr('reportSystem.kpi.' . $key . '.' . ($noteKey ?: 'note')),
+        ];
+
         return [
-            ['label' => 'Risk Score',       'value' => $risk['score'],  'note' => 'Out of 100. Components printed below.'],
-            ['label' => 'Recorded Events',  'value' => $events->count(),'note' => 'Every logged failure of this system.'],
-            ['label' => 'Repeated Findings','value' => $repeats,        'note' => $repeats > 0 ? 'The same wording logged again.' : 'No finding has repeated.'],
-            ['label' => 'Major Work',       'value' => $major,          'note' => 'Entries describing a replacement or overhaul.'],
-            ['label' => 'Still Open',       'value' => $open,           'note' => 'Faults with no resolution recorded.'],
-            ['label' => 'Garages Involved', 'value' => $garages,        'note' => 'Distinct garages that touched this system.'],
+            $kpi('risk',     'Risk Score',        $risk['score'],   'Out of 100. Components printed below.'),
+            $kpi('events',   'Recorded Events',   $events->count(), 'Every logged failure of this system.'),
+            $kpi('repeats',  'Repeated Findings', $repeats,
+                $repeats > 0 ? 'The same wording logged again.' : 'No finding has repeated.',
+                $repeats > 0 ? 'note' : 'noteNone'),
+            $kpi('major',    'Major Work',        $major,           'Entries describing a replacement or overhaul.'),
+            $kpi('open',     'Still Open',        $open,            'Faults with no resolution recorded.'),
+            $kpi('garages',  'Garages Involved',  $garages,         'Distinct garages that touched this system.'),
         ];
     }
 
@@ -553,9 +988,16 @@ class VehicleSystemDashboardService
                 return [
                     'date'        => $date,
                     'work'        => $l->description ?: ($l->finding_text ?: 'Line recorded without a description'),
+                    // The invoice line's own wording is data; only the fallback is ours to translate.
+                    'work_i18n'   => ($l->description || $l->finding_text) ? null : $this->tr('reportSystem.repairs.noDescription'),
                     'part_number' => $l->part_number,
                     'garage'      => optional(optional($l->maintenance)->vendor)->name ?? (optional($l->maintenance)->garage ?: 'Not recorded'),
                     'held'        => $after === null ? 'Date not recorded' : ($after === 0 ? 'No further failure since' : $after . ' further ' . Str::plural('failure', $after) . ' after this'),
+                    'held_i18n'   => $after === null
+                        ? $this->tr('reportSystem.repairs.noDate')
+                        : ($after === 0
+                            ? $this->tr('reportSystem.repairs.held')
+                            : $this->tr('reportSystem.repairs.failedAfter', ['n' => $after], true)),
                     'held_ok'     => $after === 0,
                 ];
             })
@@ -595,6 +1037,21 @@ class VehicleSystemDashboardService
             'grouping'=> 'One visit is one event: sheet rows identical on date, garage and finding are the stages of a single trip (OUT / Follow up / IN) and are collapsed into one.',
             'omitted' => 'Retired tickets are excluded. Entries whose finding matches no catalog keyword are not attributed to any system, so they appear on no dashboard.',
             'derived' => 'Only the risk score and health index are derived, and every component is printed with its input count.',
+            'i18n'    => [
+                // The table and column names stay in English on purpose: they are identifiers a reader
+                // would grep the schema for, not prose. Everything around them translates.
+                'source'  => $this->tr('reportSystem.provenance.source', ['system' => $system]),
+                'window'  => $events->isEmpty()
+                    ? $this->tr('reportSystem.provenance.windowNone')
+                    : $this->tr('reportSystem.provenance.window', [
+                        'from' => $events->first()['date'],
+                        'to'   => $events->last()['date'],
+                    ]),
+                'split'   => $this->tr('reportSystem.provenance.split', ['tickets' => $tickets, 'sheet' => $sheet]),
+                'grouping'=> $this->tr('reportSystem.provenance.grouping'),
+                'omitted' => $this->tr('reportSystem.provenance.omitted'),
+                'derived' => $this->tr('reportSystem.provenance.derived'),
+            ],
         ];
     }
 }

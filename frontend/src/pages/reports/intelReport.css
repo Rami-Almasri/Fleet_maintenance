@@ -108,9 +108,14 @@
 
 /* ── KPI strip ──────────────────────────────────────────────────────────────────────────────── */
 
+/*
+ * Six across, stated rather than auto-fit. The strip is read as one row of six comparable figures;
+ * auto-fit reflowed it to 5+1 or 4+2 at intermediate widths, which reads as two groups and invites
+ * the wrong comparison. The responsive block below steps it 6 → 3 → 2 deliberately.
+ */
 .intel-report .ir-kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(6, 1fr);
   gap: 14px;
   margin-bottom: 20px;
 }
@@ -128,8 +133,18 @@
 
 /* ── Layout grids ───────────────────────────────────────────────────────────────────────────── */
 
-.intel-report .ir-grid2 { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 20px; align-items: start; }
-.intel-report .ir-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; align-items: start; }
+.intel-report .ir-grid2 { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; align-items: start; }
+.intel-report .ir-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; align-items: stretch; }
+
+/*
+ * Panels in a grid are sized by the grid's gap, so their own bottom margin would double it. Stretching
+ * them to a common height is what makes the three chart panels line up as one band rather than three
+ * cards of arbitrary depth.
+ */
+.intel-report .ir-grid2 > .ir-panel,
+.intel-report .ir-grid3 > .ir-panel { margin-bottom: 0; display: flex; flex-direction: column; }
+.intel-report .ir-grid2 > .ir-panel > .ir-body,
+.intel-report .ir-grid3 > .ir-panel > .ir-body { flex: 1; }
 
 /*
  * GRID BLOWOUT GUARD — do not remove.
@@ -180,7 +195,7 @@
 .intel-report td {
   padding: 12px 10px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-  text-align: left;
+  text-align: start;
   vertical-align: top;
   font-size: 13px;
   line-height: 1.5;
@@ -221,26 +236,26 @@
 
 .intel-report .ir-alert {
   border: 1px solid rgba(148, 163, 184, 0.12);
-  border-left: 4px solid var(--ir-amber);
+  border-inline-start: 4px solid var(--ir-amber);
   background: rgba(146, 64, 14, 0.1);
   border-radius: 14px;
   padding: 16px;
   margin-bottom: 12px;
 }
 
-.intel-report .ir-alert.critical { border-left-color: var(--ir-red); background: rgba(127, 29, 29, 0.12); }
-.intel-report .ir-alert.neutral { border-left-color: rgba(148, 163, 184, 0.5); background: rgba(30, 41, 59, 0.4); }
+.intel-report .ir-alert.critical { border-inline-start-color: var(--ir-red); background: rgba(127, 29, 29, 0.12); }
+.intel-report .ir-alert.neutral { border-inline-start-color: rgba(148, 163, 184, 0.5); background: rgba(30, 41, 59, 0.4); }
 .intel-report .ir-alert h3 { margin: 0 0 6px; font-size: 15px; }
 .intel-report .ir-alert p { margin: 0; color: var(--ir-muted); font-size: 13px; line-height: 1.5; }
 
 /* ── Timeline ───────────────────────────────────────────────────────────────────────────────── */
 
-.intel-report .ir-timeline { position: relative; padding-left: 26px; }
+.intel-report .ir-timeline { position: relative; padding-inline-start: 26px; }
 
 .intel-report .ir-timeline::before {
   content: '';
   position: absolute;
-  left: 8px;
+  inset-inline-start: 8px;
   top: 6px;
   bottom: 6px;
   width: 2px;
@@ -252,7 +267,7 @@
 .intel-report .ir-titem::before {
   content: '';
   position: absolute;
-  left: -23px;
+  inset-inline-start: -23px;
   top: 5px;
   width: 12px;
   height: 12px;
@@ -279,8 +294,108 @@
 .intel-report .ir-bar-fill.hot { background: var(--ir-red); }
 .intel-report .ir-bar-fill.warm { background: var(--ir-amber); }
 .intel-report .ir-bar-fill.cool { background: var(--ir-green); }
-.intel-report .ir-bar-value { font-size: 13px; font-weight: 800; min-width: 62px; text-align: right; }
+.intel-report .ir-bar-value { font-size: 13px; font-weight: 800; min-width: 62px; text-align: end; }
 .intel-report .ir-bar-rule { grid-column: 1 / -1; margin: -6px 0 4px; font-size: 12px; color: var(--ir-muted); line-height: 1.45; }
+
+/* ── Risk components, with their evidence ───────────────────────────────────────────────────── */
+
+/*
+ * Two columns on a wide screen, but each component is a self-contained block that must not be split
+ * across them — hence the explicit grid rather than CSS columns, which would break a component in half.
+ */
+.intel-report .ir-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 18px 28px;
+  margin-bottom: 16px;
+}
+
+.intel-report .ir-risk-item {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.intel-report .ir-risk-item .ir-bar-row { margin-bottom: 8px; }
+.intel-report .ir-risk-input { font-size: 12.5px; color: var(--ir-dim); line-height: 1.5; }
+.intel-report .ir-risk-input strong { color: var(--ir-text); }
+.intel-report .ir-risk-detail { margin-top: 5px; font-size: 12.5px; color: var(--ir-muted); line-height: 1.5; }
+
+/* A count that could not have been anything else is a different fact — it gets its own colour. */
+.intel-report .ir-risk-caveat {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-inline-start: 3px solid var(--ir-amber);
+  /* Logical corners: the square edge stays against the rule, whichever side that is in RTL. */
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+  border-start-end-radius: 8px;
+  border-end-end-radius: 8px;
+  background: rgba(146, 64, 14, 0.12);
+  font-size: 12.5px;
+  color: #fde68a;
+  line-height: 1.5;
+}
+
+.intel-report .ir-evidence { list-style: none; margin: 10px 0 0; padding: 0; }
+
+.intel-report .ir-evidence li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+  font-size: 12.5px;
+}
+
+.intel-report .ir-ev-date { color: var(--ir-accent); font-weight: 800; font-variant-numeric: tabular-nums; }
+.intel-report .ir-ev-text { color: var(--ir-text); }
+
+/* The garage / source / outcome line sits under the finding, spanning back under the date column. */
+.intel-report .ir-ev-meta { grid-column: 2 / -1; color: var(--ir-muted); line-height: 1.45; }
+
+/* With no date to lead with, the finding takes the whole row and the meta still tucks beneath it. */
+.intel-report .ir-evidence li > .ir-ev-text:first-child { grid-column: 1 / -1; }
+.intel-report .ir-evidence li > .ir-ev-text:first-child ~ .ir-ev-meta { grid-column: 1 / -1; }
+
+/* ── Donut (failure mix) ────────────────────────────────────────────────────────────────────── */
+
+.intel-report .ir-donut {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+}
+
+.intel-report .ir-donut-svg { width: 100%; height: auto; display: block; }
+.intel-report .ir-donut-total { fill: var(--ir-text); font-size: 22px; font-weight: 900; }
+.intel-report .ir-donut-unit { fill: var(--ir-muted); font-size: 10px; }
+
+.intel-report .ir-legend { list-style: none; margin: 0; padding: 0; }
+
+.intel-report .ir-legend li {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.intel-report .ir-legend li:last-child { border-bottom: 0; }
+.intel-report .ir-swatch { width: 12px; height: 12px; border-radius: 3px; }
+
+/* The finding is the garage's own wording and can run long; it truncates rather than widening the panel. */
+.intel-report .ir-legend-label {
+  font-size: 13px;
+  color: var(--ir-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intel-report .ir-legend-value { font-size: 13px; font-weight: 800; color: var(--ir-text); }
 
 /* ── Controls ───────────────────────────────────────────────────────────────────────────────── */
 
@@ -323,13 +438,18 @@
   .intel-report .ir-hero,
   .intel-report .ir-grid2,
   .intel-report .ir-grid3 { grid-template-columns: 1fr; }
+  .intel-report .ir-kpis { grid-template-columns: repeat(3, 1fr); }
 }
 
 @media (max-width: 760px) {
   .intel-report .ir-container { padding: 16px; }
   .intel-report .ir-hero-main h1 { font-size: 28px; }
+  .intel-report .ir-kpis { grid-template-columns: repeat(2, 1fr); }
   .intel-report .ir-bar-row { grid-template-columns: 1fr; }
-  .intel-report .ir-bar-value { text-align: left; }
+  .intel-report .ir-bar-value { text-align: start; }
+  .intel-report .ir-donut { grid-template-columns: 1fr; justify-items: center; }
+  .intel-report .ir-donut-svg { max-width: 200px; }
+  .intel-report .ir-legend { width: 100%; }
 }
 
 /* ── Print / Save-as-PDF ────────────────────────────────────────────────────────────────────── */
@@ -354,7 +474,22 @@
   .intel-report th { background: #f1f5f9; color: #0f172a; position: static; }
   .intel-report td,
   .intel-report .ir-tdesc,
+  .intel-report .ir-legend-label,
+  .intel-report .ir-legend-value,
   .intel-report .ir-bar-label { color: #0f172a; }
+
+  /* The donut is vector, so it prints as-is — only the hole's label needs the light-surface colours. */
+  .intel-report .ir-donut-total { fill: #0f172a; }
+  .intel-report .ir-donut-unit { fill: #475569; }
+
+  .intel-report .ir-risk-item { background: #ffffff; border-color: #cbd5e1; break-inside: avoid; page-break-inside: avoid; }
+  .intel-report .ir-risk-input,
+  .intel-report .ir-risk-input strong,
+  .intel-report .ir-ev-text { color: #0f172a; }
+  .intel-report .ir-risk-detail,
+  .intel-report .ir-ev-meta { color: #475569; }
+  .intel-report .ir-ev-date { color: #0369a1; }
+  .intel-report .ir-risk-caveat { background: #fffbeb; color: #92400e; }
   .intel-report .ir-table-wrap { max-height: none; overflow: visible; }
   .intel-report .ir-controls,
   .intel-report .ir-no-print { display: none !important; }
