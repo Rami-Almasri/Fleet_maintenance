@@ -10,7 +10,7 @@ import {
   TYPE_META, TYPE_KEYS, typeMeta, eventKind,
   severityMeta, stageLabel, buildFacets, countByKind,
   applyFilters, sortEvents, groupEvents, computeKpis, SORTS, GROUPS,
-  normalizeLegacyTimeline,
+  normalizeLegacyTimeline, summarizeMatches,
 } from '../../lib/vehicleTimeline';
 import { useI18n } from '../../i18n/I18nContext';
 
@@ -140,6 +140,147 @@ function StatRail({ kpis }) {
       ))}
     </div>
   );
+}
+
+// ── Match insight ────────────────────────────────────────────────────────────────────────
+// The answer BEFORE the evidence. Search "oil" and the question is "how many times, how far apart, and
+// when is it due again?" — not "show me 40 rows". This card states that in a sentence, then backs it
+// with the few figures that carry it. It only ever appears once the view is narrowed; on the unfiltered
+// trail there is no single subject to summarise, so it stays out of the way.
+//
+// One occasion = one visit, not one row (see summarizeMatches) — the loud number would otherwise be the
+// number of log lines, which nobody asked about.
+function Fact({ label, value, sub, tone = 'slate' }) {
+  const toneCls = tone === 'amber' ? 'text-amber-700' : tone === 'red' ? 'text-red-700' : 'text-slate-900';
+  return (
+    <div className="min-w-[7rem]">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
+      <div className={`mt-0.5 text-sm font-semibold tabular-nums ${toneCls}`}>{value}</div>
+      {sub && <div className="text-[11px] text-slate-400">{sub}</div>}
+    </div>
+  );
+}
+
+// Occasions per year — a shape, not a chart. Bars are scaled to the busiest year so "2026 is worse than
+// 2025" is readable at a glance without axes or a legend.
+function YearBars({ perYear }) {
+  const { t } = useI18n();
+  if (perYear.length < 2) return null;
+  const max = Math.max(...perYear.map((y) => y.count));
+  return (
+    <div className="flex items-end gap-2.5">
+      {perYear.map((y) => (
+        <div key={y.year} className="flex flex-col items-center gap-1" title={t('{n} in {year}', { n: y.count, year: y.year })}>
+          <span className="text-[11px] font-semibold tabular-nums text-slate-500">{y.count}</span>
+          <span className="w-6 rounded-sm bg-indigo-400/80" style={{ height: `${8 + (y.count / max) * 26}px` }} />
+          <span className="text-[10px] font-medium tabular-nums text-slate-400">{y.year}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MatchInsight({ summary, subject, onOpenOldest }) {
+  const { t } = useI18n();
+  if (!summary) return null;
+  const s = summary;
+
+  // The headline is the finding itself. A single occasion has no pattern to describe, so it says so
+  // plainly rather than printing "every null days".
+  const headline = s.occasions === 1
+    ? t('Happened once — {date}', { date: fmtDate(s.lastAt) })
+    : s.avgDays != null
+      ? t('{n} times in {span} — about every {days} days', { n: num(s.occasions), span: fmtSpan(s.spanDays, t), days: num(s.avgDays) })
+      : t('{n} times', { n: num(s.occasions) });
+
+  return (
+    <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/70 to-white px-4 py-3.5 shadow-soft">
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        <Icon.Activity className="h-4 w-4 shrink-0 self-center text-indigo-500" />
+        <span className="text-sm font-semibold text-slate-900">{headline}</span>
+        <span className="text-xs text-slate-400">
+          {subject
+            ? t('for “{q}” · {n} log entries', { q: subject, n: num(s.matches) })
+            : t('in this view · {n} log entries', { n: num(s.matches) })}
+        </span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-start gap-x-7 gap-y-3">
+        <Fact
+          label={t('Last time')}
+          value={fmtDate(s.lastAt)}
+          sub={joinDot([
+            t('{n} days ago', { n: num(s.sinceDays) }),
+            s.sinceKm != null ? t('{n} km since', { n: num(s.sinceKm) }) : null,
+          ])}
+        />
+        {s.occasions > 1 && (
+          <Fact
+            label={t('First time')}
+            value={fmtDate(s.firstAt)}
+            sub={s.firstOdometer != null ? `${num(s.firstOdometer)} km` : null}
+          />
+        )}
+        {s.avgKm != null && (
+          <Fact label={t('Every')} value={t('{n} km', { n: num(s.avgKm) })} sub={s.avgDays != null ? t('{n} days', { n: num(s.avgDays) }) : null} />
+        )}
+        {/* A projection, labelled as one — it holds only while the past cadence does. */}
+        {s.nextExpectedAt && (
+          <Fact
+            label={t('Next one due around')}
+            value={fmtDate(s.nextExpectedAt)}
+            tone={s.dueInDays <= 0 ? 'amber' : 'slate'}
+            sub={s.dueInDays <= 0
+              ? t('overdue by {n} days on this pattern', { n: num(Math.abs(s.dueInDays)) })
+              : t('in {n} days if the pattern holds', { n: num(s.dueInDays) })}
+          />
+        )}
+        {s.topGarage && (
+          <Fact
+            label={t('Most often at')}
+            value={s.topGarage.name}
+            sub={t('{n} of {total} visits', { n: num(s.topGarage.count), total: num(s.occasions) })}
+          />
+        )}
+        {/* Coming back faster than usual is the one finding that changes what someone does today. */}
+        {s.accelerating && (
+          <Fact
+            label={t('Coming back faster')}
+            value={t('{n} days last gap', { n: num(s.lastGap) })}
+            tone="red"
+            sub={t('was about every {n} days before', { n: num(s.avgDays) })}
+          />
+        )}
+        {!s.accelerating && s.shortestGap != null && s.occasions > 2 && (
+          <Fact label={t('Shortest gap')} value={t('{n} days', { n: num(s.shortestGap) })} />
+        )}
+        <div className="ms-auto flex items-end gap-4 self-end">
+          <YearBars perYear={s.perYear} />
+          {s.occasions > 1 && onOpenOldest && (
+            <button type="button" onClick={onOpenOldest} className="pb-1 text-xs font-semibold text-indigo-600 underline-offset-2 hover:underline">
+              {t('Oldest first')}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {s.undated > 0 && (
+        <p className="mt-2.5 text-[11px] text-slate-400">
+          {t('{n} matching entries carry no date and are left out of these figures.', { n: num(s.undated) })}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const joinDot = (arr) => arr.filter(Boolean).join(' · ');
+
+// Spans read as people say them: "3 weeks", "14 months", "2 years".
+function fmtSpan(days, t) {
+  if (days < 14) return t('{n} days', { n: days });
+  if (days < 60) return t('{n} weeks', { n: Math.round(days / 7) });
+  if (days < 730) return t('{n} months', { n: Math.round(days / 30.4) });
+  return t('{n} years', { n: (days / 365).toFixed(1) });
 }
 
 // ── One event row ────────────────────────────────────────────────────────────────────────
@@ -394,6 +535,19 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
   const grouped = useMemo(() => groupEvents(sorted, group), [sorted, group]);
   const kpis = useMemo(() => computeKpis(filtered), [filtered]);
 
+  // The recurrence read on whatever the view has been narrowed to. Computed only when something is
+  // actually being asked — the whole unfiltered trail has no single subject worth summarising, and
+  // "the car did 312 things about every 4 days" is not a finding. A search term or a picked event type
+  // both name a subject; sort/group only reorder the same set, so they do not count as narrowing.
+  const narrowed = Boolean(
+    search.trim() || types.size || severities.size || flags.size
+    || garage || inspector || driver || stage || (status && status !== 'all') || from || to,
+  );
+  const summary = useMemo(
+    () => (narrowed ? summarizeMatches(filtered, allEvents) : null),
+    [narrowed, filtered, allEvents],
+  );
+
   const resetAll = () => { setSearch(''); patch({ q: '', type: '', sev: '', flags: '', garage: '', insp: '', driver: '', stage: '', status: '', from: '', to: '' }); };
 
   // Event types are the primary lens, so they live in the toolbar — busiest kinds first.
@@ -595,6 +749,13 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
         </div>
         )}
       </div>
+
+      {/* ── The read on the narrowed set: how often, how far apart, when next ── */}
+      <MatchInsight
+        summary={summary}
+        subject={search.trim() || (types.size ? [...types].map((k) => t(typeMeta(k).label)).join(' + ') : '')}
+        onOpenOldest={sort === 'oldest' ? null : () => patch({ sort: 'oldest' })}
+      />
 
       {/* ── Stat rail (recomputes as filters change) ── */}
       <StatRail kpis={shownKpis} />
