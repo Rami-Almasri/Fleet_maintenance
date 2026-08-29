@@ -569,3 +569,112 @@ export function computeKpis(events) {
     { key: 'downtime',   label: 'Total maintenance days', value: totalMaintDays },
   ];
 }
+
+// ── Pattern summary ("what does this search actually tell me?") ──────────────────────────
+// The trail is long by design; nobody reads 300 rows to learn that the oil was changed seven times.
+// Given the events a search/filter has narrowed to, this answers the questions an investigator is
+// really asking: how often, how far apart in days AND kilometres, when last, is it accelerating, and
+// where does it keep happening. Pure derivation over fields already on each event.
+//
+// EVENTS vs OCCASIONS. One oil change writes several rows (report, repair, invoice, ready), so raw
+// match counts overstate "how many times". Rows are collapsed into OCCASIONS — one per ticket, or per
+// calendar day when a row carries no ticket — and every recurrence figure is counted on occasions.
+// `matches` is still reported so the two numbers never look like a contradiction.
+const DAY_MS = 86400000;
+const dayKey = (t) => new Date(t).toISOString().slice(0, 10);
+
+export function summarizeMatches(events, allEvents = events) {
+  const dated = events.filter((e) => timeOf(e));
+  if (!dated.length) return null;
+
+  // Collapse to occasions. Odometer/garage are lifted from whichever row in the occasion carries them.
+  const byOccasion = new Map();
+  for (const e of dated) {
+    const t = timeOf(e);
+    const key = e.maintenance_id ? `t${e.maintenance_id}` : `d${dayKey(t)}`;
+    const o = byOccasion.get(key) || { key, start: t, end: t, odometer: null, garage: null, events: 0 };
+    o.start = Math.min(o.start, t);
+    o.end = Math.max(o.end, t);
+    if (o.odometer == null && e.odometer != null) o.odometer = Number(e.odometer);
+    if (!o.garage && e.garage) o.garage = e.garage;
+    o.events += 1;
+    byOccasion.set(key, o);
+  }
+  const occasions = [...byOccasion.values()].sort((a, b) => a.start - b.start);
+
+  // Gaps between consecutive occasions — in days, and in kilometres where both ends carry a reading.
+  const dayGaps = [];
+  const kmGaps = [];
+  for (let i = 1; i < occasions.length; i++) {
+    const gap = (occasions[i].start - occasions[i - 1].end) / DAY_MS;
+    if (gap >= 0) dayGaps.push(gap);
+    const a = occasions[i - 1].odometer;
+    const b = occasions[i].odometer;
+    if (a != null && b != null && b > a) kmGaps.push(b - a);
+  }
+  const mean = (arr) => (arr.length ? arr.reduce((x, y) => x + y, 0) / arr.length : null);
+  const avgDays = mean(dayGaps);
+  const avgKm = mean(kmGaps);
+
+  const first = occasions[0];
+  const last = occasions[occasions.length - 1];
+
+  // "Since last" is measured against the car's own latest known reading — the newest odometer anywhere
+  // in the trail, not just among the matches — so the km figure is the car's, not the search's.
+  let latestOdo = null;
+  let latestOdoTime = 0;
+  for (const e of allEvents) {
+    const t = timeOf(e);
+    if (e.odometer == null || !t || t < latestOdoTime) continue;
+    latestOdoTime = t; latestOdo = Number(e.odometer);
+  }
+  const sinceDays = Math.max(0, Math.round((Date.now() - last.end) / DAY_MS));
+  const sinceKm = last.odometer != null && latestOdo != null && latestOdo > last.odometer
+    ? latestOdo - last.odometer : null;
+
+  // Where it keeps happening — only worth stating when one garage genuinely dominates.
+  const garages = new Map();
+  for (const o of occasions) if (o.garage) garages.set(o.garage, (garages.get(o.garage) || 0) + 1);
+  const topGarage = [...garages.entries()].sort((a, b) => b[1] - a[1])[0] || null;
+
+  // Per-year counts, oldest → newest, for the mini bar row.
+  const years = new Map();
+  for (const o of occasions) {
+    const y = new Date(o.start).getFullYear();
+    years.set(y, (years.get(y) || 0) + 1);
+  }
+  const perYear = [...years.entries()].sort((a, b) => a[0] - b[0]).map(([year, count]) => ({ year, count }));
+
+  // Is it getting worse? Compare the newest gap with the average of the ones before it. A return that
+  // came back in well under half the usual interval is the signal worth surfacing.
+  const lastGap = dayGaps.length ? dayGaps[dayGaps.length - 1] : null;
+  const priorAvg = dayGaps.length > 1 ? mean(dayGaps.slice(0, -1)) : null;
+  const accelerating = lastGap != null && priorAvg != null && priorAvg > 0 && lastGap < priorAvg * 0.6;
+  const shortestGap = dayGaps.length ? Math.min(...dayGaps) : null;
+
+  return {
+    matches: events.length,
+    undated: events.length - dated.length,
+    occasions: occasions.length,
+    firstAt: new Date(first.start).toISOString(),
+    lastAt: new Date(last.end).toISOString(),
+    firstOdometer: first.odometer,
+    lastOdometer: last.odometer,
+    spanDays: Math.round((last.end - first.start) / DAY_MS),
+    avgDays: avgDays != null ? Math.round(avgDays) : null,
+    avgKm: avgKm != null ? Math.round(avgKm) : null,
+    shortestGap: shortestGap != null ? Math.round(shortestGap) : null,
+    sinceDays,
+    sinceKm,
+    // Projected only from a real cadence (3+ occasions), and only forward of the last one.
+    nextExpectedAt: avgDays != null && occasions.length >= 3
+      ? new Date(last.end + avgDays * DAY_MS).toISOString() : null,
+    dueInDays: avgDays != null && occasions.length >= 3
+      ? Math.round((last.end + avgDays * DAY_MS - Date.now()) / DAY_MS) : null,
+    topGarage: topGarage && topGarage[1] > 1 ? { name: topGarage[0], count: topGarage[1] } : null,
+    garageCount: garages.size,
+    perYear,
+    accelerating,
+    lastGap: lastGap != null ? Math.round(lastGap) : null,
+  };
+}
