@@ -2,30 +2,43 @@ import { useCallback, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
-import { Alert, BarRow, Chip, DataOrigin, Kpi, Panel, ReportShell, toneFor } from './reportBlocks';
+import { useI18n } from '../../i18n/I18nContext';
+import { SHOW_FINANCIALS } from '../../config/features';
+import {
+  Alert, Chip, CONFIDENCE_TONE, DataOrigin, DataQuality, Donut, Durability, IncidentList, Kpi,
+  Panel, ReportShell, RiskComponent, SystemStory, VehicleBrief, WorkLedger,
+} from './reportBlocks';
+import { useTx } from './reportI18n';
 
 /**
- * VEHICLE SYSTEM DASHBOARD — one car, one system, the whole story.
+ * VEHICLE SYSTEM DASHBOARD — one car, one system, and what the record can actually establish.
  *
- * The question is the one that gets asked about a problem car and has never had a single place to be
- * answered: *has this system actually been fixed, or have we been paying for the same failure again
- * and again?* The page isolates every recorded event belonging to ONE system (engine, brakes,
- * transmission …), puts them in order, shows what was replaced and whether a further failure followed,
- * and states what the record supports.
+ * The question is the one asked about every problem car: *has this system been fixed, or are we
+ * paying for the same failure again and again?*
  *
- * ON THE ONE DERIVED NUMBER: the risk score is arithmetic over five counts, and the page prints each
- * component, the count it read and the points that count earned, right above the timeline those counts
- * came from. It is not a prediction and carries no confidence — a reader who disagrees can check the
- * sum against the timeline by hand, which is the whole point of showing it that way.
+ * THE ORDER OF THIS PAGE IS THE ARGUMENT IT MAKES. An earlier version opened with raw workshop notes
+ * and a bare 50/100, which read as a confident finding about the car when it was largely a finding
+ * about the paperwork. So the page now descends from conclusion to evidence:
+ *
+ *   A status · B takeaway · C metrics · D incidents · E work · F durability
+ *   G scoring · H data quality · I source records
+ *
+ * A reader who stops after B has the decision and its confidence. A reader who doubts it can walk
+ * down to G, H and I and check every number against the rows it came from. Nothing is hidden — the
+ * raw notes are one disclosure away inside each incident — but nothing raw is allowed to lead.
+ *
+ * ON THE DERIVED NUMBERS: the risk score is arithmetic over INCIDENTS (see
+ * VehicleSystemEvidenceService), and confidence grades the evidence rather than predicting anything.
+ * Neither is a forecast; both can be recomputed by hand from the sections below them.
  */
-
-const VERDICT_TONE = { danger: 'danger', warn: 'warn', ok: 'ok', neutral: 'neutral' };
 
 export default function VehicleSystemDashboard() {
   const { vehicleId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const system = searchParams.get('system') || 'engine';
   const [systems, setSystems] = useState([]);
+  const { t, tf, tp } = useI18n();
+  const tx = useTx();
 
   useFetch(
     useCallback(async () => {
@@ -50,47 +63,87 @@ export default function VehicleSystemDashboard() {
   const verdict = data?.verdict;
   const risk = data?.risk;
   const timeline = data?.timeline || [];
-  const mixMax = Math.max(1, ...(data?.failure_mix || []).map((m) => m.count));
+  // The donut's hole shows the total across the slices, not the timeline length: the mix is capped at
+  // the top eight findings, so the two numbers legitimately differ on a long history.
+  const mixTotal = (data?.failure_mix || []).reduce((sum, m) => sum + m.count, 0);
+
+  // The system's name is a label, not data, so it comes from the catalog; the service's English is
+  // the fallback for a system key the catalog has not learned yet.
+  // tf(), not t(): a key the catalog lacks must fall back to the service's English, and t() would
+  // return the dot-path itself.
+  const systemLabel = data?.system
+    ? tf(`reportSystem.systems.${data.system.key}`, data.system.label)
+    : t('reportSystem.ui.system');
+
+  /* Every generated sentence arrives as a node; resolve it once here so the presentation blocks below
+     stay dumb and are shared unchanged with the daily report. */
+  const components = (risk?.components || []).map((c) => ({
+    ...c,
+    label: tx(c.i18n?.label, c.label),
+    display: t('reportSystem.ui.outOf', { n: c.points, max: c.max }),
+    input: tx(c.i18n?.input, c.input),
+    rule: tx(c.i18n?.rule, c.rule),
+    detail: c.i18n?.detail ? tx(c.i18n.detail) : c.detail,
+    caveat: c.i18n?.caveat ? tx(c.i18n.caveat) : c.caveat,
+    evidence: (c.evidence || []).map((e) => ({
+      ...e,
+      text: tx(e.text_i18n, e.text),
+      meta: tx(e.meta_i18n, e.meta),
+    })),
+  }));
+
+  const provenance = data?.provenance
+    ? Object.fromEntries(
+        ['source', 'window', 'grouping', 'split', 'derived', 'omitted']
+          .map((k) => [k, tx(data.provenance.i18n?.[k], data.provenance[k])])
+          .concat([['counts', data.provenance.counts]]),
+      )
+    : null;
 
   return (
     <ReportShell
       footer={
         data
-          ? `${data.system.label} history for ${data.vehicle.label} · Read from the maintenance record · FASTER Fleet System`
+          ? t('reportSystem.ui.footer', { system: systemLabel, vehicle: data.vehicle.label })
           : null
       }
     >
       <section className="ir-hero">
         <div className="ir-panel ir-hero-main">
-          <div className="ir-eyebrow">
-            FASTER Fleet System · {data?.system?.label || 'System'} Intelligence
-          </div>
+          <div className="ir-eyebrow">{t('reportSystem.ui.eyebrow', { system: systemLabel })}</div>
           <h1>
-            {data?.system?.label || 'System'} Dashboard
+            {t('reportSystem.ui.title', { system: systemLabel })}
             <br />
-            {data?.vehicle?.label || `Vehicle ${vehicleId}`}
+            {data?.vehicle?.label || t('reportSystem.ui.vehicleN', { id: vehicleId })}
           </h1>
-          <div className="ir-sub">
-            Every recorded failure of this one system on this one car, in order, with the garage that
-            saw it and what was done. Below the timeline: what was replaced, and whether the same
-            system failed again afterwards. Nothing here is predicted — it is the record, counted.
-          </div>
+          <div className="ir-sub">{t('reportSystem.ui.intro')}</div>
         </div>
         <div className={`ir-panel ir-hero-side tone-${verdict?.tone || 'neutral'}`}>
-          <div className="ir-small">What the record supports</div>
+          <div className="ir-small">{t('reportSystem.ui.whatRecordSupports')}</div>
           <div className={`ir-big ${verdict?.tone === 'danger' ? 'tone-danger' : verdict?.tone === 'warn' ? 'tone-warntext' : verdict?.tone === 'ok' ? 'tone-oktext' : ''}`}>
-            {loading ? '—' : verdict?.decision || '—'}
+            {loading ? '—' : tx(verdict?.decision_i18n, verdict?.decision) || '—'}
           </div>
-          <div className="ir-small">System health index</div>
-          <div className="ir-big">{loading ? '—' : `${risk?.health ?? '—'} / 100`}</div>
-          <div className="ir-small">Current reading</div>
-          <div className="ir-big sm">{loading ? '—' : verdict?.status || '—'}</div>
+          {/*
+            Two lines only. The score and the evidence grade used to sit here as well, and a reader
+            met four numbers before a single sentence. They now live in the story panel below, where
+            the score is a footnote pointing at its own arithmetic.
+          */}
+          <div className="ir-small">{t('reportSystem.confidenceLevel.label')}</div>
+          <div className="ir-confidence">
+            {loading || !data ? (
+              '—'
+            ) : (
+              <Chip tone={CONFIDENCE_TONE[data.confidence.level]}>
+                {t(`reportSystem.confidenceLevel.${data.confidence.level}`)}
+              </Chip>
+            )}
+          </div>
         </div>
       </section>
 
       <div className="ir-controls ir-no-print">
         <label className="ir-small" style={{ marginTop: 0 }} htmlFor="ir-system">
-          System
+          {t('reportSystem.ui.system')}
         </label>
         <select
           id="ir-system"
@@ -100,24 +153,24 @@ export default function VehicleSystemDashboard() {
         >
           {systems.map((s) => (
             <option key={s.key} value={s.key}>
-              {s.label}
+              {tf(`reportSystem.systems.${s.key}`, s.label)}
             </option>
           ))}
         </select>
         <Link className="ir-button" to={`/vehicles/${vehicleId}`}>
-          Open the vehicle
+          {t('reportSystem.ui.openVehicle')}
         </Link>
         <button type="button" className="ir-button" onClick={() => reload()}>
-          Refresh
+          {t('reportSystem.ui.refresh')}
         </button>
         <button type="button" className="ir-button" onClick={() => window.print()}>
-          Print / Save as PDF
+          {t('reportSystem.ui.print')}
         </button>
       </div>
 
       {error ? (
-        <Panel title="The dashboard could not be built">
-          <Alert tone="danger" heading="Request failed">
+        <Panel title={t('reportSystem.ui.errorTitle')}>
+          <Alert tone="danger" heading={t('reportSystem.ui.errorHeading')}>
             {error}
           </Alert>
         </Panel>
@@ -125,148 +178,108 @@ export default function VehicleSystemDashboard() {
 
       {loading ? (
         <Panel>
-          <div className="ir-empty">Reading this vehicle's maintenance record…</div>
+          <div className="ir-empty">{t('reportSystem.ui.loading')}</div>
         </Panel>
       ) : null}
 
       {!loading && data ? (
         <>
+          {/* ── THE ANSWER. Plain sentences, nothing else competing with them. ───────────── */}
+          <Panel title={t('reportSystem.story.title', { system: systemLabel })}>
+            <SystemStory data={data} systemLabel={systemLabel} />
+          </Panel>
+
+          {/* ── D. What happened, visit by visit. */}
+          <Panel
+            title={t('reportSystem.ui.incidentsTitle')}
+            hint={t('reportSystem.ui.incidentsHint', {
+              incidents: data.facts.incidents,
+              records: data.facts.records,
+            })}
+          >
+            {data.incidents.length === 0 ? (
+              <div className="ir-empty">{t('reportSystem.ui.noEvents')}</div>
+            ) : (
+              <IncidentList incidents={data.incidents} />
+            )}
+          </Panel>
+
+          {/* ── The supporting numbers, AFTER the story rather than in front of it. */}
           <section className="ir-kpis">
             {(data.kpis || []).map((k) => (
-              <Kpi key={k.label} label={k.label} value={k.value} note={k.note} />
+              <Kpi
+                key={k.key || k.label}
+                label={tx(k.label_i18n, k.label)}
+                value={k.value}
+                note={tx(k.note_i18n, k.note)}
+              />
             ))}
           </section>
 
-          <section className="ir-grid3">
-            <Panel title="What goes wrong" hint="Findings, most frequent first">
-              {(data.failure_mix || []).length === 0 ? (
-                <div className="ir-empty">No event on this system has been recorded.</div>
-              ) : (
-                (data.failure_mix || []).map((m) => (
-                  <BarRow
-                    key={m.label}
-                    label={m.label}
-                    value={m.count}
-                    max={mixMax}
-                    display={`${m.count}×`}
-                    tone={m.count > 1 ? 'hot' : 'cool'}
-                  />
-                ))
-              )}
-            </Panel>
-
-            <Panel title="How the risk score was reached" hint={`Total ${risk?.score ?? 0} / 100`}>
-              {(risk?.components || []).map((c) => (
-                <BarRow
-                  key={c.key}
-                  label={c.label}
-                  value={c.points}
-                  max={c.max}
-                  display={`${c.points} / ${c.max}`}
-                  rule={`${c.input} — ${c.rule}`}
-                />
-              ))}
-              <Alert tone="neutral" heading="How to read this">
-                {risk?.basis}
-              </Alert>
-            </Panel>
-
-            <Panel title="The decision" hint="And the rule behind it">
-              <Alert tone={VERDICT_TONE[verdict?.tone] || 'neutral'} heading={verdict?.decision}>
-                {verdict?.status}. {verdict?.rule}
-              </Alert>
-              <Alert tone="neutral" heading="What this page cannot tell you">
-                It reports what was recorded. A failure nobody logged is invisible here, and a system
-                with a thin record scores low because it is thin — not because the car is healthy.
-                Check the Data Origin block below before treating a low score as reassurance.
-              </Alert>
-              {data.vehicle?.vin ? (
-                <Alert tone="neutral" heading="Vehicle">
-                  {data.vehicle.label}
-                  {data.vehicle.vin ? ` · VIN ${data.vehicle.vin}` : ''}
-                </Alert>
-              ) : null}
-            </Panel>
-          </section>
-
           <section className="ir-grid2">
-            <Panel title={`${data.system.label} timeline`} hint={`${timeline.length} recorded ${timeline.length === 1 ? 'event' : 'events'}`}>
-              {timeline.length === 0 ? (
-                <div className="ir-empty">
-                  No {data.system.label.toLowerCase()} event has ever been logged against this car.
-                </div>
-              ) : (
-                <div className="ir-timeline">
-                  {timeline.map((e, i) => (
-                    <div key={`${e.ref}-${i}`} className={`ir-titem sev-${e.severity || 'none'}`}>
-                      <div className="ir-tdate">
-                        <span>{e.date}</span>
-                        <span>·</span>
-                        <span>{e.garage}</span>
-                        <Chip tone={toneFor(e.severity)}>
-                          {e.severity ? e.severity[0].toUpperCase() + e.severity.slice(1) : 'Unrated'}
-                        </Chip>
-                        <Chip tone="info">{e.source}</Chip>
-                        {e.recurred ? <Chip tone="danger">Recurred</Chip> : null}
-                        {e.major_work ? <Chip tone="warn">Major work</Chip> : null}
-                      </div>
-                      <div className="ir-tphase">{e.finding}</div>
-                      <div className="ir-tdesc">
-                        {e.detail}
-                        {'\n'}
-                        <span className="ir-muted">Outcome: {e.outcome}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+            {/* ── E. Repairs & replacements, read out of free text. */}
+            <Panel title={t('reportSystem.ui.workTitle')} hint={t('reportSystem.ui.workHint')}>
+              <WorkLedger work={data.work} />
             </Panel>
 
-            <Panel title="What was replaced" hint="And whether it held">
-              <table className="ir-side">
-                <colgroup>
-                  <col className="c-num" />
-                  <col className="c-name" />
-                  <col />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Work / part</th>
-                    <th>Did it hold?</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(data.repairs || []).map((r, i) => (
-                    <tr key={`${r.date}-${i}`}>
-                      <td>{r.date || 'Not recorded'}</td>
-                      <td>
-                        <strong>{r.work}</strong>
-                        {r.part_number ? <div className="ir-muted">{r.part_number}</div> : null}
-                        <div className="ir-muted">{r.garage}</div>
-                      </td>
-                      <td>
-                        <Chip tone={r.held_ok ? 'ok' : 'warn'}>{r.held}</Chip>
-                      </td>
-                    </tr>
-                  ))}
-                  {(data.repairs || []).length === 0 ? (
-                    <tr>
-                      <td colSpan={3}>
-                        <div className="ir-empty">
-                          No itemised part or labour line has been recorded against this system. That
-                          means the invoices for these visits were never broken down — not that no
-                          work was done.
-                        </div>
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+            {/* ── F. Did the repair hold? */}
+            <Panel title={t('reportSystem.ui.durabilityTitle')} hint={t('reportSystem.ui.durabilityHint')}>
+              <Durability items={data.durability} />
             </Panel>
           </section>
 
-          <DataOrigin provenance={data.provenance} />
+          {/* ── G. Evidence & calculations. */}
+          <Panel
+            title={t('reportSystem.ui.riskTitle')}
+            hint={
+              risk?.ceiling < 100
+                ? t('reportSystem.ui.riskHintCeiling', { score: risk?.score ?? 0, ceiling: risk.ceiling })
+                : t('reportSystem.ui.riskHint', { score: risk?.score ?? 0 })
+            }
+          >
+            <div className="ir-risk-grid">
+              {components.map((c) => (
+                <RiskComponent key={c.key} component={c} />
+              ))}
+            </div>
+            <Alert tone="neutral" heading={t('reportSystem.ui.howToRead')}>
+              {tx(risk?.basis_i18n, risk?.basis)}
+            </Alert>
+          </Panel>
+
+          {/* ── H. Data quality — what is weak in the records themselves. */}
+          <Panel title={t('reportSystem.ui.dataQualityTitle')} hint={t('reportSystem.ui.dataQualityHint')}>
+            <DataQuality warnings={data.data_quality} />
+          </Panel>
+
+          {/* ── Reference: the car itself and the shape of its faults. Neither answers the
+                 question this page exists for, so both sit at the bottom. */}
+          <section className="ir-grid2">
+            <Panel title={t('reportSystem.ui.aboutCar')} hint={t('reportSystem.ui.aboutCarHint')}>
+              <VehicleBrief rows={data.brief || []} showMoney={SHOW_FINANCIALS} />
+            </Panel>
+
+            <Panel
+              title={t('reportSystem.ui.whatGoesWrong')}
+              hint={
+                mixTotal < timeline.length
+                  ? t('reportSystem.ui.mixCapped', {
+                      shown: (data.failure_mix || []).length,
+                      hidden: timeline.length - mixTotal,
+                    })
+                  : t('reportSystem.ui.mixHint')
+              }
+            >
+              {(data.failure_mix || []).length === 0 ? (
+                <div className="ir-empty">{t('reportSystem.ui.noEvents')}</div>
+              ) : (
+                <Donut slices={data.failure_mix} unit={tp('reportSystem.ui.eventUnit', mixTotal)} />
+              )}
+            </Panel>
+          </section>
+
+          {/* ── I. Provenance. The per-record source rows live inside each incident above. */}
+          <DataOrigin provenance={provenance} />
         </>
       ) : null}
     </ReportShell>
