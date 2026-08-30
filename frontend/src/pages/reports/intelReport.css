@@ -297,6 +297,289 @@
 .intel-report .ir-bar-value { font-size: 13px; font-weight: 800; min-width: 62px; text-align: end; }
 .intel-report .ir-bar-rule { grid-column: 1 / -1; margin: -6px 0 4px; font-size: 12px; color: var(--ir-muted); line-height: 1.45; }
 
+/* ── The story: the answer, set to be READ ──────────────────────────────────────────────────── */
+
+/*
+ * Prose measure, not dashboard density. This block is the only part of the page a busy reader will
+ * finish, so it is sized like body copy — larger, looser, and capped at a comfortable line length —
+ * rather than like the tiles around it.
+ */
+.intel-report .ir-story { max-width: 68ch; }
+
+.intel-report .ir-story-lead {
+  margin: 0 0 18px;
+  font-size: 20px;
+  line-height: 1.5;
+  font-weight: 700;
+  color: var(--ir-text);
+}
+
+.intel-report .ir-story-h {
+  margin: 22px 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ir-muted);
+}
+
+.intel-report .ir-story-found { list-style: none; margin: 0; padding: 0; }
+
+.intel-report .ir-story-found li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  font-size: 15.5px;
+  line-height: 1.5;
+}
+
+.intel-report .ir-story-found li:last-child { border-bottom: 0; }
+.intel-report .ir-story-fault { color: var(--ir-text); unicode-bidi: plaintext; text-align: start; }
+
+.intel-report .ir-story-verdict {
+  margin: 16px 0 0;
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: var(--ir-dim);
+}
+
+.intel-report .ir-story-verdict strong { color: var(--ir-text); }
+.intel-report .ir-story-note { margin: 14px 0 0; font-size: 15px; line-height: 1.6; color: var(--ir-muted); }
+
+.intel-report .ir-story-actions { margin: 0; padding-inline-start: 20px; font-size: 15px; line-height: 1.7; color: var(--ir-text); }
+.intel-report .ir-story-actions li { margin-bottom: 6px; }
+
+/* The score, deliberately quiet: a pointer to its own arithmetic, not a headline. */
+.intel-report .ir-story-score {
+  margin: 24px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  font-size: 12.5px;
+  color: var(--ir-muted);
+}
+
+/* ── Takeaway, confidence, recurrence ───────────────────────────────────────────────────────── */
+
+.intel-report .ir-takeaway { margin: 0 0 10px; font-size: 14.5px; line-height: 1.65; color: var(--ir-text); }
+.intel-report .ir-actions-title { margin: 14px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ir-muted); }
+.intel-report .ir-actions { margin: 0; padding-inline-start: 20px; color: var(--ir-dim); font-size: 13.5px; line-height: 1.6; }
+.intel-report .ir-actions li { margin-bottom: 4px; }
+
+.intel-report .ir-confidence { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin-top: 4px; }
+.intel-report .ir-band { font-size: 15px; font-weight: 700; color: var(--ir-muted); }
+
+.intel-report .ir-recurrence { margin-bottom: 12px; }
+.intel-report .ir-recurrence p { margin: 8px 0 0; color: var(--ir-dim); font-size: 13px; line-height: 1.55; }
+.intel-report .ir-named-faults { margin: 0 0 12px; padding-inline-start: 18px; color: var(--ir-text); font-size: 13px; line-height: 1.6; }
+.intel-report .ir-named-faults li { unicode-bidi: plaintext; }
+
+/* ── Incidents ──────────────────────────────────────────────────────────────────────────────── */
+
+.intel-report .ir-incidents { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+
+.intel-report .ir-incident {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-inline-start: 3px solid rgba(148, 163, 184, 0.35);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+/* The kind of incident is the first thing to read, so it is carried by the edge colour too. */
+.intel-report .ir-incident.kind-confirmed_fault { border-inline-start-color: var(--ir-red); }
+.intel-report .ir-incident.kind-major_replacement { border-inline-start-color: var(--ir-amber); }
+.intel-report .ir-incident.kind-preventive_service { border-inline-start-color: var(--ir-accent); }
+
+.intel-report .ir-incident-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+.intel-report .ir-incident-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.intel-report .ir-incident-fault { margin-top: 8px; font-size: 14.5px; font-weight: 700; line-height: 1.4; unicode-bidi: plaintext; text-align: start; }
+.intel-report .ir-incident-meta { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--ir-muted); font-size: 12.5px; unicode-bidi: plaintext; }
+
+.intel-report .ir-worklist { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.intel-report .ir-worklist li { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 12.5px; }
+.intel-report .ir-work-text { color: var(--ir-dim); unicode-bidi: plaintext; text-align: start; }
+
+/* The disclosure that keeps raw notes available without letting them lead. */
+.intel-report .ir-disclose {
+  margin-top: 10px;
+  background: transparent;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 8px;
+  color: var(--ir-muted);
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.intel-report .ir-disclose:hover { border-color: var(--ir-accent); color: var(--ir-accent); }
+
+.intel-report .ir-sources { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px; }
+.intel-report .ir-sources > li { border-top: 1px solid rgba(148, 163, 184, 0.12); padding-top: 10px; }
+.intel-report .ir-source-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; }
+.intel-report .ir-source-join { margin-top: 4px; color: var(--ir-muted); font-size: 12px; }
+.intel-report .ir-source-join em { color: var(--ir-dim); font-style: normal; font-weight: 700; }
+
+/* Lines this reader could attribute to the system are highlighted; the rest stay visible but recede. */
+.intel-report .ir-record p.is-relevant { color: var(--ir-text); }
+.intel-report .ir-record p.is-other { color: var(--ir-muted); opacity: 0.75; }
+
+/* ── Durability + data quality ──────────────────────────────────────────────────────────────── */
+
+.intel-report .ir-durability { display: grid; gap: 12px; }
+.intel-report .ir-durability-item { border: 1px solid rgba(148, 163, 184, 0.12); border-radius: 12px; padding: 12px 14px; background: rgba(15, 23, 42, 0.4); }
+.intel-report .ir-durability-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
+.intel-report .ir-durability-verdict { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12.5px; }
+
+.intel-report .ir-dq { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.intel-report .ir-dq li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; font-size: 13px; line-height: 1.55; color: var(--ir-dim); }
+.intel-report .ir-dq li > span:first-child { color: var(--ir-amber); }
+
+/* ── Vehicle brief ──────────────────────────────────────────────────────────────────────────── */
+
+.intel-report .ir-brief { margin: 0; font-size: 13px; }
+
+.intel-report .ir-brief > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.intel-report .ir-brief > div:last-child { border-bottom: 0; }
+.intel-report .ir-brief dt { color: var(--ir-muted); }
+.intel-report .ir-brief dd { margin: 0; font-weight: 700; text-align: end; }
+
+/* VIN and serial are identifiers read character by character — they never wrap mid-string. */
+.intel-report .ir-brief dd.ir-mono {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-weight: 600;
+  font-size: 12px;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.intel-report .ir-brief-note { display: block; font-weight: 400; color: var(--ir-muted); font-size: 11.5px; margin-top: 2px; }
+
+/* ── Fault history (every fault, every date) ────────────────────────────────────────────────── */
+
+.intel-report .ir-faults { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px 24px; }
+
+.intel-report .ir-fault {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+/* A fault that actually came back gets a red edge — it is the finding the page exists to surface. */
+.intel-report .ir-fault.is-repeat { border-inline-start: 3px solid var(--ir-red); }
+
+.intel-report .ir-fault-head { margin-bottom: 10px; }
+/* The finding is the garage's own wording — its direction follows the text, not the page. */
+.intel-report .ir-fault-head h3 { margin: 0 0 7px; font-size: 15px; line-height: 1.35; unicode-bidi: plaintext; text-align: start; }
+.intel-report .ir-fault-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.intel-report .ir-fault-line { margin-top: 7px; font-size: 12px; color: var(--ir-muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.intel-report .ir-fault-returns { color: #fecaca; font-weight: 800; }
+
+/* The rail: one continuous line down the occurrences, so a chain reads as a chain. */
+.intel-report .ir-occurrences {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+  padding-inline-start: 22px;
+}
+
+.intel-report .ir-occurrences::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 4px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.intel-report .ir-occurrences li { position: relative; padding: 10px 0; font-size: 12.5px; }
+.intel-report .ir-occurrences li + li { border-top: 1px solid rgba(148, 163, 184, 0.1); }
+
+.intel-report .ir-occurrences li::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: -22px;
+  top: 15px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #64748b;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.14);
+}
+
+/* A genuine return is red; a next-day continuation of the same trip is deliberately not. */
+.intel-report .ir-occurrences li.is-return::before { background: var(--ir-red); box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16); }
+.intel-report .ir-occurrences li.is-same-visit::before { background: transparent; border: 2px solid rgba(148, 163, 184, 0.5); box-shadow: none; }
+.intel-report .ir-occurrences li.is-same-visit { opacity: 0.75; }
+
+.intel-report .ir-occ-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+.intel-report .ir-occ-date {
+  color: var(--ir-accent);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.intel-report .ir-occ-garage { color: var(--ir-dim); unicode-bidi: plaintext; }
+
+/* The garage's own words, set as a quotation — the report never paraphrases them. */
+.intel-report .ir-record {
+  margin: 7px 0 0;
+  padding: 8px 12px;
+  border-inline-start: 2px solid rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.05);
+  border-radius: 0 8px 8px 0;
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
+/*
+ * `plaintext` takes each line's direction from its own first strong character rather than from the
+ * page. Recorded notes are written in whatever language the fitter used, so an English note inside
+ * the Arabic layout must stay left-to-right — otherwise its closing full stop is rendered at the
+ * left edge and the sentence reads as broken. The same applies to garage names and findings below.
+ */
+.intel-report .ir-record p {
+  margin: 0 0 4px;
+  color: var(--ir-text);
+  line-height: 1.5;
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+.intel-report .ir-record p:last-of-type { margin-bottom: 0; }
+.intel-report .ir-record.is-empty { color: var(--ir-muted); font-style: italic; border-inline-start-color: rgba(148, 163, 184, 0.3); background: rgba(148, 163, 184, 0.05); }
+.intel-report .ir-record-note { display: block; margin-top: 6px; color: var(--ir-muted); font-size: 11.5px; }
+
+.intel-report .ir-occ-foot { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; color: var(--ir-dim); font-size: 12px; }
+
 /* ── Risk components, with their evidence ───────────────────────────────────────────────────── */
 
 /*
@@ -482,7 +765,13 @@
   .intel-report .ir-donut-total { fill: #0f172a; }
   .intel-report .ir-donut-unit { fill: #475569; }
 
-  .intel-report .ir-risk-item { background: #ffffff; border-color: #cbd5e1; break-inside: avoid; page-break-inside: avoid; }
+  .intel-report .ir-risk-item,
+  .intel-report .ir-fault { background: #ffffff; border-color: #cbd5e1; break-inside: avoid; page-break-inside: avoid; }
+  .intel-report .ir-brief dt,
+  .intel-report .ir-brief-note,
+  .intel-report .ir-occ-garage { color: #475569; }
+  .intel-report .ir-brief dd { color: #0f172a; }
+  .intel-report .ir-occ-date { color: #0369a1; }
   .intel-report .ir-risk-input,
   .intel-report .ir-risk-input strong,
   .intel-report .ir-ev-text { color: #0f172a; }
