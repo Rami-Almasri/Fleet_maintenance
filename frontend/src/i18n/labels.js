@@ -4773,6 +4773,18 @@ const en = {
       dataOriginTail: '— the same code that decides what is due, so this page cannot describe a rule that is not the one running.',
     },
   },
+
+  // Tab strip of the Inspection Review page. The middle tab is not a queue of
+  // work for us: the car is due a test, but OM performs that test — the label
+  // has to say so, or the tab reads as our own backlog.
+  review: {
+    tabs: {
+      awaiting: 'Awaiting review',
+      inShop: 'Needs a test — done by OM',
+      countdown: 'When each car is due',
+    },
+  },
+
   // ── Intelligence reports ──────────────────────────────────────────────────
   // The per-vehicle System Dashboard states counts ("3 recorded events"), so its
   // sentences cannot live in the phrase catalog — a baked-in number never matches.
@@ -10112,6 +10124,15 @@ const ar = {
       dataOriginTail: '— وهو نفس الكود الذي يقرّر ما هو مستحقّ، لذا لا يمكن لهذه الصفحة أن تصف قاعدة غير القاعدة العاملة فعلاً.',
     },
   },
+
+  review: {
+    tabs: {
+      awaiting: 'بانتظار المراجعة',
+      inShop: 'تحتاج اختباراً — يقوم به OM',
+      countdown: 'موعد استحقاق كل سيارة',
+    },
+  },
+
   // ── تقارير الذكاء التشغيلي ────────────────────────────────────────────────
   // أسماء المرائب ونصوص الأعطال كما كتبها الفني تبقى كما سُجّلت ولا تُترجم:
   // ترجمة السجل تعني اختلاق دليل. المُترجَم هنا هو كلام التقرير عن السجل فقط.
