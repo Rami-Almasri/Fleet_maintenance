@@ -2237,7 +2237,7 @@ export default function InspectionReviewQueue() {
             onChange={setTab}
             tabs={[
               { key: 'awaiting', label: tf('review.tabs.awaiting', 'Awaiting review'), badge: awaiting.length, icon: <Icon.Clock className="h-4 w-4" /> },
-              { key: 'withdrawn', label: tf('review.tabs.inShop', 'Parked — car in the shop'), icon: <Icon.Wrench className="h-4 w-4" /> },
+              { key: 'withdrawn', label: tf('review.tabs.inShop', 'Needs a test — done by OM'), icon: <Icon.Wrench className="h-4 w-4" /> },
               { key: 'countdown', label: tf('review.tabs.countdown', 'When each car is due'), icon: <Icon.Calendar className="h-4 w-4" /> },
             ]}
           />
