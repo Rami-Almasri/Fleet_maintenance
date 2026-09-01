@@ -36,6 +36,13 @@ class PartWorkflowService
         private NotificationScanner $notifier,
         private ComponentService $components,
         private IncorrectFaultCostGuard $incorrect,
+        /**
+         * Keeps a spare-key requirement's board status in step with the buy it is riding on. A no-op
+         * for every other part — the call is unconditional so that a request which HAS a requirement
+         * behind it can never be approved, refused or bought without its need hearing about it.
+         * It is the projection, not the service, precisely so this stays a one-way dependency.
+         */
+        private SpareKeyProjection $spareKeys,
     ) {}
 
     // ───────────────────────────── request lifecycle ─────────────────────────────
@@ -250,6 +257,7 @@ class PartWorkflowService
             ],
         ]);
         PartRequestApproved::dispatch($req->id, $req->vehicle_id, $req->maintenance_id, $actor->id);
+        $this->spareKeys->syncFromPurchaseRequest($req);
 
         return $req->fresh();
     }
@@ -269,6 +277,11 @@ class PartWorkflowService
             'description' => "Part request rejected: {$req->part_name}",
             'meta'        => ['part_request_id' => $req->id, 'reason' => $reason],
         ]);
+
+        // A refused buy does NOT close a spare-key need — the car still has no key. The projection
+        // moves the requirement to `rejected`, which is an OPEN state, so it stays on the board and
+        // can be re-requested. @see SpareKeyRequirement::STATUS_REJECTED
+        $this->spareKeys->syncFromPurchaseRequest($req);
 
         return $req->fresh();
     }
@@ -374,6 +387,8 @@ class PartWorkflowService
             if ($verdict['duplicate']) {
                 $investigation = $this->openDuplicateInvestigation($purchase, $verdict, $actor, $data);
             }
+
+            $this->spareKeys->syncFromPurchaseRequest($req);
 
             return ['purchase' => $purchase->fresh(), 'verdict' => $verdict, 'investigation' => $investigation];
         });

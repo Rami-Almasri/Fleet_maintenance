@@ -90,6 +90,19 @@ return [
             'gid' => env('GOOGLE_SHEETS_INSURANCE_GID'),
         ],
 
+        // The spare-key workbook. Two tabs, and they are evidence of DIFFERENT things — which is why
+        // they have two importers and must never be pointed at each other:
+        //   'Spare keys'      how many keys the fleet HOLDS, per car. Evidence of a physical object,
+        //                     so `spare-keys:import-inventory` turns it into vehicle_components.
+        //   'Unfinished keys' the JOB LIST — cars still waiting for a key to be bought or cut. Evidence
+        //                     of a process, not of a key, so `spare-keys:import-history` creates
+        //                     requirements only and no components.
+        'spare_keys' => [
+            'id'          => env('GOOGLE_SHEETS_SPARE_KEYS_ID'),
+            'gid'         => env('GOOGLE_SHEETS_SPARE_KEYS_GID', 0),          // "Spare keys" (inventory)
+            'pending_gid' => env('GOOGLE_SHEETS_SPARE_KEYS_PENDING_GID'),     // "Unfinished keys" (job list)
+        ],
+
         // Vehicle Timeline EXPORT (write target, not a source). The whole fleet's
         // maintenance-workflow audit trail (vehicle_log_events) is pushed here, one row per event,
         // by `php artisan events:sync-sheet`. `tab` is created on first run if missing.

@@ -517,6 +517,219 @@ class ComponentService
         });
     }
 
+    // ───────────────────────────── receipt of a numbered SET (the spare-key door) ────────────────
+
+    /**
+     * Register N physical units of a `set`-scheme part against a vehicle, one component per unit.
+     *
+     * THE DOOR THIS OPENS, and why the three that already exist could not be used. A spare key is not
+     * fitted at a workshop bench, so installFromPurchase's cost-bridge/predecessor path does not
+     * describe it; intake() refuses a second component from the same purchase (rightly — one purchase,
+     * one part, for every type that is not a set); and install() moves ONE existing in-stock row.
+     * Buying two keys on one purchase order and receiving them both is none of those.
+     *
+     * IDEMPOTENT BY CONSTRUCTION. It counts the components this purchase has ALREADY produced and
+     * creates only the shortfall, inside a transaction with the vehicle's units of this type locked.
+     * A double-submitted "Mark Received" therefore creates nothing the second time — it does not
+     * merely fail, it correctly does nothing, and returns the same components the first call made.
+     * That is the difference between an idempotent operation and a guarded one, and the receipt of a
+     * physical object needs the former.
+     *
+     * Slots are allocated by taking the lowest free number, so a car whose key #1 was lost and
+     * retired gets its replacement back in slot unit_1 rather than drifting up to unit_3.
+     *
+     * @param  array $unit  identity applied to every unit created: serial_no?, brand?, model?,
+     *                      label?, notes? — serial_no is only meaningful when receiving ONE.
+     * @return array<int, VehicleComponent> every unit this purchase has produced, oldest first
+     */
+    public function receiveSetUnits(
+        PartPurchase $purchase,
+        ComponentCatalog $catalog,
+        Vehicle $vehicle,
+        int $quantity,
+        array $unit,
+        User $actor,
+    ): array {
+        $this->guardNotConsumable($catalog);
+        $this->guardVehicleInstallable($vehicle);
+
+        $slots = $catalog->positionsFor();
+        abort_if($slots === [], 422,
+            "{$catalog->name} is not a numbered set — receive it through the normal install step instead.");
+        abort_if($quantity < 1, 422, 'Receive at least one unit.');
+
+        return DB::transaction(function () use ($purchase, $catalog, $vehicle, $quantity, $unit, $actor, $slots) {
+            // Lock every unit of this type on this car — both the ones this purchase produced and the
+            // ones already fitted — so a concurrent receipt cannot pick the same free slot.
+            $existing = VehicleComponent::query()
+                ->where('component_catalog_id', $catalog->id)
+                ->where('vehicle_id', $vehicle->id)
+                ->lockForUpdate()
+                ->get();
+
+            $fromThisPurchase = $existing
+                ->where('source_part_purchase_id', $purchase->id)
+                ->sortBy('id')
+                ->values();
+
+            $shortfall = $quantity - $fromThisPurchase->count();
+            if ($shortfall <= 0) {
+                // Already received in full. Saying so with the existing rows (rather than a 409) is
+                // what makes a retried request safe: the caller gets the same answer it would have
+                // got the first time.
+                return $fromThisPurchase->all();
+            }
+
+            $taken = $existing
+                ->where('status', VehicleComponent::STATUS_ACTIVE)
+                ->pluck('position')
+                ->filter()
+                ->all();
+            $free = array_values(array_diff($slots, $taken));
+
+            abort_if(count($free) < $shortfall, 422,
+                "{$vehicle->plate_no} already holds " . count($taken) . " of a maximum {$catalog->name} set of "
+                . count($slots) . " — there is no room for {$shortfall} more.");
+
+            $created = [];
+            foreach (range(1, $shortfall) as $i) {
+                $position = $free[$i - 1];
+
+                $component = $this->makeComponent($catalog, [
+                    // A serial is only claimable when exactly one unit is being received; spreading
+                    // one typed number across two keys would assert an identity for a key nobody read.
+                    'serial_no'   => $quantity === 1 ? ($unit['serial_no'] ?? null) : null,
+                    'part_number' => $purchase->part_number,
+                    'brand'       => $unit['brand'] ?? null,
+                    'model'       => $unit['model'] ?? null,
+                    'label'       => $unit['label'] ?? $catalog->name,
+                    'quantity'    => 1,
+                    'position'    => $position,
+
+                    'installed_at'       => Carbon::now(),
+                    'installed_odometer' => $vehicle->odometer,
+                    'installed_by'       => $actor->id,
+                    'installed_by_name'  => $actor->name ?: $actor->email,
+
+                    'supplier_vendor_id' => $purchase->source_vendor_id,
+                    // `part_purchases.purchase_price` is already a UNIT price — grossCost() is the one
+                    // that multiplies by quantity — so each key carries it as-is. Copying it verbatim
+                    // is what makes two keys bought on one order come to the order's total rather than
+                    // to twice it.
+                    'purchase_cost'      => $purchase->purchase_price,
+                    'currency'           => $purchase->currency ?: 'AED',
+
+                    'source_part_purchase_id' => $purchase->id,
+                    'source_maintenance_task_id' => $purchase->maintenance_task_id,
+                    'source'                  => VehicleComponent::SOURCE_WORKFLOW,
+                    'evidence_channel'        => VehicleComponent::EV_PURCHASE,
+                    'acquisition'             => $this->validatedAcquisition(
+                        $unit['acquisition'] ?? VehicleComponent::ACQ_PURCHASED
+                    ),
+                ], status: VehicleComponent::STATUS_ACTIVE, location: VehicleComponent::LOC_ON_VEHICLE, vehicleId: $vehicle->id);
+
+                $this->recordEvent($component, ComponentEvent::EVENT_INSTALLED, $actor, [
+                    'to_vehicle_id' => $vehicle->id,
+                    'odometer'      => $vehicle->odometer,
+                    'note'          => "Received from purchase #{$purchase->id} ({$purchase->part_name})"
+                        . ($unit['note'] ?? ''),
+                    'meta'          => ['slot' => $position],
+                ]);
+
+                $created[] = $component->fresh();
+            }
+
+            return array_merge($fromThisPurchase->all(), $created);
+        });
+    }
+
+    /**
+     * Backfill units of a `set`-scheme part a car is KNOWN to hold, from a register outside this
+     * system — the spare-key sheet being the case this was written for.
+     *
+     * WHY NOT intake() + install(). intake() puts a part on the warehouse shelf and install() moves it
+     * onto a car, and that pair would tell two lies about a key we have simply always had: it would
+     * invent a shelf the key never sat on, and install() stamps `installed_at = now()` on a part whose
+     * install leg is empty, which would assert the key arrived TODAY. It did not; nobody knows when it
+     * arrived. So this door leaves `installed_at` NULL, and every read surface renders that as
+     * "unknown" rather than as a date somebody could act on.
+     *
+     * Everything else about the row says where the belief came from and how far to trust it:
+     * `source = legacy_backfill` (what `components:verify` and the shadow audit filter on),
+     * `evidence_channel = import`, `acquisition = unknown` — we were never told who paid.
+     *
+     * IDEMPOTENT, and asymmetric on purpose. It tops a car UP to the counted quantity and never
+     * removes: if the register says 1 and the ledger holds 2, that is reported to the caller, not
+     * silently corrected, because taking a component off a car is a removal and a removal needs a
+     * reason and a disposition that a spreadsheet cell cannot supply.
+     *
+     * @param  array $unit label?, note? — applied to every unit created
+     * @return array{created: array<int,VehicleComponent>, existing: int, surplus: int}
+     */
+    public function importSetUnits(
+        ComponentCatalog $catalog,
+        Vehicle $vehicle,
+        int $quantity,
+        array $unit,
+        User $actor,
+    ): array {
+        $this->guardNotConsumable($catalog);
+
+        $slots = $catalog->positionsFor();
+        abort_if($slots === [], 422, "{$catalog->name} is not a numbered set — it cannot be backfilled this way.");
+
+        return DB::transaction(function () use ($catalog, $vehicle, $quantity, $unit, $actor, $slots) {
+            $active = VehicleComponent::query()
+                ->where('component_catalog_id', $catalog->id)
+                ->where('vehicle_id', $vehicle->id)
+                ->where('status', VehicleComponent::STATUS_ACTIVE)
+                ->lockForUpdate()
+                ->get();
+
+            $have      = $active->count();
+            $shortfall = max(0, $quantity - $have);
+            $surplus   = max(0, $have - $quantity);
+
+            if ($shortfall === 0) {
+                return ['created' => [], 'existing' => $have, 'surplus' => $surplus];
+            }
+
+            $free = array_values(array_diff($slots, $active->pluck('position')->filter()->all()));
+            abort_if(count($free) < $shortfall, 422,
+                "{$vehicle->plate_no} cannot hold {$quantity} × {$catalog->name} — the set has only " . count($slots) . ' slots.');
+
+            $created = [];
+            foreach (range(1, $shortfall) as $i) {
+                $component = $this->makeComponent($catalog, [
+                    'label'    => $unit['label'] ?? $catalog->name,
+                    'quantity' => 1,
+                    'position' => $free[$i - 1],
+
+                    // No install leg at all. See the docblock: an unknown date must stay unknown.
+                    'installed_at'      => null,
+                    'installed_by'      => $actor->id,
+                    'installed_by_name' => $actor->name ?: $actor->email,
+
+                    'source'           => VehicleComponent::SOURCE_LEGACY_BACKFILL,
+                    'evidence_channel' => VehicleComponent::EV_IMPORT,
+                    'acquisition'      => VehicleComponent::ACQ_UNKNOWN,
+                ], status: VehicleComponent::STATUS_ACTIVE, location: VehicleComponent::LOC_ON_VEHICLE, vehicleId: $vehicle->id);
+
+                // The biography line carries the register's own words verbatim, because "why do we
+                // believe this car has this key?" is answerable only by what the sheet said.
+                $this->recordEvent($component, ComponentEvent::EVENT_INSTALLED, $actor, [
+                    'to_vehicle_id' => $vehicle->id,
+                    'note'          => $unit['note'] ?? 'Backfilled from the spare-key register',
+                    'meta'          => ['backfill' => true, 'slot' => $free[$i - 1]],
+                ]);
+
+                $created[] = $component->fresh();
+            }
+
+            return ['created' => $created, 'existing' => $have, 'surplus' => $surplus];
+        });
+    }
+
     /**
      * Bring a part into the warehouse WITHOUT installing it — the Scenario-2 door ("diagnosis
      * changed, the purchased part must not disappear") and the direct stock-buy door.

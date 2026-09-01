@@ -153,6 +153,14 @@ class VehicleLogEvent extends Model
     public const EVENT_PART_DUPLICATE_FLAGGED = 'part_duplicate_flagged';  // duplicate-purchase detected → investigation opened
     public const EVENT_PART_RECURRENCE_FLAGGED = 'part_recurrence_flagged'; // a previously-fixed fault came back → warning/investigation
 
+    // ── Spare keys — the NEED half of the lifecycle. The buy half already has events above
+    //    (part_requested/approved/rejected/purchased) and the key itself lands as component_installed,
+    //    so only the three moments that belong to the requirement get their own verbs here. ───────
+    public const EVENT_SPARE_KEY_REQUIRED           = 'spare_key_required';            // a car was recorded as needing a spare key
+    public const EVENT_SPARE_KEY_PURCHASE_REQUESTED = 'spare_key_purchase_requested';  // the need was turned into a purchase request
+    public const EVENT_SPARE_KEY_RECEIVED           = 'spare_key_received';            // physical key(s) arrived and became components
+    public const EVENT_SPARE_KEY_CANCELLED          = 'spare_key_cancelled';           // the need was withdrawn (found / raised in error)
+
     // ── Asset Layer — display mirror of component_events (that table stays the source of truth;
     //    these rows make asset movements visible on the Vehicle Timeline with no new joins) ─────
     public const EVENT_COMPONENT_INSTALLED   = 'component_installed';   // a physical component was fitted to this car
@@ -240,6 +248,13 @@ class VehicleLogEvent extends Model
         self::EVENT_COMPONENT_REMOVED        => Maintenance::FINDING_GARAGE,
         self::EVENT_COMPONENT_TRANSFERRED    => Maintenance::FINDING_GARAGE,
         self::EVENT_COMPONENT_DISPOSED       => Maintenance::FINDING_GARAGE,
+        // A spare key is noticed missing by whoever holds the car — an observation about its
+        // condition rather than workshop work — so the need sits in the inspector-side bucket. The
+        // key physically arriving is custody of an asset and is logged as component_installed above.
+        self::EVENT_SPARE_KEY_REQUIRED           => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_SPARE_KEY_PURCHASE_REQUESTED => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_SPARE_KEY_RECEIVED           => Maintenance::FINDING_GARAGE,
+        self::EVENT_SPARE_KEY_CANCELLED          => Maintenance::FINDING_INSPECTOR,
     ];
 
     protected $fillable = [

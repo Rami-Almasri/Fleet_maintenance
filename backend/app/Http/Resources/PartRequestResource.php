@@ -27,6 +27,9 @@ class PartRequestResource extends JsonResource
             'maintenance_id'      => $this->maintenance_id,
             'maintenance_task_id' => $this->maintenance_task_id,
             'fault_symptom'       => $this->whenLoaded('task', fn () => $this->task?->symptom),
+            // WHY this buy exists when there is no fault behind it: a car was recorded as needing a
+            // spare key. Carried on the board row so a request with no ticket is never a mystery.
+            'spare_key_requirement_id' => $this->spare_key_requirement_id,
             'part_name'           => $this->part_name,
             // WHICH part, not just what it was called — the client passes this back to the
             // duplicate-check endpoint so the repeat-buy question survives a change of wording.

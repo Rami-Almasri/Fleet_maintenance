@@ -19,6 +19,7 @@ import VehicleCheckpointsPanel from '../../components/vehicles/VehicleCheckpoint
 import VehicleComplaintsPanel from '../../components/vehicles/VehicleComplaintsPanel';
 import VehicleInvestigationTimeline from '../../components/vehicles/VehicleInvestigationTimeline';
 import VehicleComponentsPanel from '../../components/vehicles/VehicleComponentsPanel';
+import VehicleSpareKeysPanel from '../../components/vehicles/VehicleSpareKeysPanel';
 import ComponentRepeatAlert from '../../components/vehicles/ComponentRepeatAlert';
 import MulkiyaCard from '../../components/vehicles/MulkiyaCard';
 import VehicleCostIntelligence from './VehicleCostIntelligence';
@@ -302,7 +303,7 @@ const TAB_ORIGIN = {
   activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits (click one for its full record — garage, cost, issues, notes), the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share.',
   financials: 'Every contract OfficeManager holds against this car — rental (C), maintenance (U) and booking (R) — listed newest first and filterable by type. The money on each line (debit, credit, balance) is the contract’s own billing; the cost analysis below it is reverse-engineered from that billing via RealProfitService: rent − discount + realized usage − operating − car-level maintenance.',
   media: 'Pre/post condition & odometer photos captured during the maintenance workflow (inspection & garage steps).',
-  components: 'The vehicle’s physical configuration, DERIVED from the maintenance workflow — never typed in. A component appears here through one of two doors, and the row says which. PURCHASED: a ticket reached its install step (part purchased → received → installed); identity, supplier, cost, warranty and odometer are FACTS copied from the purchase order. REPORTED: a technician recorded “replaced X” at repair capture with no purchase behind it — the part is genuinely fitted, but there is no paperwork, so cost and supplier are blank rather than zero, and no warranty is claimed. Either way the install retires the part it replaced and writes both to the timeline. Age, life-used, warranty standing and cost/km are DERIVED at read time. Money figures count only the parts whose cost is known, and say how many that is. Consumables refreshed by routine servicing (oil, filters bundled with an oil change) are merged in from the service log and tagged “Service”, because they are performed work rather than tracked assets.',
+  components: 'The vehicle’s physical configuration, DERIVED from the maintenance workflow — never typed in. A component appears here through one of two doors, and the row says which. PURCHASED: a ticket reached its install step (part purchased → received → installed); identity, supplier, cost, warranty and odometer are FACTS copied from the purchase order. REPORTED: a technician recorded “replaced X” at repair capture with no purchase behind it — the part is genuinely fitted, but there is no paperwork, so cost and supplier are blank rather than zero, and no warranty is claimed. Either way the install retires the part it replaced and writes both to the timeline. Age, life-used, warranty standing and cost/km are DERIVED at read time. Money figures count only the parts whose cost is known, and say how many that is. Consumables refreshed by routine servicing (oil, filters bundled with an oil change) are merged in from the service log and tagged “Service”, because they are performed work rather than tracked assets. SPARE KEYS are the same asset ledger read separately, because they are the one part whose two counts routinely differ: “keys on this car” is what the ledger holds today, while “requirements raised” and “keys ever received” come from the spare-key requirements and the purchases behind them. History imported from the “NEED SPARE KEY” sheet records the requirement and its dates only — it is not evidence that a key exists, so it never adds to the current count.',
 };
 
 // A muted provenance caption shown at the foot of each tab. The English paragraphs stay in
@@ -1028,6 +1029,11 @@ export default function VehicleProfile() {
             the only thing that can put a component on a car, so there is no "Add Component" control. */}
         {activeTab === 'components' && (
         <div role="tabpanel" id="panel-components" aria-labelledby="tab-components" className="space-y-6">
+          {/* Spare keys sit above the general components list because "does this car have a spare
+              key?" is asked far more often than any other question about its hardware — and because
+              it is the one part whose CURRENT count and HISTORICAL count routinely differ, which
+              needs its own explanation rather than a row in a table. */}
+          <VehicleSpareKeysPanel vehicleId={id} />
           <VehicleComponentsPanel vehicleId={id} />
           <DataOrigin tab="components" />
         </div>

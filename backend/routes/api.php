@@ -538,6 +538,26 @@ Route::middleware('auth:sanctum')->prefix('part-requests')->controller(PartReque
     Route::post('/{partRequest}/complete', 'complete')->middleware('permission:parts.request|maintenance.manage');
 });
 
+// SPARE KEYS — the NEED half of the lifecycle: "this car has to have a spare key", raised before any
+// money is committed and kept open until a physical key exists. The BUY half is deliberately absent
+// here: approving, refusing and purchasing a spare key happen on the part-requests routes directly
+// above, because a second approval door for one part type would be a parallel workflow, not a feature.
+//
+// Permissions ride the parts ladder unchanged — nothing new was added to the RBAC vocabulary.
+// Receiving is parts.purchase rather than components.manage: it is the arrival of a buy, and the
+// component it produces is a workflow-derived write, exactly like the part install step.
+Route::middleware('auth:sanctum')->prefix('spare-keys')->controller(\App\Http\Controllers\SpareKeyRequirementController::class)->group(function () {
+    // Static paths BEFORE /{spareKeyRequirement} so neither is swallowed as an id.
+    Route::get('/board', 'board')->middleware('permission:parts.view');
+    Route::get('/vehicle/{vehicle}', 'forVehicle')->middleware('permission:parts.view|components.view|maintenance.view');
+    Route::post('/', 'store')->middleware('permission:parts.request');
+    Route::get('/{spareKeyRequirement}', 'show')->middleware('permission:parts.view');
+    Route::post('/{spareKeyRequirement}/purchase-request', 'createPurchaseRequest')->middleware('permission:parts.request');
+    Route::post('/{spareKeyRequirement}/receive', 'receive')->middleware('permission:parts.purchase');
+    Route::post('/{spareKeyRequirement}/cancel', 'cancel')->middleware('permission:parts.request|maintenance.manage');
+});
+
+
 Route::middleware('auth:sanctum')->prefix('part-purchases')->controller(PartPurchaseController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:parts.view');
     Route::get('/duplicate-check', 'duplicateCheck')->middleware('permission:parts.purchase|parts.request|parts.view');

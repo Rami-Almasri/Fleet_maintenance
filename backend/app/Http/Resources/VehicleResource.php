@@ -10,8 +10,14 @@ class VehicleResource extends JsonResource
     /** Memoized code→letter map so a collection render is one query, not one per row. */
     private static ?array $letterMap = null;
 
-    /** Render a plate as "<letter> <digits>" via the dictionary; digits alone if no code/letter. */
-    private static function plateDisplay($code, $digits): string
+    /**
+     * Render a plate as "<letter> <digits>" via the dictionary; digits alone if no code/letter.
+     *
+     * PUBLIC because it is the canonical spelling of a plate and services that put a car's name in a
+     * sentence (notifications, board rows) must produce the same string this resource does. The
+     * alternative was a fourth copy of the letter lookup — the app already carries two.
+     */
+    public static function plateDisplay($code, $digits): string
     {
         $digits = (string) $digits;
         if ($code === null || $code === '') {

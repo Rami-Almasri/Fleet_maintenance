@@ -35,11 +35,25 @@ class ComponentCatalog extends Model
     // Position vocabularies an instance's `position` is validated against.
     public const SCHEME_AXLE_CORNER = 'axle_corner';
     public const SCHEME_AXLE        = 'axle';
-    public const POSITION_SCHEMES   = [self::SCHEME_AXLE_CORNER, self::SCHEME_AXLE];
+    /**
+     * The SET scheme: a car carries several of this part and they are numbered, not placed.
+     *
+     * Its whole job is to stop the slot lock from treating key #2 as a replacement for key #1. One
+     * active component per (vehicle, catalog, position) is the invariant the asset layer is built on,
+     * so a part type a car legitimately holds several of needs a position vocabulary to keep them
+     * apart — and borrowing the axle one would let "rear_left spare key" validate, which is the trap
+     * the position_scheme docblock in config/component_catalog.php warns about.
+     *
+     * Four is a limit, not a placeholder: a fleet car with five keys is a data-entry error worth
+     * refusing, and the refusal is a 422 naming the allowed slots rather than a silent overwrite.
+     */
+    public const SCHEME_SET         = 'set';
+    public const POSITION_SCHEMES   = [self::SCHEME_AXLE_CORNER, self::SCHEME_AXLE, self::SCHEME_SET];
 
     public const POSITIONS_BY_SCHEME = [
         self::SCHEME_AXLE_CORNER => ['front_left', 'front_right', 'rear_left', 'rear_right'],
         self::SCHEME_AXLE        => ['front', 'rear'],
+        self::SCHEME_SET         => ['unit_1', 'unit_2', 'unit_3', 'unit_4'],
     ];
 
     protected $fillable = [
