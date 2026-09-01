@@ -5,6 +5,7 @@ import { useI18n } from '../i18n/I18nContext';
 import Parts from './Parts';
 import PartInvoices from './PartInvoices';
 import PartsCatalog from './PartsCatalog';
+import SpareKeys from './SpareKeys';
 import Warranties from './Warranties';
 
 /**
@@ -29,6 +30,10 @@ export default function PartsHub() {
   const tabs = useMemo(
     () => [
       { key: 'board', label: t('Requests & Purchases'), icon: <Icon.Coins className="h-4 w-4" />, permission: 'parts.view', was: '/parts', Component: Parts },
+      // Spare keys sit here, not on a page of their own: a key IS a part, and the people working
+      // this board are the people working the one beside it. What it adds is the stage BEFORE a
+      // purchase request — "this car has to have a key" — which no other board can hold.
+      { key: 'spare-keys', label: t('Spare Keys'), icon: <Icon.Shield className="h-4 w-4" />, permission: 'parts.view', Component: SpareKeys },
       { key: 'invoices', label: t('Supplier invoices'), icon: <Icon.Invoice className="h-4 w-4" />, permission: 'parts.view', was: '/part-invoices', Component: PartInvoices },
       { key: 'catalog', label: t('Part Names'), icon: <Icon.Search className="h-4 w-4" />, permission: 'parts.view', was: '/parts-catalog', Component: PartsCatalog },
       { key: 'warranties', label: t('Warranties'), icon: <Icon.Shield className="h-4 w-4" />, permission: 'parts.view', was: '/warranties', Component: Warranties },

@@ -72,6 +72,8 @@ class PartRequest extends Model
     protected $fillable = [
         'source', 'status',
         'vehicle_id', 'customer_id', 'maintenance_id', 'maintenance_task_id',
+        // WHY this buy exists, when the answer is "a car needed a spare key". @see SpareKeyRequirement
+        'spare_key_requirement_id',
         'part_name', 'part_number', 'category_key', 'part_class', 'repair_location',
         // WHICH part this is, as opposed to what it was called. See PartIdentityService.
         'component_catalog_id', 'catalog_matched_by', 'part_name_key',
@@ -189,5 +191,15 @@ class PartRequest extends Model
     public function requester(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by');
+    }
+
+    /**
+     * The NEED this buy was raised to satisfy, when it was a spare key. Null for every other part —
+     * a fault-driven request answers "why" through its task, which is a different question with a
+     * different answer, so the two links are separate columns rather than one polymorphic one.
+     */
+    public function spareKeyRequirement(): BelongsTo
+    {
+        return $this->belongsTo(SpareKeyRequirement::class, 'spare_key_requirement_id');
     }
 }

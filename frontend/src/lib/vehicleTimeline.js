@@ -75,6 +75,11 @@ const EVENT_KIND = {
   // Asset layer — a component fitted to / pulled off / moved between cars is a parts event on the car.
   component_installed: 'parts', component_removed: 'parts',
   component_transferred: 'parts', component_disposed: 'parts',
+  // Spare keys — the NEED half. The buy half already reads as part_requested/approved/purchased
+  // above, and the key arriving lands as component_installed, so the car's biography shows the
+  // whole lifecycle without any of it being filed under a different heading.
+  spare_key_required: 'parts', spare_key_purchase_requested: 'parts',
+  spare_key_received: 'parts', spare_key_cancelled: 'parts',
   // Approvals
   review_approved: 'approval', review_rejected: 'approval', incident_acknowledged: 'approval',
   // Recommendations

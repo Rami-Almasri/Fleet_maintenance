@@ -150,4 +150,43 @@ return [
         'parking_fallback_roles'      => ['inspector'],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Spare keys
+    |--------------------------------------------------------------------------
+    |
+    | WHO is told when a car is recorded as needing a spare key — the Supervisors
+    | (Waleed Medhat & Abdullah Asham), who are the people that turn a need into a
+    | purchase request and then chase it.
+    |
+    | The doctrine is the same as every other recipient list in this file, and it is
+    | deliberate: a named allow-list first, and when it is empty a fallback narrowed
+    | by ROLE rather than a bare permission. `parts.request` alone also matches the
+    | inspector, the drivers, the rental desk and the QA logins — twelve people for a
+    | job two of them own. See [[checkpoint-reminder-recipient-rules]].
+    |
+    | Nobody is named by user id in code anywhere; set SPARE_KEY_USER_IDS only if the
+    | supervisor role ever stops being the right audience.
+    |
+    */
+    'spare_keys' => [
+        'recipient_user_ids'  => array_values(array_filter(array_map(
+            fn ($v) => (int) trim($v),
+            explode(',', (string) env('SPARE_KEY_USER_IDS', ''))
+        ))),
+        'fallback_permission' => env('SPARE_KEY_PERMISSION', 'parts.request'),
+        'fallback_roles'      => array_values(array_filter(array_map(
+            fn ($v) => trim($v),
+            explode(',', (string) env('SPARE_KEY_ROLES', 'supervisor'))
+        ))),
+        // Admins are accountable for the process, not the target of every ping on it.
+        'excluded_roles'      => array_values(array_filter(array_map(
+            fn ($v) => trim($v),
+            explode(',', (string) env('SPARE_KEY_EXCLUDED_ROLES', 'super-admin,admin'))
+        ))),
+        // WHO adjudicates the purchase request the supervisors raise. Mirrors the permission gate on
+        // POST /part-requests/{id}/approve, so the people notified are exactly the people who can act.
+        'approver_permissions' => ['parts.investigate', 'maintenance.manage'],
+    ],
+
 ];

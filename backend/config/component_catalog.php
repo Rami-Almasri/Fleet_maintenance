@@ -212,6 +212,22 @@ return [
 
     // ══ BATCH — quantity/position tracked ═══════════════════════════════════════════════════════
 
+    // ── Keys ────────────────────────────────────────────────────────────────────────────────────
+    // A car legitimately holds SEVERAL of these at once, which is why the scheme is 'set' (unit_1…
+    // unit_4) rather than null: the asset layer allows one active component per (car, type, slot),
+    // so without numbered slots key #2 would close key #1 out as if it had replaced it.
+    //
+    // BATCH rather than serialized on purpose. Serialized types refuse to be created without a
+    // serial number, and a spare key usually arrives with nothing stamped on it worth recording. A
+    // key that IS marked (a dealer's key code) still goes in serial_no — batch makes it optional,
+    // not unwelcome.
+    ['slug' => 'spare-key', 'name' => 'Spare Key', 'name_ar' => 'مفتاح احتياطي',
+        'identity_aliases' => ['duplicate key', 'second key', 'extra key', 'مفتاح احتياطي', 'مفتاح إضافي'],
+        'aliases' => ['key', 'remote', 'key fob', 'lost key', 'no spare key', 'مفتاح', 'ريموت', 'مفتاح ضايع'],
+        'category_key' => 'interior', 'tracking_mode' => 'batch', 'position_scheme' => 'set',
+        'notes' => 'One row per physical key (qty=1), numbered unit_1…unit_4. Raised through a Spare Key Requirement, '
+            . 'bought through the normal part request → purchase chain, and created at receipt.'],
+
     // ── Tyres & wheels ──────────────────────────────────────────────────────────────────────────
     ['slug' => 'tyre', 'name' => 'Tyre', 'name_ar' => 'إطار',
         'identity_aliases' => ['tire', 'تاير', 'كفر', 'الكفرات'],
