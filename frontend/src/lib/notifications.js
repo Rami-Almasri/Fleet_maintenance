@@ -135,7 +135,7 @@ export const GROUPS = [
     blurb: 'Service-due cars, garage overruns & approvals',
     icon: 'wrench',
     tone: 'info',
-    types: ['overdue_maintenance', 'maint_checkpoint', 'maint_invoice_missing', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'maint_recurring_fault_review'],
+    types: ['overdue_maintenance', 'maint_checkpoint', 'maint_invoice_missing', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'maint_recurring_fault_review', 'garage_visit_frequency', 'garage_downtime', 'maint_finding_approval', 'maint_finding_approval_decided'],
   },
   {
     key: 'finance',
@@ -183,7 +183,7 @@ export const TABS = [
     icon: 'wrench',
     blurb: 'Service-due cars, repairs, diagnostics & approvals',
     empty: 'No maintenance notifications found',
-    types: ['overdue_maintenance', 'maint_checkpoint', 'maint_invoice_missing', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'high_maintenance_cost', 'maint_recurring_fault_review'],
+    types: ['overdue_maintenance', 'maint_checkpoint', 'maint_invoice_missing', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'high_maintenance_cost', 'maint_recurring_fault_review', 'garage_visit_frequency', 'garage_downtime', 'maint_finding_approval', 'maint_finding_approval_decided'],
   },
   {
     key: 'incidents',
@@ -240,9 +240,10 @@ export const INBOX_CATEGORIES = [
     key: 'progress',
     label: 'Progress',
     icon: 'wrench',
-    blurb: 'Workshop progress checkpoints owed before a car goes overdue, and invoices still missing after a car left',
+    blurb: 'Workshop progress checkpoints owed before a car goes overdue, invoices still missing after a car left, cars going into the garage too often or staying too long, and findings held until somebody approves them',
     empty: 'No progress notifications',
-    types: ['maint_checkpoint', 'maint_invoice_missing'],
+    // Mirrors App\Support\NotificationCategories::MAP['progress'] — keep the two in lock-step.
+    types: ['maint_checkpoint', 'maint_invoice_missing', 'garage_visit_frequency', 'garage_downtime', 'maint_finding_approval', 'maint_finding_approval_decided'],
   },
   {
     key: 'test_drive',
@@ -399,6 +400,25 @@ export const LANES = [
             'logistics_dispatch', 'logistics_update', 'logistics_status', 'logistics_ping',
             'logistics_reassigned', 'logistics_unassigned'],
   },
+  {
+    // Garage Intelligence. Every other lane here is about ONE job — this one is about one CAR, read
+    // over a month: it keeps going back in, or it went in and never came out. A lane of its own
+    // rather than a corner of Checkpoint, because the response is different in kind: a checkpoint
+    // asks "what is happening to this car today", this asks "should this car still be in the fleet,
+    // and is this garage the right one". Buried among daily progress chases, a month-long pattern
+    // reads as just another overdue update and gets cleared with them.
+    // @see backend App\Services\Garage\GarageIntelligenceService
+    key: 'garage_pattern',
+    group: 'workshop',
+    label: 'Too Often / Too Long',
+    icon: 'alert',
+    // Matches the read gate on these types in NotificationScanner::ALERT_PERMISSIONS, so the lane is
+    // visible to exactly the people allowed to see its contents.
+    permission: 'maintenance.manage',
+    blurb: 'Cars going into the garage too often, or staying in too long',
+    empty: 'No cars are going in too often or staying too long',
+    types: ['garage_visit_frequency', 'garage_downtime'],
+  },
 
   // ── Controller (Lin) — maintenance.manage ──────────────────────────────────
   {
@@ -458,6 +478,8 @@ export const TYPE_LABEL = {
   maint_checkpoint: 'Maintenance Progress',
   maint_review_reminder: 'Reminder You Set',
   maint_invoice_missing: 'Invoice Not Entered',
+  garage_visit_frequency: 'Going In Too Often',
+  garage_downtime: 'Too Long In The Garage',
   maintenance_back_open: 'Return Reconciliation',
   booking_in_maintenance: 'Booking In Maintenance',
   booking_readiness: 'Booking Readiness',
@@ -553,6 +575,10 @@ export const ACTION_LABEL = {
   overdue_maintenance: 'View Maintenance',
   maint_checkpoint: 'Submit Checkpoint',
   maint_invoice_missing: 'Chase Invoice',
+  // Both land on the car's own profile, where the Garage Behaviour panel shows the same reading the
+  // alert was raised from — the visits, the days, and the sentences under "Why".
+  garage_visit_frequency: 'View Car',
+  garage_downtime: 'View Car',
   maintenance_back_open: 'Close Contract',
   document_expiry: 'Renew Document',
   service_inspection: 'Service & Inspection',

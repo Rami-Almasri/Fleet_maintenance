@@ -146,6 +146,22 @@ class FindingApprovalTest extends TestCase
         }
     }
 
+    /**
+     * Both alert types must be claimed by a real inbox tab. A type nobody claims falls through to the
+     * catch-all `other` bucket — the alert is still delivered, but it lands in the drawer nobody opens,
+     * and an unanswered hold freezes the ticket indefinitely.
+     */
+    public function test_both_alerts_are_filed_under_a_real_inbox_tab(): void
+    {
+        foreach (['maint_finding_approval', 'maint_finding_approval_decided'] as $type) {
+            $this->assertSame(
+                'progress',
+                \App\Support\NotificationCategories::categoryOf($type),
+                "{$type} must not fall through to the catch-all tab"
+            );
+        }
+    }
+
     /** Rejecting is always the way out, so a ticket can never be stranded waiting on nobody. */
     public function test_a_decided_finding_stops_blocking(): void
     {

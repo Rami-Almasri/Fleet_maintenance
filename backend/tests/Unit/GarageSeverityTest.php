@@ -163,4 +163,20 @@ class GarageSeverityTest extends TestCase
         $this->assertSame('warning',  GarageSeverity::alertSeverity(GarageSeverity::WARNING));
         $this->assertSame('info',     GarageSeverity::alertSeverity(GarageSeverity::NORMAL));
     }
+
+    /**
+     * Both alert types must be claimed by a real inbox tab. A type nobody claims falls through to the
+     * catch-all `other` bucket — the alert is still delivered, but it lands in the drawer nobody
+     * opens, which for a standing operational signal is the same as not sending it.
+     */
+    public function test_both_signals_are_filed_under_a_real_inbox_tab(): void
+    {
+        foreach (['garage_visit_frequency', 'garage_downtime'] as $type) {
+            $this->assertSame(
+                'progress',
+                \App\Support\NotificationCategories::categoryOf($type),
+                "{$type} must not fall through to the catch-all tab"
+            );
+        }
+    }
 }

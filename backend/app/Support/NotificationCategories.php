@@ -56,6 +56,20 @@ class NotificationCategories
         'progress' => [
             'maint_checkpoint',
             'maint_invoice_missing', // the car already left the garage and the bill still hasn't landed
+            // Garage Intelligence — not one car's job running late, but one car's PATTERN over the
+            // month: it keeps going back in, or it never comes out. Filed here rather than in a tab
+            // of its own because the audience and the response are the workshop's, the same as the
+            // checkpoint chase; a tab holding two alert types would be a parallel surface, not a
+            // clearer one. @see \App\Services\Garage\GarageIntelligenceService
+            'garage_visit_frequency',
+            'garage_downtime',
+            // A finding the car's own data disagrees with, and the ticket frozen behind it. Filed with
+            // the checkpoint chase for the same reason: same audience (the workshop's management), same
+            // response (open the card and act), and the alert is worthless anywhere a person does not
+            // look — a held ticket goes nowhere until somebody answers this.
+            // @see \App\Services\FindingApprovalService
+            'maint_finding_approval',          // → the approvers: a ticket is held, decide
+            'maint_finding_approval_decided',  // → whoever logged it: your finding was approved / refused
         ],
 
         // Test-drive / re-inspection events — the Inspector is asked to road-test a car.
