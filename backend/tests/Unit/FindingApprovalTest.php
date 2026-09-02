@@ -162,6 +162,21 @@ class FindingApprovalTest extends TestCase
         }
     }
 
+    /**
+     * The ASK is the approvers' business; the OUTCOME must reach the person who logged the finding,
+     * who holds `maintenance.view` and not `maintenance.manage`. An unmapped type falls through to
+     * "open to everyone" (see NotificationScanner::userMayReceive), so both must be stated.
+     */
+    public function test_each_alert_is_gated_to_the_people_who_need_it(): void
+    {
+        $map = (new \ReflectionClass(\App\Services\NotificationScanner::class))
+            ->getConstant('ALERT_PERMISSIONS');
+
+        $this->assertSame('maintenance.manage', $map['maint_finding_approval'] ?? null);
+        // NOT the approvers' permission — that would hide the answer from whoever is waiting on it.
+        $this->assertSame('maintenance.view', $map['maint_finding_approval_decided'] ?? null);
+    }
+
     /** Rejecting is always the way out, so a ticket can never be stranded waiting on nobody. */
     public function test_a_decided_finding_stops_blocking(): void
     {

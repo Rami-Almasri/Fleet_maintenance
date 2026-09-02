@@ -106,6 +106,17 @@ class NotificationScanner
         'garage_visit_frequency'      => 'maintenance.manage',
         'garage_downtime'             => 'maintenance.manage',
 
+        // ── Finding approval ────────────────────────────────────────────────────────────────────
+        // A finding the car's own data disagrees with, and the ticket frozen behind it. WITHOUT a
+        // mapping here the lookup below falls through to "open to everyone" — the exact fan-out the
+        // maint_test_interrupted comment above records. The ASK is the approvers' business only.
+        // The OUTCOME is deliberately wider: it is sent to whoever LOGGED the finding, who is an
+        // inspector / driver / supervisor and holds `maintenance.view` but not `maintenance.manage`
+        // — gating it on the approvers' permission would hide the answer from the person waiting on
+        // it. @see \App\Services\FindingApprovalService
+        'maint_finding_approval'         => 'maintenance.manage',
+        'maint_finding_approval_decided' => 'maintenance.view',
+
         // ── Warranty ────────────────────────────────────────────────────────────────────────────
         // All gated on `warranty.review` — the permission that DEFINES the warranty desk. Nobody
         // else needs to hear that a dealer is three days late answering a claim, and a manager holds

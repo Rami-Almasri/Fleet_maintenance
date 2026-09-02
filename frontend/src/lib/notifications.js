@@ -436,6 +436,25 @@ export const LANES = [
     types: ['maint_review_pending', 'maint_review_reminder'],
   },
   {
+    // A finding the car's own data disagrees with — an oil change on a car with most of its interval
+    // left, or a fault this car already had inside the window. Its own lane rather than a corner of
+    // Test Approvals, because the thing being approved is different in kind: Test Approvals decides
+    // whether to LOOK at a car, this decides whether work already logged on one is real. And unlike
+    // every other lane here, the ticket is FROZEN until it is answered — nothing else about that car
+    // moves, so a held finding sitting unnoticed in a shared lane stops a car indefinitely.
+    // @see backend App\Services\FindingApprovalService
+    key: 'finding_approvals',
+    group: 'control',
+    label: 'Held Findings',
+    icon: 'alert',
+    // Matches the gate on POST /maintenance-tickets/{ticket}/finding-approvals, so the lane is
+    // visible to exactly the people who can act on it.
+    permission: 'maintenance.manage',
+    blurb: 'Work logged that the car’s own data disagrees with — the ticket is frozen until you decide',
+    empty: 'No findings waiting on a decision',
+    types: ['maint_finding_approval'],
+  },
+  {
     key: 'test_interrupted',
     group: 'control',
     label: 'Test Interrupted',
@@ -480,6 +499,8 @@ export const TYPE_LABEL = {
   maint_invoice_missing: 'Invoice Not Entered',
   garage_visit_frequency: 'Going In Too Often',
   garage_downtime: 'Too Long In The Garage',
+  maint_finding_approval: 'Held — Needs Approval',
+  maint_finding_approval_decided: 'Your Finding Was Decided',
   maintenance_back_open: 'Return Reconciliation',
   booking_in_maintenance: 'Booking In Maintenance',
   booking_readiness: 'Booking Readiness',
