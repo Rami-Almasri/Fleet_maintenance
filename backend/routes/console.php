@@ -68,6 +68,26 @@ Schedule::command('import:vehicle-status')
     ->withoutOverlapping()
     ->runInBackground();
 
+// …and then the plate LETTER. `plate_code` is what turns a bare "81830" into "X 81830", and it is
+// the only thing that can tell two cars apart when they share plate digits — which is not rare here
+// and is what decides, for instance, which of two cars a spare key belongs to.
+//
+// WHY THIS ENTRY EXISTS. It was a one-off backfill nobody scheduled, so production ran for months
+// with plate_code NULL on every single vehicle: every plate rendered as bare digits, and anything
+// relying on the letter to disambiguate silently could not. A column that must track OM as plates
+// are reassigned cannot live in a command somebody has to remember.
+//
+// --live-only ON PURPOSE: the ongoing job is about keeping the CURRENT fleet correct. Retired cars
+// keep whatever code the historical backfill already gave them and are never touched again — the
+// scheduled sweep must not widen its reach into rows nobody is operating any more. Run the command
+// without the flag by hand when the history itself needs rebuilding.
+//
+// Runs after import:vehicle-status so the fleet's membership and statuses have settled first.
+Schedule::command('plate:sync-codes --live-only')
+    ->dailyAt('03:30')
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Insurance + Mulkiya, from the "F Insurance" tab — the source of truth for insurance_expiry
 // since 2026-07-23 (OfficeManagerSync::upsertMortgage writes only is_mortgaged now). This phase
 // lived ONLY inside `fleet:refresh`, which nothing schedules, so on any machine where nobody
