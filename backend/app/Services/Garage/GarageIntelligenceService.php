@@ -76,6 +76,7 @@ class GarageIntelligenceService
     public function __construct(
         private FleetUtilizationService $utilization,
         private NotificationScanner $notifier,
+        private GarageStayResolver $stays,
     ) {}
 
     public function enabled(): bool
@@ -101,9 +102,20 @@ class GarageIntelligenceService
         $windowDays = $this->windowDays();
         $from       = Carbon::today()->subDays($windowDays)->toDateString();
 
-        $w = $this->utilization->vehicleWindow($vehicleId, $from);
+        // EVERY place a garage movement is recorded — the Google Sheet workshop log, the website's
+        // own workflow tickets, and the OM contracts — resolved into distinct physical stays with the
+        // same stay never counted twice. Reading contracts alone was blind to 18 of the 126 cars with
+        // garage activity last month, one of which had made eight trips.
+        $resolved = $this->stays->resolve($vehicleId, $from);
 
-        $visits       = (int) $w['maintenance_visits'];
+        // The duration engine gets the log's CLOSED trips on top of the contracts, so shop time the
+        // contracts never knew about is charged — still merged, still with rental time subtracted.
+        // Open-ended log trips are deliberately absent: a departure nobody logged a return for is a
+        // real visit but an unknown duration, and running it to today is how a one-day oil change
+        // once invented 93 days of downtime.
+        $w = $this->utilization->vehicleWindow($vehicleId, $from, null, $resolved['closed_intervals']);
+
+        $visits       = (int) $resolved['visits'];
         $downSeconds  = (int) $w['maintenance_seconds'];
         $downtimeDays = $downSeconds / 86400;
 
@@ -137,8 +149,16 @@ class GarageIntelligenceService
             'visit_severity'      => $visitSeverity,
             'downtime_severity'   => $downtimeSeverity,
             'severity'            => GarageSeverity::max($visitSeverity, $downtimeSeverity),
+            // "In a garage right now" stays the CONTRACT's answer, per the standing ruling that only
+            // an OM maintenance contract parks a car — the log's unreturned rows are far too often an
+            // OUT whose return was never written down. The log's own opinion is carried beside it so
+            // a disagreement is visible rather than silently resolved.
             'currently_in_garage' => (bool) $w['currently_in_shop'],
-            'last_entry_at'       => $w['last_entry_at'],
+            'open_in_log'         => (bool) $resolved['in_garage_by_log'],
+            // The newest departure ANY source recorded — the log usually knows about a move days
+            // before the contract does.
+            'last_entry_at'       => $resolved['last_entry_at'] ?? $w['last_entry_at'],
+            'stay_sources'        => array_count_values(array_column($resolved['stays'], 'source')),
             'reasons'             => $this->reasons($visits, $visitSeverity, $downtimeDays, $downtimeSeverity, $downtimePct, (bool) $w['currently_in_shop']),
         ];
     }

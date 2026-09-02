@@ -227,7 +227,7 @@ class FleetUtilizationService
      *               downtime_pct:?float, currently_in_shop:bool, last_entry_at:?string,
      *               window:array{from:?string,to:string,lifetime:bool}}
      */
-    public function vehicleWindow(int $vehicleId, ?string $from = null, ?string $to = null): array
+    public function vehicleWindow(int $vehicleId, ?string $from = null, ?string $to = null, array $extraMaintenance = []): array
     {
         $today  = Carbon::today();
         $winEnd = $to ? Carbon::parse($to)->startOfDay() : $today->copy();
@@ -249,7 +249,15 @@ class FleetUtilizationService
 
         $ids            = [$vehicleId];
         $rentIntervals  = $this->rentalIntervals($ids, $winStart, $winEnd)[$vehicleId] ?? [];
-        $maintIntervals = $this->maintenanceIntervals($ids, $winStart, $winEnd)[$vehicleId] ?? [];
+        $contractStays  = $this->maintenanceIntervals($ids, $winStart, $winEnd)[$vehicleId] ?? [];
+
+        // Shop time the OM contracts do not know about — the workshop log's own closed OUT→IN cycles
+        // and the website's tickets, handed in by the caller. Merged into the SAME set the contracts
+        // form, so overlapping records of one physical stay still total the union and never the sum,
+        // and Rental is King still applies to every second of it. Empty by default: Fleet Utilization
+        // itself deliberately reports on contracts alone.
+        // @see \App\Services\Garage\GarageStayResolver
+        $maintIntervals = array_merge($contractStays, $extraMaintenance);
 
         // An OPEN maintenance contract (no in_date) is a car that is in the shop right now, and the
         // newest such start is when this stay began — the "last garage entry" the alert quotes.
@@ -304,7 +312,11 @@ class FleetUtilizationService
             'pending_service'     => false,
             'in_service_date'     => $inServiceDate,
             'window_seconds'      => $windowSec,
-            'maintenance_visits'  => self::countVisits($maintIntervals, $lo, $hi, $todayNum),
+            // Counted on the CONTRACTS only, never on the extras. `maintenance_visits` is the
+            // canonical one-contract-one-visit figure the rest of the fleet reports; widening the
+            // duration set must not quietly redefine it. A caller that wants departures counted from
+            // the log asks GarageStayResolver, which is the thing that knows what a departure is.
+            'maintenance_visits'  => self::countVisits($contractStays, $lo, $hi, $todayNum),
             'maintenance_seconds' => $maintSec,
             'rented_seconds'      => $rentedSec,
             'downtime_pct'        => $windowSec ? round($maintSec / $windowSec * 100, 1) : null,

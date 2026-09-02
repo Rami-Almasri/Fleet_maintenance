@@ -40,33 +40,39 @@ return [
     | Visit-frequency thresholds (visits inside the window)
     |--------------------------------------------------------------------------
     |
-    | MEASURED AGAINST THE LIVE FLEET — 178 cars, window ending 2026-09-02.
-    | (Measured on the LIVE fleet deliberately: the vehicles table also holds 261
-    | sold and 4 disposed cars whose windows are empty, and including them halves
-    | every percentage below and makes ordinary behaviour look like a tail.)
+    | RECALIBRATED 2026-09-02, when the engine started reading the Google Sheet
+    | workshop log and the website's tickets alongside the OM contracts. THE
+    | NUMBERS BELOW ARE NOT THE ORIGINALLY REQUESTED 3 / 5 / 7, AND THIS IS WHY:
     |
-    |   mean 1.27 visits · median 1 · 90th percentile 3 · observed maximum 5
-    |     >= 3 visits →  30 cars (16.9%)
-    |     >= 4 visits →   8 cars (4.5%)
-    |     >= 5 visits →   2 cars (1.1%)
-    |     >= 6 visits →   0 cars
-    |     >= 7 visits →   0 cars
+    | 3 / 5 / 7 was calibrated against contracts alone, which saw 108 of the 126
+    | cars that had garage activity and — because one contract can cover a dozen
+    | separate trips — under-counted the departures of the cars it did see. On the
+    | full picture, three garage visits in a month is the 41st percentile: it is
+    | what a perfectly ordinary car does. Shipping the old numbers on the new
+    | basis would have graded 73 of 178 cars (41%) as needing attention, which is
+    | not a warning, it is noise.
     |
-    | `warning` at 3 sits exactly on the 90th percentile and `high` at 5 on the
-    | top 1% — both are real, defensible bands.
+    | So the BANDS WERE MOVED TO THE POSITIONS THE ORIGINAL ONES OCCUPIED —
+    | roughly the 90th percentile, the top ~5%, and the top ~1%:
     |
-    | `critical` at 7 is UNREACHABLE on this fleet: no car has reached even 6 in a
-    | 30-day window, so the band exists as headroom and will never grade a car
-    | today. Kept at the requested default rather than silently retuned. Set
-    | GARAGE_INTEL_VISITS_CRITICAL=6 if a live critical band is wanted on this
-    | signal — that is the lowest value that is still above the observed maximum,
-    | so it stays a genuine outlier rather than re-labelling the existing `high`.
+    |   MEASURED, live fleet, 178 cars, all three sources, window to 2026-09-02:
+    |   mean 2.42 visits · median 2 · 90th percentile 6 · observed maximum 12
+    |     >=  4 visits →  50 cars (28.1%)
+    |     >=  5 visits →  35 cars (19.7%)
+    |     >=  6 visits →  19 cars (10.7%)   ← warning  (the 90th percentile)
+    |     >=  8 visits →   8 cars (4.5%)    ← high
+    |     >= 10 visits →   2 cars (1.1%)    ← critical (and now REACHABLE, which
+    |                                          7 never was on the old basis)
+    |
+    | To go back to the literal original numbers, set GARAGE_INTEL_VISITS_WARNING=3
+    | GARAGE_INTEL_VISITS_HIGH=5 GARAGE_INTEL_VISITS_CRITICAL=7 — no code changes
+    | needed. Expect roughly four in ten cars to sit at warning if you do.
     |
     */
     'visits' => [
-        'warning'  => (int) env('GARAGE_INTEL_VISITS_WARNING', 3),
-        'high'     => (int) env('GARAGE_INTEL_VISITS_HIGH', 5),
-        'critical' => (int) env('GARAGE_INTEL_VISITS_CRITICAL', 7),
+        'warning'  => (int) env('GARAGE_INTEL_VISITS_WARNING', 6),
+        'high'     => (int) env('GARAGE_INTEL_VISITS_HIGH', 8),
+        'critical' => (int) env('GARAGE_INTEL_VISITS_CRITICAL', 10),
     ],
 
     /*
@@ -74,16 +80,23 @@ return [
     | Downtime thresholds (true off-road shop DAYS inside the window)
     |--------------------------------------------------------------------------
     |
-    | MEASURED AGAINST THE LIVE FLEET (same 178 cars, same window):
+    | RECALIBRATED for the same reason as the visit ladder: the log contributes
+    | shop time the contracts never recorded, so every car's figure rose.
     |
-    |   mean 1.56 days · median 0.45 · 90th percentile 4.5 · maximum 30.3
-    |     >=  3 days → 24 cars (13.5%)
-    |     >=  7 days →  8 cars (4.5%)
-    |     >= 14 days →  2 cars (1.1%)
+    |   MEASURED, live fleet, 178 cars, all three sources, window to 2026-09-02:
+    |   mean 2.24 days · median 1.10 · 90th percentile 6.2 · maximum 30.3
+    |     >=  3 days → 48 cars (27.0%)   ← the old warning; far too wide now
+    |     >=  5 days → 22 cars (12.4%)   ← warning
+    |     >= 10 days →  6 cars (3.4%)    ← high
+    |     >= 14 days →  2 cars (1.1%)    ← critical (unchanged — it was already
+    |                                       in the right place)
     |
-    | 3 / 7 / 14 are well calibrated as shipped: each step is a real, shrinking
-    | tail and — unlike the visit ladder — the critical band is genuinely
-    | reachable. Left at the requested defaults, and no change is recommended.
+    | Only a DURATION with both ends recorded is counted. 9.8% of recent log trips
+    | have no logged return; those still count as a visit (the car certainly went)
+    | but contribute no time, because running an unreturned row to today is how a
+    | one-day oil change once invented 93 days of downtime.
+    |
+    | Revert with GARAGE_INTEL_DOWNTIME_WARNING=3 GARAGE_INTEL_DOWNTIME_HIGH=7.
     |
     | "Downtime" here is the canonical TRUE off-road figure: time under a
     | maintenance contract that is NOT also under a rental. Rental is King — a
@@ -91,8 +104,8 @@ return [
     |
     */
     'downtime_days' => [
-        'warning'  => (float) env('GARAGE_INTEL_DOWNTIME_WARNING', 3),
-        'high'     => (float) env('GARAGE_INTEL_DOWNTIME_HIGH', 7),
+        'warning'  => (float) env('GARAGE_INTEL_DOWNTIME_WARNING', 5),
+        'high'     => (float) env('GARAGE_INTEL_DOWNTIME_HIGH', 10),
         'critical' => (float) env('GARAGE_INTEL_DOWNTIME_CRITICAL', 14),
     ],
 

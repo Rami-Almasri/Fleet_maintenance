@@ -250,6 +250,138 @@ class GarageIntelligenceAlertTest extends FoundationTestCase
         $this->assertSame(0.0, $reading['downtime_days']);
     }
 
+    // ── Every source is read, and no stay is counted twice ─────────────────────────────────────
+
+    /** One Google-Sheet workshop row, no OM contract anywhere — the car must still be seen. */
+    private function sheetTrip(Vehicle $vehicle, int $startedDaysAgo, ?int $lengthDays, string $garage, string $origin = 'sheet'): \App\Models\Maintenance
+    {
+        $out = Carbon::today()->subDays($startedDaysAgo);
+
+        return \App\Models\Maintenance::create([
+            'vehicle_id'     => $vehicle->id,
+            'origin'         => $origin,
+            'garage'         => $garage,
+            'out_date'       => $out->toDateString(),
+            'actual_in_date' => $lengthDays === null ? null : $out->copy()->addDays($lengthDays)->toDateString(),
+            'event_status'   => $lengthDays === null ? 'OUT' : 'IN',
+        ]);
+    }
+
+    /**
+     * THE GAP THIS CLOSED. On the live fleet 17 cars had garage activity in the sheet and no OM
+     * contract at all — one of them had made eight trips and was completely invisible to the alert.
+     */
+    public function test_a_car_seen_only_in_the_google_sheet_is_still_counted(): void
+    {
+        $vehicle = $this->inServiceVehicle();
+        $this->sheetTrip($vehicle, startedDaysAgo: 20, lengthDays: 6, garage: 'CLASCO');
+
+        $reading = $this->intel()->read($vehicle->id);
+
+        $this->assertSame(1, $reading['visits'], 'a sheet-only trip is a real garage visit');
+        $this->assertEqualsWithDelta(6.0, $reading['downtime_days'], 1.0);
+        $this->assertSame(['sheet' => 1], $reading['stay_sources']);
+    }
+
+    /** …and one seen only as a website workflow ticket. */
+    public function test_a_car_seen_only_as_a_website_ticket_is_still_counted(): void
+    {
+        $vehicle = $this->inServiceVehicle();
+        $this->sheetTrip($vehicle, startedDaysAgo: 10, lengthDays: 3, garage: 'AL Qattan', origin: 'manual');
+
+        $reading = $this->intel()->read($vehicle->id);
+
+        $this->assertSame(1, $reading['visits']);
+        $this->assertSame(['ticket' => 1], $reading['stay_sources']);
+    }
+
+    /**
+     * THE DEDUP RULE. The same physical stay is usually written down twice — once as a contract, once
+     * as a log trip. It must count ONCE. The contract speaks only where the log is silent.
+     */
+    public function test_a_stay_recorded_in_both_the_sheet_and_a_contract_counts_once(): void
+    {
+        $vehicle = $this->inServiceVehicle();
+        $this->stay($vehicle, startedDaysAgo: 12, lengthDays: 4);                       // OM contract
+        $this->sheetTrip($vehicle, startedDaysAgo: 12, lengthDays: 4, garage: 'CLASCO'); // same trip, logged
+
+        $this->assertSame(1, $this->intel()->read($vehicle->id)['visits']);
+    }
+
+    /**
+     * …and the reverse: one long contract that the log shows was really several separate trips to
+     * several garages counts the TRIPS, because those are the times the car physically went in.
+     * Vehicle 36047 is the live example — one contract, ten garages.
+     */
+    public function test_several_trips_inside_one_long_contract_count_as_several_visits(): void
+    {
+        $vehicle = $this->inServiceVehicle();
+        $this->stay($vehicle, startedDaysAgo: 25, lengthDays: 20);   // one long accounting record
+        foreach ([['CLASCO', 24], ['FUTURE TYRES', 18], ['Adel Joseph', 10]] as [$garage, $ago]) {
+            $this->sheetTrip($vehicle, startedDaysAgo: $ago, lengthDays: 1, garage: $garage);
+        }
+
+        $reading = $this->intel()->read($vehicle->id);
+
+        $this->assertSame(3, $reading['visits'], 'three real departures, not one accounting record');
+        $this->assertSame(['sheet' => 3], $reading['stay_sources'], 'the contract is silent where the log spoke');
+    }
+
+    /** Two garages on ONE day is two trips — the fleet really does do this. */
+    public function test_two_garages_on_the_same_day_are_two_visits(): void
+    {
+        $vehicle = $this->inServiceVehicle();
+        $this->sheetTrip($vehicle, startedDaysAgo: 8, lengthDays: 0, garage: 'CLASCO');
+        $this->sheetTrip($vehicle, startedDaysAgo: 8, lengthDays: 0, garage: 'AlMamlakah');
+
+        $this->assertSame(2, $this->intel()->read($vehicle->id)['visits']);
+    }
+
+    /** Several log rows for the SAME day and garage are one trip — that is the four-jobs rule again. */
+    public function test_many_log_rows_for_one_day_and_garage_are_one_visit(): void
+    {
+        $vehicle = $this->inServiceVehicle();
+        foreach (['Oil change', 'Brake repair', 'Electrical'] as $job) {
+            $m = $this->sheetTrip($vehicle, startedDaysAgo: 9, lengthDays: 2, garage: 'CLASCO');
+            $m->forceFill(['service_main' => $job])->save();
+        }
+
+        $this->assertSame(1, $this->intel()->read($vehicle->id)['visits']);
+    }
+
+    /** A road test with no garage is not a trip to a garage. */
+    public function test_a_road_test_row_is_not_a_garage_visit(): void
+    {
+        $vehicle = $this->inServiceVehicle();
+        \App\Models\Maintenance::create([
+            'vehicle_id'   => $vehicle->id,
+            'origin'       => 'sheet',
+            'garage'       => null,
+            'out_date'     => Carbon::today()->subDays(5)->toDateString(),
+            'event_status' => 'Test',
+        ]);
+
+        $this->assertSame(0, $this->intel()->read($vehicle->id)['visits']);
+    }
+
+    /**
+     * A log trip whose return was never written down is a REAL visit but an UNKNOWN duration. Running
+     * it to today is exactly how a one-day oil change once invented 93 days of downtime, so it must
+     * contribute the departure and no time at all.
+     */
+    public function test_an_unreturned_log_trip_counts_as_a_visit_but_adds_no_downtime(): void
+    {
+        $vehicle = $this->inServiceVehicle();
+        $this->sheetTrip($vehicle, startedDaysAgo: 60, lengthDays: null, garage: 'CLASCO');
+
+        $reading = $this->intel()->read($vehicle->id);
+
+        $this->assertSame(1, $reading['visits'], 'the car definitely went');
+        $this->assertSame(0.0, $reading['downtime_days'], 'but nobody knows for how long');
+        $this->assertTrue($reading['open_in_log']);
+        $this->assertFalse($reading['currently_in_garage'], 'only a contract may park a car');
+    }
+
     // ── Escalation and spam ────────────────────────────────────────────────────────────────────
 
     public function test_crossing_into_warning_alerts_the_admin_once(): void

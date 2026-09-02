@@ -211,6 +211,18 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
               {tf('vehicleProfile.garage.lastEntry', 'Last garage entry')}: {fmtDate(garage.last_entry_at)}
             </p>
           )}
+
+          {/* DATA ORIGIN — three systems record a garage movement and none of them sees all of them,
+              so the count names the records it was actually built from rather than appearing from
+              nowhere. Absent when the car has no stays at all. */}
+          {!!garage.sources && Object.keys(garage.sources).length > 0 && (
+            <p className="mt-1 text-xs text-slate-400">
+              {tf('vehicleProfile.garage.origin', 'Counted from')}:{' '}
+              {Object.entries(garage.sources)
+                .map(([src, n]) => `${n} × ${tf(`vehicleProfile.garage.source.${src}`, src)}`)
+                .join(' · ')}
+            </p>
+          )}
         </div>
       </div>
       )}

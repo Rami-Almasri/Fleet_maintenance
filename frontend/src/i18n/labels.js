@@ -1259,6 +1259,13 @@ const en = {
       inGarageNow: 'In a garage now',
       lastEntry: 'Last garage entry',
       why: 'Why',
+      origin: 'Counted from',
+      // The three places a garage movement gets written down.
+      source: {
+        sheet: 'workshop log',
+        ticket: 'workflow ticket',
+        contract: 'maintenance contract',
+      },
       settled: 'Nothing unusual — this car is going in about as often, and for about as long, as the fleet expects.',
       level: {
         normal: 'Normal',
@@ -6102,6 +6109,12 @@ const ar = {
       inGarageNow: 'في الورشة الآن',
       lastEntry: 'آخر دخول إلى الورشة',
       why: 'لماذا',
+      origin: 'محسوبة من',
+      source: {
+        sheet: 'سجل الورشة',
+        ticket: 'تذكرة صيانة',
+        contract: 'عقد صيانة',
+      },
       settled: 'لا شيء غير معتاد — تدخل هذه السيارة الورشة بالوتيرة والمدة المتوقّعتين في الأسطول.',
       level: {
         normal: 'طبيعي',

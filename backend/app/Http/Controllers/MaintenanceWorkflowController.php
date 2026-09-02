@@ -1297,7 +1297,31 @@ class MaintenanceWorkflowController extends Controller
             'last_entry_at'       => optional($state->last_entry_at)->toIso8601String(),
             'reasons'             => (array) ($state->reasons ?: []),
             'evaluated_at'        => optional($state->evaluated_at)->toIso8601String(),
+            // DATA ORIGIN. Three systems record a garage movement and no one of them sees all of
+            // them, so the panel names which ones this car's count actually came from rather than
+            // presenting a number with no provenance. @see [[traceability-visibility-requirement]]
+            'sources'             => $this->garageStaySources($vehicle),
         ];
+    }
+
+    /**
+     * Which records this car's garage count was built from — `sheet` (the Google Sheet workshop log),
+     * `ticket` (a workflow ticket raised in this app) and `contract` (an OM type-'U' maintenance
+     * contract, used only where the log said nothing).
+     *
+     * @return array<string,int>
+     */
+    private function garageStaySources(Vehicle $vehicle): array
+    {
+        $intel = app(\App\Services\Garage\GarageIntelligenceService::class);
+
+        try {
+            return (array) ($intel->read($vehicle->id)['stay_sources'] ?? []);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return [];
+        }
     }
 
     /**
