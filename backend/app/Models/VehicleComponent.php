@@ -162,6 +162,11 @@ class VehicleComponent extends Model
     protected $fillable = [
         'component_catalog_id',
         'serial_no', 'part_number', 'brand', 'model', 'label', 'quantity', 'position',
+        // WHAT the part is — 12V 60Ah, right positive. Fillable and freely editable: unlike
+        // vehicle_id this is a description of the object, not a claim about the fleet's state, and
+        // correcting a mistyped voltage should not require a state-machine transition.
+        // @see \App\Support\PartSpecs
+        'specs',
         'installed_at', 'installed_odometer', 'installed_by', 'installed_by_name',
         'technician_name', 'installer_vendor_id', 'supplier_vendor_id',
         'purchase_cost', 'currency', 'warranty_months',
@@ -175,6 +180,7 @@ class VehicleComponent extends Model
 
     protected $casts = [
         'quantity'           => 'decimal:2',
+        'specs'              => 'array',
         'installed_at'       => 'datetime',
         'installed_odometer' => 'integer',
         'purchase_cost'      => 'decimal:2',
@@ -307,6 +313,25 @@ class VehicleComponent extends Model
         return $this->hasMany(ComponentEvent::class, 'vehicle_component_id');
     }
 
+    /**
+     * This PART's own promises, which are not the car's.
+     *
+     * The distinction is the whole reason component-level warranty exists as a separate thing: a BMW
+     * whose 3-year vehicle warranty ran out last spring may still have a battery fitted in January
+     * under its own 12-month supplier cover. Ask only the car and you buy a battery somebody else
+     * owed you; ask only the part and you miss everything the manufacturer still covers. The engine
+     * asks both — see WarrantyCoverageEngine.
+     *
+     * Note `warranty_months` / `warranty_until` also exist as columns on this row. Those are the OLD
+     * shape — a derived date with no counterparty, no reference number and no claim history — kept
+     * because history was written into them. They are a hint that cover may exist; these rows are the
+     * cover itself, and they are what the engine trusts.
+     */
+    public function warranties(): HasMany
+    {
+        return $this->hasMany(Warranty::class, 'vehicle_component_id');
+    }
+
     public function serviceRecords(): HasMany
     {
         return $this->hasMany(ServiceRecord::class, 'related_component_id');
@@ -399,5 +424,14 @@ class VehicleComponent extends Model
     public function isRemoved(): bool
     {
         return $this->removed_at !== null;
+    }
+
+    /**
+     * The one-line spec — "12V · 60Ah". Empty string when nothing was recorded, so a caller can
+     * render it inline without producing a stray separator on an unspecced part.
+     */
+    public function getSpecSummaryAttribute(): string
+    {
+        return \App\Support\PartSpecs::summary($this->catalog, $this->specs);
     }
 }

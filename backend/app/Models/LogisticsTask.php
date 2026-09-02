@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 
 /**
  * A Logistics Dispatch task: an order to MOVE a vehicle, now run as a CLAIM-based, driver-executed
@@ -31,7 +32,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * Self-contained snapshots (plate / label / people names) keep a task meaningful after a re-sync or a
  * rename; vehicle / user ids stay loose (indexed, no FK), mirroring maintenance_swaps.
  */
-class LogisticsTask extends Model
+class LogisticsTask extends Model implements \App\Contracts\FinancialEventSource
 {
     // Canonical claim lifecycle (the phases the board steps through).
     public const STATUS_DISPATCHED = 'dispatched';
@@ -125,6 +126,10 @@ class LogisticsTask extends Model
         'returned_at', 'returned_lat', 'returned_lng', 'returned_accuracy',
         // "Where is the car?" ping/reply
         'last_status', 'last_status_at', 'last_status_by', 'last_pinged_at',
+        // The driver's fare for this journey — see the financial-event section at the bottom.
+        'taxi_fare', 'taxi_currency', 'taxi_date', 'taxi_leg', 'taxi_from', 'taxi_to',
+        'taxi_receipt_disk', 'taxi_receipt_key', 'taxi_reference',
+        'taxi_recorded_by', 'taxi_recorded_at',
     ];
 
     protected $casts = [
@@ -139,6 +144,9 @@ class LogisticsTask extends Model
         'returned_accuracy' => 'float',
         'last_status_at'    => 'datetime',
         'last_pinged_at'    => 'datetime',
+        'taxi_fare'         => 'decimal:2',
+        'taxi_date'         => 'date',
+        'taxi_recorded_at'  => 'datetime',
     ];
 
     /** Only tasks still in effect — the car is out on a move. completed_at is the canonical flag. */
@@ -277,5 +285,102 @@ class LogisticsTask extends Model
     public function events(): HasMany
     {
         return $this->hasMany(LogisticsTaskEvent::class, 'logistics_task_id');
+    }
+
+    // ── Financial event source: THE DRIVER'S TAXI FARE ─────────────────────────────────────────────
+    //
+    // A movement task as a FinancialEventSource means the FARE the driver paid to make this journey
+    // possible — getting to the car, or getting back after dropping it off. It never means anything
+    // about the vehicle itself; the car's own costs belong to its maintenance ticket and its bills.
+    //
+    // Recording it here rather than on a standalone expense form is the whole point: the fare is
+    // attached to the journey that caused it, by the person who made it, and inherits that journey's
+    // audit trail. See the add_taxi_fare_to_logistics_tasks migration.
+
+    /** Which leg the fare paid for. Traceability — the first question asked when a fare looks wrong. */
+    public const TAXI_LEG_OUTBOUND = 'outbound';
+    public const TAXI_LEG_RETURN   = 'return';
+    public const TAXI_LEGS = [self::TAXI_LEG_OUTBOUND, self::TAXI_LEG_RETURN];
+
+    public function financialExpenseType(): ?string
+    {
+        return round((float) $this->taxi_fare, 2) > 0
+            ? \App\Support\ExpenseType::TAXI
+            : null;
+    }
+
+    public function financialAmount(): float
+    {
+        return round((float) $this->taxi_fare, 2);
+    }
+
+    public function financialCurrency(): string
+    {
+        return $this->taxi_currency ?: 'AED';
+    }
+
+    /**
+     * The car whose movement occasioned the fare.
+     *
+     * Reported even though ExpenseType::TAXI is not vehicle-bound, so the analytic account still rides
+     * along where we know it — the cost of moving THIS car stays visible in Odoo. The validator does not
+     * demand it, which is what keeps a fare with no car from blocking forever.
+     */
+    public function financialVehicleId(): ?int
+    {
+        return $this->vehicle_id;
+    }
+
+    public function financialMaintenanceId(): ?int
+    {
+        return $this->maintenance_id;
+    }
+
+    /** A taxi fare is an employee claim — there is no vendor to bill, and none is required. */
+    public function financialVendorId(): ?int
+    {
+        return null;
+    }
+
+    public function financialInvoiceNumber(): ?string
+    {
+        $ref = trim((string) $this->taxi_reference);
+
+        return $ref === '' ? null : $ref;
+    }
+
+    public function financialInvoiceDate(): ?string
+    {
+        $date = $this->taxi_date ?: $this->taxi_recorded_at;
+
+        return $date ? Carbon::parse($date)->toDateString() : null;
+    }
+
+    /** @return array{disk:?string, key:?string}|null */
+    public function financialAttachment(): ?array
+    {
+        return $this->taxi_receipt_key
+            ? ['disk' => $this->taxi_receipt_disk, 'key' => $this->taxi_receipt_key]
+            : null;
+    }
+
+    public function financialDescription(): string
+    {
+        $route = trim((string) $this->taxi_from) !== '' || trim((string) $this->taxi_to) !== ''
+            ? trim($this->taxi_from . ' → ' . $this->taxi_to, ' →')
+            : null;
+
+        return trim(implode(' — ', array_filter([
+            'Taxi' . ($this->taxi_leg ? ' (' . $this->taxi_leg . ')' : ''),
+            $route,
+            $this->assigned_to_name ?: null,
+            $this->vehicle_plate ? 'for ' . $this->vehicle_plate : null,
+        ])));
+    }
+
+    /** A fare, not a catalogue item — one service line. */
+    public function financialLines(): array
+    {
+        return [];
     }
 }

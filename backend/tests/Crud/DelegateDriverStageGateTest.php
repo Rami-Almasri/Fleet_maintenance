@@ -123,19 +123,39 @@ class DelegateDriverStageGateTest extends CrudTestCase
     }
 
     /**
-     * A SUPERVISOR holds maintenance.logistics so they can move a car themselves — that does not make
-     * them assignable. The job goes to the driver pool, or the supervisor takes it via "Pick up".
+     * A supervisor IS assignable — as the fallback when no driver is free.
+     *
+     * This test previously asserted the opposite. MaintenanceWorkflowController::assignableDrivers now
+     * queries `role(['logistics', SUPERVISOR_ROLE])` and says why in its own comment: drivers are the
+     * default answer and supervisors are the fallback, so a car is never stuck because the pool is
+     * empty. The pool being WIDER than the driver roster is the deliberate change; what stays true is
+     * that it is a ROLE pool, which is what the manager assertion below still pins.
      */
-    public function test_a_supervisor_is_not_an_assignable_driver(): void
+    public function test_a_supervisor_can_be_assigned_as_the_fallback_driver(): void
     {
         $ticket = $this->ticketAt(Maintenance::WF_AWAITING_DISPATCH);
 
         $supervisor = $this->makeUser('Supervisor Waleed');
         $supervisor->assignRole('supervisor');
-        $this->assertTrue($supervisor->can('maintenance.logistics'), 'guard: a supervisor does carry the permission');
 
         $res = $this->postJson("/api/maintenance-tickets/{$ticket->id}/delegate", [
             'driver_id' => $supervisor->id,
+        ]);
+
+        $res->assertSuccessful();
+        $this->assertSame($supervisor->id, $ticket->refresh()->assigned_driver_id);
+    }
+
+    /** Somebody in neither pool is still refused — the pool is a ROLE, not "anyone with the permission". */
+    public function test_a_workshop_manager_is_not_an_assignable_driver(): void
+    {
+        $ticket = $this->ticketAt(Maintenance::WF_AWAITING_DISPATCH);
+
+        $manager = $this->makeUser('Workshop Lin');
+        $manager->assignRole('maintenance');
+
+        $res = $this->postJson("/api/maintenance-tickets/{$ticket->id}/delegate", [
+            'driver_id' => $manager->id,
         ]);
 
         $res->assertStatus(422);
@@ -156,8 +176,8 @@ class DelegateDriverStageGateTest extends CrudTestCase
         $this->assertNull($ticket->refresh()->assigned_driver_id);
     }
 
-    /** The picker lists the driver pool only — no supervisors, no managers, and never yourself. */
-    public function test_the_picker_lists_only_other_drivers(): void
+    /** The picker lists the two role pools — drivers first, supervisors as fallback, never yourself. */
+    public function test_the_picker_lists_drivers_then_supervisors_and_never_yourself(): void
     {
         $driver     = $this->logisticsDriver('Driver Abdullah');
         $supervisor = $this->makeUser('Supervisor Waleed');
@@ -170,9 +190,14 @@ class DelegateDriverStageGateTest extends CrudTestCase
             ->pluck('id')->all();
 
         $this->assertContains($driver->id, $ids);
-        $this->assertNotContains($supervisor->id, $ids);
+        // The supervisor is offered as the FALLBACK — see the fallback test above.
+        $this->assertContains($supervisor->id, $ids);
+        // A workshop manager is in neither pool, and nobody is ever offered themselves.
         $this->assertNotContains($manager->id, $ids);
         $this->assertNotContains($this->admin->id, $ids);
+
+        // Drivers lead the list; the supervisor is the answer of last resort, not the first suggestion.
+        $this->assertSame($driver->id, $ids[0], 'a real driver must be offered before the fallback');
     }
 
     /** A suspended driver is off the roster and must not be offered. */

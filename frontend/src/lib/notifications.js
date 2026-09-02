@@ -252,6 +252,23 @@ export const INBOX_CATEGORIES = [
     empty: 'No test-drive notifications',
     types: ['maint_review_pending', 'maint_review_reminder', 'maint_review_approved', 'maint_review_rejected', 'maint_review_withdrawn', 'maint_inspection_requested', 'maint_ready_reinspect', 'maint_reinspection_failed'],
   },
+  {
+    // MUST mirror NotificationCategories::MAP['warranty'] on the backend — the server stamps the
+    // group, this list is the fallback, and a type missing from both lands in `other`.
+    key: 'warranty',
+    label: 'Warranty',
+    icon: 'shield',
+    blurb: 'Cover about to run out, coverage decisions somebody owes, and dealers who have gone quiet',
+    empty: 'No warranty notifications',
+    types: [
+      'warranty_coverage_review', 'warranty_case_opened', 'warranty_not_covered',
+      'warranty_expiring', 'warranty_review_overdue', 'warranty_provider_overdue',
+      'warranty_case_stale', 'warranty_recovery_recorded',
+      'warranty_case_authorization_requested', 'warranty_case_authorized',
+      'warranty_case_sent_to_provider', 'warranty_case_repair_in_progress',
+      'warranty_case_repair_completed', 'warranty_case_claim_submitted',
+    ],
+  },
 ];
 
 const TYPE_TO_INBOX = INBOX_CATEGORIES.reduce((acc, c) => {

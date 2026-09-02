@@ -29,6 +29,15 @@ trait IsFinancialDocument
     abstract public function documentDate(): ?string;
 
     /**
+     * The permission that lets someone KEY and unkey this document's paper — its own write routes' gate.
+     *
+     * Not the same answer for both kinds, which is why the document has to give it rather than the shared
+     * status map assuming it: a supplier bill is written by whoever buys the parts, a garage bill by
+     * whoever runs maintenance. Moving either through its lifecycle is maintenance.manage for both.
+     */
+    abstract public function paperPermission(): string;
+
+    /**
      * The status to SHOW: the stored decision, refined by what the money actually says.
      *
      * Refunds are checked before payment because a refunded invoice is the more specific fact — an invoice
@@ -132,12 +141,31 @@ trait IsFinancialDocument
         return in_array($this->status, [Status::DRAFT, Status::PENDING], true);
     }
 
-    /** The lifecycle block every API response shares, so a document reads the same on every screen. */
-    public function statusPayload(): array
+    /**
+     * The lifecycle block every API response shares, so a document reads the same on every screen.
+     *
+     * `actions` is the part a UI should render: the moves this document may be offered RIGHT NOW, for
+     * THIS user, already filtered by state, by permission and by editability, with one of them marked
+     * primary. It is computed here so no screen invents its own rules — and it is strictly narrower than
+     * `allowed_transitions`, which stays in the payload because it is the raw machine and a debugging
+     * screen or an integration has a fair claim on seeing it.
+     */
+    public function statusPayload(?\App\Models\User $for = null): array
     {
         $status = $this->documentStatus();
+        $user   = $for ?: auth()->user();
 
         return [
+            'actions' => Status::actionsFor(
+                $status,
+                $this->status,
+                $this->isEditable(),
+                // No authenticated user can do nothing — the honest answer for an unauthenticated read,
+                // and it makes the action list absent rather than wrong.
+                fn (string $perm) => (bool) $user?->can($perm),
+                $this->paperPermission(),
+            ),
+        ] + [
             'status'        => $status,
             'status_label'  => Status::label($status),
             'status_tone'   => Status::tone($status),

@@ -8,6 +8,7 @@ import Badge from '../ui/Badge';
 import Icon from '../ui/Icon';
 import { Skeleton } from '../ui/Skeleton';
 import FindingsList from './FindingsList';
+import FindingApprovalPanel from './FindingApprovalPanel';
 import WhyThisGarage from './WhyThisGarage';
 import RepairQualityCheck from './RepairQualityCheck';
 import RequiredPartsPanel from './RequiredPartsPanel';
@@ -17,6 +18,7 @@ import CostJourney from './CostJourney';
 import FinancialStory from './FinancialStory';
 import ProcurementLifecycle from './ProcurementLifecycle';
 import InvoicesPanel from './InvoicesPanel';
+import FinancialPanel from '../maintenance/FinancialPanel';
 import TicketParts from './TicketParts';
 import SuggestedChecks from './SuggestedChecks';
 import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased, isReleaseCancellable, releaseStage, canOrderParts, ORIGIN_LABEL } from './meta';
@@ -574,6 +576,18 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
   const alerts = useMemo(() => {
     if (!tk) return [];
     const out = [];
+    // The hardest blocker on the ticket goes first: while a finding is held, NOTHING else about this
+    // ticket can happen — not dispatch, not repair, not closing it. Red, not amber, because unlike an
+    // unpaid invoice this one is a full stop rather than a debt.
+    const held = tk.pending_finding_approvals || [];
+    if (held.length) {
+      out.push({
+        tone: 'red',
+        text: tf('workflow.detail.deck.findingHeld', '{list} — waiting for an approval before this ticket can move', {
+          list: held.map((h) => h.finding).join(', '),
+        }),
+      });
+    }
     if (allowed && custodyLocked) out.push({ tone: 'amber', text: custodyHint });
     if (readyBlocked) out.push({ tone: 'amber', text: readyHint });
     if (money?.blockers > 0) {
@@ -852,6 +866,17 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
           </div>
 
           <div className="mt-4 space-y-4">
+            {/* THE HOLD, ABOVE EVERY TAB. A finding the car's own data disagrees with stops the whole
+                ticket, so it is not a thing to find on the Overview tab — while it is on screen, none
+                of the other tabs describe anything that can happen next. Renders for everyone (a
+                technician must see why his ticket is frozen and who is holding it); only
+                maintenance.manage gets the buttons. See [[FindingApprovalService]]. */}
+            <FindingApprovalPanel
+              ticketId={ticketId}
+              pending={tk.pending_finding_approvals || []}
+              onDecided={load}
+            />
+
             {/* ══ OVERVIEW — what is wrong with this car and what will be done about it ══ */}
             {tab === 'overview' && (
               <>
@@ -1100,6 +1125,19 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                     />
                   </Section>
                 )}
+
+                {/* Odoo — what the ACCOUNTING system knows about this ticket's money, sitting directly
+                    under the bills it came from. Deliberately here rather than on a Finance page: a
+                    person looking at a repair must be able to see that its cost is blocked on an
+                    unmapped part without leaving the repair (§30). Renders nothing for a user without
+                    financial.view, and nothing when no obligation has been raised yet. */}
+                <Section
+                  title={tf('workflow.financial.title', 'Odoo financial status')}
+                  icon={<Icon.Invoice className="h-3.5 w-3.5 text-slate-400" />}
+                  defaultOpen={false}
+                >
+                  <FinancialPanel maintenanceId={ticketId} onChanged={load} />
+                </Section>
               </>
             )}
 

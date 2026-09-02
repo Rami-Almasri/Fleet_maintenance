@@ -147,6 +147,16 @@ Schedule::command('mileage:scan --apply')
     ->dailyAt('03:45')
     ->withoutOverlapping();
 
+// Garage Intelligence rolling-window safety net. The live evaluation hangs off every maintenance
+// transition (OperationsService::reconcileVehicleOperationalStatus) and covers everything that HAPPENS;
+// this covers what TIME does — a car still in a garage climbing a downtime band by the hour, and old
+// visits ageing out of the 30-day window and letting a car settle back down. Runs after om:sync (03:00)
+// and mileage:scan (03:45) so it reads the day's freshest contracts. Escalation-only, so a nightly run
+// on a fleet whose grades have not moved raises nothing at all.
+Schedule::command('garage:intelligence-sweep')
+    ->dailyAt('03:55')
+    ->withoutOverlapping();
+
 // Missing-Invoice SLA: flag every ticket back in service whose invoice has been outstanding beyond the
 // 3-day window, alerting the Supervisor + controllers. Runs each morning so the reminder lands before work.
 Schedule::command('invoices:scan-overdue')
@@ -309,4 +319,28 @@ Schedule::command('intelligence:rebuild-recurrence')
 // works whether a human or a monitor is watching.
 Schedule::command('intelligence:rebuild-health --alert')
     ->dailyAt('06:00')
+    ->withoutOverlapping();
+
+// ── Warranty: look at the car while somebody else is still paying ───────────────────────────────
+//
+// Raises the pre-expiry inspection obligation on every vehicle whose cover is about to run out — on
+// MONTHS or on KILOMETRES, whichever binds first. A defect found the week before cover ends is the
+// manufacturer's bill; the same defect the week after is ours, and nothing about the car changed in
+// between. That asymmetry is the whole reason this entry exists.
+//
+// 07:20 — before the working day, so the obligation is on the board when the inspector opens it, and
+// after the nightly odometer heal at 03:45 so the DISTANCE leg is judged against today's mileage
+// rather than yesterday's. Getting that order wrong would silently miss exactly the hard-driven cars
+// this is for.
+//
+// Idempotent per warranty (the check requirement's cycle key IS the warranty id), so re-running it by
+// hand — or the scheduler firing twice — cannot produce a second obligation. ⚠ The scheduler is
+// unverified on the server ([[scheduler-audit]]); this command is designed to be run manually.
+//
+// NOTE: warranty NOTIFICATIONS are not here. Cover expiring, unanswered coverage reviews, silent
+// dealers and stale cases are detected by WarrantyAlertService and merged into `notifications:scan`
+// (every ten minutes, plus the 08:00 sweep), so they inherit its dedup keys, permission gate and
+// auto-resolve. One notification pipeline, not two.
+Schedule::command('warranty:scan')
+    ->dailyAt('07:20')
     ->withoutOverlapping();

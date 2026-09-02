@@ -54,6 +54,11 @@ class ComponentCatalogSeeder extends Seeder
                 // and is search-only. Never a fault vocabulary either way; see the config header.
                 'aliases'          => $entry['aliases'] ?? null,
                 'identity_aliases' => $entry['identity_aliases'] ?? null,
+                // WHICH SPECS this part type carries — keys into config/part_specs.php, the shared
+                // field dictionary. Synced from config like the rest of the description: adding
+                // 'cca' to batteries in a release should reach every install, and the moment
+                // someone curates a part type in the app the whole row stops being synced anyway.
+                'spec_fields'      => $entry['spec_fields'] ?? null,
                 'category_key' => $entry['category_key'],
                 // The action-vocabulary join (see the add_action_target migration). Synced from
                 // config like every other descriptive field, so the mapping lives beside the

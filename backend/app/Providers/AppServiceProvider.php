@@ -9,6 +9,7 @@ use App\Services\Intelligence\Capabilities\ComebackCapability;
 use App\Services\Intelligence\CapabilityPolicy;
 use App\Services\Intelligence\DecisionEngine;
 use App\Services\Intelligence\PolicyRegistry;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 
@@ -112,5 +113,26 @@ class AppServiceProvider extends ServiceProvider
         Gate::before(function ($user, $ability) {
             return $user->hasAnyRole(['super-admin', 'admin']) ? true : null;
         });
+
+        // Stable aliases for the polymorphic keys the Odoo financial layer stores. Without this, a
+        // class name is written into financial_events.source_type and odoo_mappings.mappable_type,
+        // and moving or renaming a model silently orphans every financial record pointing at it —
+        // including ones already posted to the accounting system. The alias is data; the class is not.
+        //
+        // Deliberately NOT enforceMorphMap(): that would demand an alias for every morph in the app,
+        // and the ones that predate this map store their own conventions.
+        Relation::morphMap([
+            'maintenance'          => \App\Models\Maintenance::class,
+            'maintenance_invoice'  => \App\Models\MaintenanceInvoice::class,
+            'maintenance_line'     => \App\Models\MaintenanceLineItem::class,
+            'vehicle'              => \App\Models\Vehicle::class,
+            'vehicle_registration' => \App\Models\VehicleRegistration::class,
+            'component_catalog'    => \App\Models\ComponentCatalog::class,
+            'vendor'               => \App\Models\Vendor::class,
+            // The remaining financial-event producers — fuel, car wash and the driver's fare.
+            'fuel_fill'            => \App\Models\FuelFill::class,
+            'vehicle_wash_job'     => \App\Models\VehicleWashJob::class,
+            'logistics_task'       => \App\Models\LogisticsTask::class,
+        ]);
     }
 }

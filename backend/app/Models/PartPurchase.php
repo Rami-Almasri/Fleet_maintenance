@@ -22,7 +22,24 @@ class PartPurchase extends Model
 
     public const SOURCE_GARAGE   = 'garage';
     public const SOURCE_SUPPLIER = 'supplier';
-    public const PURCHASE_SOURCES = [self::SOURCE_GARAGE, self::SOURCE_SUPPLIER];
+    /**
+     * Taken off our OWN shelf — no money moved today, because it moved when the part was bought into
+     * the storehouse. The row still exists and still carries a price (the shelf's average cost), so
+     * the part travels the same install → line item → ticket chain as any other; what changes is
+     * only where it came from. See {@see \App\Services\StoreService}.
+     */
+    public const SOURCE_STORE    = 'store';
+    public const PURCHASE_SOURCES = [self::SOURCE_GARAGE, self::SOURCE_SUPPLIER, self::SOURCE_STORE];
+
+    /**
+     * The sources a human may pick in the "record a purchase" form.
+     *
+     * `store` is deliberately absent. A store-sourced purchase is not something anyone types — it is
+     * written by StoreService as the record of a unit LEAVING the shelf, in the same transaction
+     * that decrements it. Offering it here would let someone book a store purchase that no stock
+     * movement stands behind, and the shelf would quietly over-count from then on.
+     */
+    public const DIRECT_PURCHASE_SOURCES = [self::SOURCE_GARAGE, self::SOURCE_SUPPLIER];
 
     public const RESULT_PENDING = 'pending';
     public const RESULT_SUCCESS = 'success';
@@ -34,7 +51,14 @@ class PartPurchase extends Model
         // Phase 2 (blueprint §3d): the awarded RFQ line + supplier quote this PO fulfils, + a human PO ref.
         'rfq_line_id', 'supplier_quote_id', 'po_number',
         'vehicle_id', 'maintenance_id', 'maintenance_task_id',
+        // The GARAGE bill this part was billed on, for a purchase_source=garage row. Held directly
+        // rather than reached through maintenance_line_item_id, because an invoice edit deletes and
+        // recreates its lines — see the migration that added this column.
+        'maintenance_invoice_id',
         'part_name', 'part_number', 'category_key', 'part_class',
+        // WHICH SIZE was bought — the fact that decides whether the delivered part fits, and the
+        // one an invoice line has never carried. @see \App\Support\PartSpecs
+        'specs',
         // WHICH part this is, as opposed to what it was called. See PartIdentityService: the catalog
         // id is the identity a human asserted by picking from the list; part_name_key is this row's
         // own wording, normalised, so free text can still be recognised. Both are written by
@@ -53,6 +77,7 @@ class PartPurchase extends Model
     ];
 
     protected $casts = [
+        'specs'              => 'array',
         'purchase_price'     => 'decimal:2',
         'quantity'           => 'decimal:2',
         'purchased_at'       => 'datetime',
@@ -117,6 +142,18 @@ class PartPurchase extends Model
         return $this->belongsTo(MaintenanceLineItem::class, 'maintenance_line_item_id');
     }
 
+    /**
+     * The GARAGE bill this part was billed on — the document behind a garage-sourced part's price,
+     * and the counterpart of {@see invoice()} (which is the SUPPLIER document, for a supplier buy).
+     *
+     * Both may legitimately be null: a part bought but not yet fitted has neither, and the ticket-level
+     * part lines written before invoices existed have no bill to point at.
+     */
+    public function garageInvoice(): BelongsTo
+    {
+        return $this->belongsTo(MaintenanceInvoice::class, 'maintenance_invoice_id');
+    }
+
     public function duplicateOf(): BelongsTo
     {
         return $this->belongsTo(PartPurchase::class, 'duplicate_of_purchase_id');
@@ -148,6 +185,19 @@ class PartPurchase extends Model
     public function returns(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(PartReturn::class, 'part_purchase_id');
+    }
+
+    /** Did this part come off our own shelf rather than being bought for this job? */
+    public function isFromStore(): bool
+    {
+        return $this->purchase_source === self::SOURCE_STORE;
+    }
+
+    /** The storehouse movement that released this part, when it came from stock. */
+    public function storeIssue(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(StoreMovement::class, 'part_purchase_id')
+            ->where('reason', StoreMovement::REASON_ISSUE);
     }
 
     /** Whether this buy needs a supplier invoice keyed against it (a garage buy never does). */

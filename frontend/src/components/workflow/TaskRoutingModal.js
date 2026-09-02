@@ -96,6 +96,9 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   const [odoNote, setOdoNote] = useState('');         // mandatory explanation when the reading is >10 km off the previous
   const [conflict, setConflict] = useState(null);     // Conflict Check warning awaiting the operator's call
   const [busyId, setBusyId] = useState(null); // a fault row mid status-change
+  // The fault whose "why are we pausing?" picker is open. A pause always names a reason — an
+  // unexplained gap in the clock is the ambiguity the work ledger exists to remove.
+  const [pauseFor, setPauseFor] = useState(null);
   const [transferring, setTransferring] = useState(false);
   const [error, setError] = useState(null);
 
@@ -213,6 +216,35 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
     if (confirmation_status === 'confirmed' && disputeTask?.id === task.id) closeDispute();
     try {
       apply(await api.post(`/maintenance-tasks/${task.id}/confirm`, { confirmation_status }));
+    } catch (e) {
+      setError(e?.response?.data?.message || t('workflow.error.generic'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // ── THE PER-FAULT WORK CLOCK ────────────────────────────────────────────────────────────────────
+  // Starting and pausing work is what makes a fault's repair time MEASURED rather than inferred from
+  // the time the car happened to sit at the garage. The pause always carries a reason, so the hours a
+  // fault spent waiting for a part never quietly become hours someone can bill as labor.
+  const startWork = async (task) => {
+    setBusyId(task.id);
+    setError(null);
+    try {
+      apply(await api.post(`/maintenance-tasks/${task.id}/work/start`, {}));
+    } catch (e) {
+      setError(e?.response?.data?.message || t('workflow.error.generic'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const pauseWork = async (task, blockReason) => {
+    setBusyId(task.id);
+    setError(null);
+    try {
+      apply(await api.post(`/maintenance-tasks/${task.id}/work/pause`, { block_reason: blockReason }));
+      setPauseFor(null);
     } catch (e) {
       setError(e?.response?.data?.message || t('workflow.error.generic'));
     } finally {
@@ -666,20 +698,33 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                       {/* THIS fault's own repair time — measured from the workshop confirmation, so
                           sibling faults on the same car read differently. Summed across all attempts of
                           THIS occurrence; a recurrence after a passed re-inspection starts at zero. */}
-                      {task.repair_time?.cumulative_work_seconds > 0 && (
+                      {/* ACTIVE work when the fault has a clocked ledger, else the older elapsed span.
+                          Active is strictly better — it excludes the hours the fault sat waiting — so it
+                          wins whenever it exists, and the tooltip says which one is on screen. */}
+                      {(task.repair_time?.cumulative_active_seconds > 0 || task.repair_time?.cumulative_work_seconds > 0) && (
                         <Tooltip content={t('workflow.task.workTip', {
                           n: task.repair_time.attempt_count,
                           custody: fmtElapsed(task.repair_time.cumulative_custody_seconds, t) || '—',
                         })}>
                           <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700 ring-1 ring-inset ring-sky-200">
-                            ⏱ {fmtElapsed(task.repair_time.cumulative_work_seconds, t)}
+                            ⏱ {fmtElapsed(task.repair_time.cumulative_active_seconds ?? task.repair_time.cumulative_work_seconds, t)}
                             {task.repair_time.attempt_count > 1 && ` · ×${task.repair_time.attempt_count}`}
+                          </span>
+                        </Tooltip>
+                      )}
+                      {/* WAITING time, separated out. A fault that took three hours of work and four of
+                          waiting for a part is a supply problem, not a slow garage — and the two must
+                          never be added together into one "repair took 7h" figure. */}
+                      {task.repair_time?.cumulative_blocked_seconds > 0 && (
+                        <Tooltip content={t('workflow.task.blockedTip')}>
+                          <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 ring-1 ring-inset ring-amber-200">
+                            ⏸ {fmtElapsed(task.repair_time.cumulative_blocked_seconds, t)}
                           </span>
                         </Tooltip>
                       )}
                       {/* Never confirmed → this fault has no clock of its own. Show the CAR's time,
                           labelled as the car's, rather than passing a shared number off as the fault's. */}
-                      {!task.repair_time?.cumulative_work_seconds && task.repair_time?.cumulative_custody_seconds > 0 && (
+                      {!task.repair_time?.cumulative_active_seconds && !task.repair_time?.cumulative_work_seconds && task.repair_time?.cumulative_custody_seconds > 0 && (
                         <Tooltip content={t('workflow.task.custodyOnlyTip')}>
                           <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
                             🚗 {fmtElapsed(task.repair_time.cumulative_custody_seconds, t)}
@@ -704,6 +749,25 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                       </Button>
                     ) : !isFixing && !isDisputing ? (
                       <>
+                        {/* THE WORK CLOCK. Visible only while the car is at the garage and the repair is
+                            not gated — the only window in which "someone is working on this right now"
+                            can be true. Start/Resume is one tap; pausing opens the reason picker below,
+                            because a pause without a reason tells us nothing later. */}
+                        {carAtGarage && task.repair_gate !== 'pending' && (
+                          task.repair_time?.open_session?.kind === 'work' ? (
+                            <Button size="sm" variant="ghost" className="text-amber-700 hover:bg-amber-50"
+                              disabled={busy || rowBusy}
+                              onClick={() => setPauseFor(pauseFor === task.id ? null : task.id)}>
+                              ⏸ {t('workflow.task.pauseWork')}
+                            </Button>
+                          ) : (
+                            <Button size="sm" variant="ghost" className="text-sky-700 hover:bg-sky-50"
+                              disabled={busy || rowBusy}
+                              onClick={() => startWork(task)}>
+                              ▶ {task.repair_time?.open_session ? t('workflow.task.resumeWork') : t('workflow.task.startWork')}
+                            </Button>
+                          )
+                        )}
                         {/* "Mark fixed" only appears once the car is actually at the garage — in earlier
                             stages (awaiting dispatch / in transit) there's nothing to mark fixed yet.
                             Opens the fix-evidence panel rather than completing outright. */}
@@ -722,6 +786,46 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                     ) : null}
                   </div>
                 </div>
+
+                {/* WHAT IS HAPPENING TO THIS FAULT RIGHT NOW — one line, present only while an interval
+                    is open. "Waiting for parts since 12:00" is the single most useful thing a slow
+                    repair can say, and it is invisible unless somebody wrote it down. */}
+                {task.repair_time?.open_session && (
+                  <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-[11px] ring-1 ring-inset ${
+                    task.repair_time.open_session.kind === 'work'
+                      ? 'bg-sky-50 text-sky-800 ring-sky-200'
+                      : 'bg-amber-50 text-amber-800 ring-amber-200'}`}
+                  >
+                    {task.repair_time.open_session.kind === 'work' ? '▶ ' : '⏸ '}
+                    <span className="font-semibold">
+                      {task.repair_time.open_session.kind === 'work'
+                        ? t('workflow.task.workingNow')
+                        : t(`workflow.task.block.${task.repair_time.open_session.block_reason}`)}
+                    </span>
+                    {' · '}
+                    {fmtElapsed(task.repair_time.open_session.seconds, t)}
+                  </div>
+                )}
+
+                {/* The pause reason picker. A closed list on purpose — free text cannot be grouped into
+                    "how many hours did the fleet lose to parts this month", which is the whole point. */}
+                {pauseFor === task.id && (
+                  <div className="mt-2 rounded-lg bg-amber-50 p-2.5 ring-1 ring-inset ring-amber-200">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">
+                      {t('workflow.task.pausePrompt')}
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {['parts', 'approval', 'customer', 'other_workshop', 'other'].map((r) => (
+                        <Button key={r} size="sm" variant="ghost"
+                          className="bg-white text-amber-800 ring-1 ring-inset ring-amber-300 hover:bg-amber-100"
+                          disabled={busy || rowBusy}
+                          onClick={() => pauseWork(task, r)}>
+                          {t(`workflow.task.block.${r}`)}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Workshop confirmation gate — In Workshop, the technician reviews EVERY reported fault
                     ("does it exist?") before repair. Only "Confirmed" lets the server open a recurring-fault

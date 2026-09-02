@@ -157,6 +157,20 @@ class VehicleResource extends JsonResource
             // from Available; only green & orange stay rentable.
             "condition_grade" => $this->condition_grade ?: 'green',
             "condition_grade_label" => \App\Models\Vehicle::CONDITION_LABELS[$this->condition_grade] ?? 'Perfect',
+            /**
+             * WARRANTY — could the manufacturer or dealer still be responsible for this car?
+             *
+             * Present only when the `warranties` relation was eager-loaded (the vehicle list does;
+             * a single-vehicle read does not need it, since the vehicle page fetches the full
+             * warranty picture from /warranties/vehicle/{id}). whenLoaded is doing real work here:
+             * without it, a list of four hundred cars would issue four hundred queries for a badge.
+             *
+             * The state is COMPUTED, never a column — a warranty bounded by distance ends when the
+             * car reaches a number, and this fleet's cars reach numbers between one nightly job and
+             * the next. @see \App\Services\Warranty\WarrantyStatusService
+             */
+            "warranty" => $this->whenLoaded('warranties', fn () => app(\App\Services\Warranty\WarrantyStatusService::class)
+                ->vehicleState($this->resource, $this->warranties)),
             "condition_note" => $this->condition_note,
             "condition_graded_at" => $this->condition_graded_at,
             "condition_graded_by" => $this->condition_graded_by,

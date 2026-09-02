@@ -196,6 +196,10 @@ class SeedMaintenanceWorkflow extends Command
 
     public function handle(): int
     {
+        // Fabricated board state: never let a seeded car raise a real garage-behaviour alert. The
+        // nightly `garage:intelligence-sweep` re-reads everything from the real data afterwards.
+        \App\Services\Garage\GarageIntelligenceService::$muted = true;
+
         $dryRun = (bool) $this->option('dry-run');
 
         if ($this->option('fresh') && ! $dryRun) {

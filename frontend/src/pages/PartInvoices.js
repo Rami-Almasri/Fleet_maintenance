@@ -20,8 +20,11 @@ import { usePermissions } from '../hooks/usePermissions';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Badge from '../components/ui/Badge';
+import ActionMenu from '../components/ui/ActionMenu';
 import SearchSelect from '../components/ui/SearchSelect';
 import { Card, PageHeader, TableSkeleton, EmptyState } from '../components/ui/Misc';
+import InvoiceMatchDesk from '../components/parts/InvoiceMatchDesk';
+import GarageBilledParts from '../components/parts/GarageBilledParts';
 import { Input, Textarea } from '../components/ui/Field';
 import { aed, fmtAgo } from '../lib/format';
 import { SHOW_FINANCIALS } from '../config/features';
@@ -51,65 +54,124 @@ function StatusChip({ status, label }) {
 }
 
 /**
- * The lifecycle buttons for one invoice. Which moves are legal comes from the SERVER
- * (`allowed_transitions`) rather than being re-derived here — one status machine, defined once, so the
- * UI can never offer a move the backend will refuse.
+ * The actions for one invoice row — and only the ones that are actually valid for the state it is in.
+ *
+ * Everything on the screen comes from `invoice.actions`, which the server computes from ONE state
+ * machine (App\Support\FinancialDocumentStatus): the moves that are legal from where this document
+ * stands, that this user holds the permission for, and that its editability allows. The UI's whole job
+ * is to lay them out — it decides nothing about which are offered, so it cannot drift from what the API
+ * will accept, and a button it never renders is still refused if the endpoint is called directly.
+ *
+ * The layout is the second half of the fix. A row used to show every legal move at once (Submit,
+ * Approve, Cancel, Edit, Delete on a single draft), which gave a rare destructive action the same weight
+ * as the one thing the invoice was waiting for. Now the PRIMARY action leads, Edit stays in reach because
+ * it is the common correction, and the rest go behind ⋮.
  */
-function LifecycleActions({ invoice, onDone }) {
+function RowActions({ invoice, onEdit, onDelete, onDone }) {
   const toast = useToast();
   const { t } = useI18n();
   const [busy, setBusy] = useState(null);
-  const allowed = invoice.allowed_transitions || [];
 
-  // One sentence per move, so both languages read naturally instead of being stitched from a verb.
+  const actions = invoice.actions || [];
+  // A sentence per outcome, so each language reads naturally rather than being stitched from a verb.
   const DONE = {
-    submit: t('Invoice submitted'),
+    submit: t('Invoice submitted for review'),
     approve: t('Invoice approved'),
+    return: t('Invoice returned for correction'),
+    unapprove: t('Approval withdrawn'),
     pay: t('Invoice payment recorded'),
     cancel: t('Invoice cancelled'),
   };
   const FAILED = {
     submit: t('Could not submit the invoice.'),
     approve: t('Could not approve the invoice.'),
+    return: t('Could not return the invoice.'),
+    unapprove: t('Could not withdraw the approval.'),
     pay: t('Could not record the payment.'),
     cancel: t('Could not cancel the invoice.'),
   };
+  // Asked before a move that cannot simply be undone. The wording says what happens, not "are you sure".
+  const REASON_PROMPT = {
+    cancel: t('Why is this invoice being cancelled? It stops being an obligation, and the record stays.'),
+    return: t('What needs correcting? The person who keyed this bill will see it.'),
+  };
 
-  const act = async (verb, body) => {
-    setBusy(verb);
+  const act = async (key, body) => {
+    setBusy(key);
     try {
-      await api.post(`/financial-documents/supplier-invoice/${invoice.id}/${verb}`, body || {});
-      toast.success(DONE[verb]);
+      await api.post(`/financial-documents/supplier-invoice/${invoice.id}/${key}`, body || {});
+      toast.success(DONE[key] || t('Invoice updated'));
       onDone?.();
     } catch (e) {
-      toast.error(e?.response?.data?.message || FAILED[verb]);
+      toast.error(e?.response?.data?.message || FAILED[key] || t('Could not update the invoice.'));
     } finally {
       setBusy(null);
     }
   };
 
-  const cancel = () => {
-    const reason = window.prompt(t('Why is this invoice being cancelled?'));
-    if (reason && reason.trim()) act('cancel', { reason: reason.trim() });
+  // Edit and Delete are page concerns (a modal, a list reload); everything else is a lifecycle move on
+  // the shared financial-documents endpoint. One place decides which is which.
+  const run = (action) => {
+    if (action.key === 'edit') return onEdit();
+    if (action.key === 'delete') return onDelete();
+    if (action.needs_reason) {
+      const reason = window.prompt(REASON_PROMPT[action.key] || t('Why?'));
+      return reason && reason.trim() ? act(action.key, { reason: reason.trim() }) : undefined;
+    }
+    return act(action.key);
   };
 
+  // What each action is CALLED on a row, where space is short and the state is already visible beside
+  // it. The server's label is the full sentence and stays the fallback.
+  const shortLabel = (action) => {
+    if (action.key === 'pay') {
+      return invoice.outstanding > 0 && SHOW_FINANCIALS
+        ? t('Pay {amount}', { amount: aed(invoice.outstanding) })
+        : t('Record payment');
+    }
+    return {
+      submit: t('Submit'),
+      approve: t('Approve'),
+      return: t('Return for correction'),
+      unapprove: t('Withdraw approval'),
+      cancel: t('Cancel invoice'),
+      edit: t('Edit'),
+      delete: t('Delete'),
+    }[action.key] || action.label;
+  };
+
+  const primary = actions.find((a) => a.primary);
+  const edit = actions.find((a) => a.key === 'edit');
+  // Everything the row does not lead with. Edit is pulled out of the menu only when it is not itself
+  // the primary action, so it never appears twice.
+  const overflow = actions.filter((a) => a !== primary && a !== edit);
+
+  // A finished document (cancelled, or one this user may not act on) still shows its state and its
+  // photo — it simply has nothing to be done to it, and an empty cell says that more honestly than a
+  // row of disabled buttons.
   return (
-    <>
-      {allowed.includes('pending') && invoice.stored_status === 'draft' && (
-        <Button variant="ghost" size="sm" loading={busy === 'submit'} onClick={() => act('submit')}>{t('Submit')}</Button>
+    <div className="flex items-center justify-end gap-1.5">
+      {edit && (
+        <Button variant="ghost" size="sm" onClick={() => run(edit)}>{shortLabel(edit)}</Button>
       )}
-      {allowed.includes('approved') && (
-        <Button variant="success" size="sm" loading={busy === 'approve'} onClick={() => act('approve')}>{t('Approve')}</Button>
-      )}
-      {allowed.includes('paid') && (
-        <Button size="sm" loading={busy === 'pay'} onClick={() => act('pay')}>
-          {invoice.outstanding > 0 ? t('Pay {amount}', { amount: aed(invoice.outstanding) }) : t('Pay')}
+      {primary && (
+        // Never destructive — the server refuses to make a danger action primary, so this is always
+        // the move the invoice is waiting for.
+        <Button size="sm" loading={busy === primary.key} onClick={() => run(primary)}>
+          {shortLabel(primary)}
         </Button>
       )}
-      {allowed.includes('cancelled') && (
-        <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={cancel}>{t('Cancel')}</Button>
-      )}
-    </>
+      <ActionMenu
+        label={t('More actions for invoice {no}', { no: invoice.invoice_no || invoice.id })}
+        items={overflow.map((a) => ({
+          key: a.key,
+          label: shortLabel(a),
+          danger: a.danger,
+          disabled: busy === a.key,
+          onSelect: () => run(a),
+        }))}
+      />
+    </div>
   );
 }
 
@@ -375,6 +437,13 @@ export default function PartInvoices() {
   }, []);
 
   const remove = async (row) => {
+    // Deleting the paper is not undoable, so it is asked for once. The sentence says what SURVIVES,
+    // because that is the part people get wrong: the spend is not being deleted, only the document.
+    const ok = window.confirm(t('Delete invoice {no}? The parts it covers stay, and go back to being un-invoiced.', {
+      no: row.invoice_no || `#${row.id}`,
+    }));
+    if (!ok) return;
+
     try {
       await api.delete(`/part-invoices/${row.id}`);
       toast.success(t('Invoice deleted — the purchases are untouched.'));
@@ -390,10 +459,14 @@ export default function PartInvoices() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title={t('Supplier Parts Invoices')}
-          subtitle={t("What the supplier charged for a part — the document behind its price. Parts the garage supplied are billed on the garage's own invoice, not here.")}
+          title={t('Bills for parts')}
+          subtitle={t('Every bill a part appears on. A supplier sells parts on their own invoice and it is keyed here; a garage that fits a part bills it beside the labour on the ticket’s invoice — those are listed lower down, and changed on their ticket.')}
           actions={canManage && <Button onClick={() => setEditing(null)}>{t('Record invoice')}</Button>}
         />
+
+        {/* The second stage: bills keyed by one person, waiting for a different person to check them
+            against the photo. Above the ledger because it is work, and the ledger is a record. */}
+        <InvoiceMatchDesk onChecked={load} />
 
         {SHOW_FINANCIALS && !loading && rows.length > 0 && (
           <Card className="px-5 py-4">
@@ -450,19 +523,35 @@ export default function PartInvoices() {
                       <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">
                         <div>{r.recorded_by || '—'}</div>
                         <div className="text-xs text-slate-400">{fmtAgo(r.recorded_at) || ''}</div>
+                        {/* Whether a SECOND person has read this bill against its photo. Three
+                            states, never two: nobody has looked yet, somebody looked and agreed,
+                            somebody looked and did not. */}
+                        <div className="mt-1">
+                          {!r.matched_at ? (
+                            <Badge tone="gray">{t('Not checked yet')}</Badge>
+                          ) : r.match_result === 'disputed' ? (
+                            <span title={r.match_note || ''}><Badge tone="red">{t('Did not match')}</Badge></span>
+                          ) : (
+                            <span title={t('checked by {name}', { name: r.matched_by || '—' })}>
+                              <Badge tone="green">{t('Checked')}</Badge>
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="border-b border-slate-100 px-5 py-3.5">
-                        <div className="flex justify-end gap-2">
+                        {/* Which actions belong on this row is decided by the server, per state and per
+                            permission — see RowActions. Nothing here re-derives it, and nothing is
+                            merely hidden: the endpoints refuse the same moves this list leaves out. */}
+                        <div className="flex items-center justify-end gap-2">
                           {r.photo_url && (
                             <a href={r.photo_url} target="_blank" rel="noreferrer" className="text-sm text-sky-600 hover:underline">{t('Photo')}</a>
                           )}
-                          {canManage && <LifecycleActions invoice={r} onDone={load} />}
-                          {/* Editing and deleting stop once the invoice is an accepted obligation —
-                              a correction after approval is an adjustment, not a silent rewrite. */}
-                          {canManage && r.editable && <Button variant="ghost" size="sm" onClick={() => setEditing(r)}>{t('Edit')}</Button>}
-                          {canManage && r.editable && (
-                            <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => remove(r)}>{t('Delete')}</Button>
-                          )}
+                          <RowActions
+                            invoice={r}
+                            onEdit={() => setEditing(r)}
+                            onDelete={() => remove(r)}
+                            onDone={load}
+                          />
                         </div>
                       </td>
                     </tr>
@@ -478,6 +567,10 @@ export default function PartInvoices() {
             )}
           </div>
         </Card>
+
+        {/* The other road a part is billed down. Read-only — see GarageBilledParts for why a write
+            button here would reopen the double-count the attach guard exists to prevent. */}
+        <GarageBilledParts />
       </div>
 
       <InvoiceModal

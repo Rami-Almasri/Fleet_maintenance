@@ -38,7 +38,70 @@ class MaintenanceInvoiceService
         private NotificationScanner $notifier,
         private VehicleLogService $log,
         private IncorrectFaultCostGuard $incorrect,
+        private GarageLineItemLedgerService $partsLedger,
+        // The accounting bridge. A garage bill IS the repair's financial obligation, so the event is
+        // kept in step from here rather than from a separate finance screen — §6/§31. Injected as a
+        // collaborator like the parts ledger above, because it is the same shape of concern: one more
+        // downstream ledger that a bill keeps honest as it is written.
+        private \App\Services\Odoo\FinancialEventBuilder $financial,
     ) {}
+
+    /**
+     * Keep this bill's financial event in step with the bill.
+     *
+     * Deliberately best-effort. The obligation is DERIVED from the invoice, so it can always be rebuilt
+     * (`odoo:rebuild-events`), and an accounting-bridge problem must never roll back a garage bill that
+     * somebody just keyed — the same rule the audit log already follows in VehicleLogService::record().
+     * An event that fails to build is one that stays absent and visible on the sync dashboard, which is
+     * far better than a lost invoice.
+     *
+     * Called as the LAST step inside the invoice's own transaction — after the lines, the bands and the
+     * receipt are written, so the event is built from the final figures rather than a half-written set,
+     * and still inside the transaction so a rolled-back invoice cannot leave an obligation behind for a
+     * bill that never existed.
+     */
+    private function syncFinancialEvent(MaintenanceInvoice $invoice, User $actor): void
+    {
+        try {
+            $this->financial->syncFor($invoice->fresh(['lineItems', 'maintenance.vehicle', 'vendor']), $actor);
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /**
+     * The bill is being deleted — retire its obligation.
+     *
+     * An UNSENT event is deleted with the bill: it described a cost that no longer exists, and keeping it
+     * would leave the sync dashboard asking somebody to post a bill that has been withdrawn.
+     *
+     * A SENT event (SENDING or SYNCED) is kept and marked, because it is the only link between the
+     * document sitting in Odoo and the work it paid for. See the call site for the full reasoning.
+     */
+    private function retireFinancialEvent(MaintenanceInvoice $invoice, User $actor): void
+    {
+        try {
+            $event = \App\Models\FinancialEvent::forSource($invoice->getMorphClass(), (int) $invoice->id)->first();
+
+            if (! $event) {
+                return;
+            }
+
+            if ($event->isFrozen()) {
+                $event->update([
+                    'cancellation_reason' => 'The garage invoice this cost came from was deleted by '
+                        . $actor->name . '. The Odoo document it created still stands.',
+                ]);
+
+                return;
+            }
+
+            $event->lines()->delete();
+            $event->delete();
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
 
     /**
      * Create a new invoice under a ticket: name its garage, link the faults it covers, key its parts/labor
@@ -77,6 +140,7 @@ class MaintenanceInvoiceService
             $invoice->save();
 
             $this->logAndNotify($ticket, $invoice, $actor, 'created');
+            $this->syncFinancialEvent($invoice, $actor);
 
             return $invoice->fresh(['vendor', 'tasks', 'lineItems']);
         });
@@ -125,6 +189,7 @@ class MaintenanceInvoiceService
             $invoice->save();
 
             $this->logAndNotify($ticket, $invoice, $actor, 'updated');
+            $this->syncFinancialEvent($invoice, $actor);
 
             return $invoice->fresh(['vendor', 'tasks', 'lineItems']);
         });
@@ -140,6 +205,13 @@ class MaintenanceInvoiceService
             $ticket = $invoice->maintenance;
             $amount = (float) $invoice->amount;
             $no     = $invoice->invoice_no;
+
+            // The obligation this bill raised goes with it — but only if it never reached Odoo. An event
+            // that HAS been posted keeps its row (and its odoo_document_id), because deleting our record
+            // of a document that exists in the accounting system would strand it: nothing would connect
+            // the bill in Odoo to anything here, and the next rebuild would happily post a second one.
+            // Withdrawing a posted bill is a credit note raised in Odoo, not a delete here.
+            $this->retireFinancialEvent($invoice, $actor);
 
             // Un-bill the faults, drop the invoice's cost lines, then remove the invoice.
             $invoice->tasks()->update(['maintenance_invoice_id' => null]);
@@ -357,6 +429,26 @@ class MaintenanceInvoiceService
         // Re-derive this invoice's own total from the freshly written lines (bubbles up to the ticket).
         $invoice->load('lineItems');
         $invoice->recalcTotals();
+
+        // THE PART IS NOW A PART, not just a price. Every part line this bill carries enters the
+        // same lifecycle a supplier-bought part travels: a PartPurchase (purchase_source=garage),
+        // and a physical component on the car when the data supports one. Reconciled rather than
+        // created, because the loop above deletes and recreates these lines on every edit.
+        //
+        // NO MONEY MOVES. The line item stays the canonical dirham; PartSpendService excludes any
+        // purchase that carries a maintenance_line_item_id, which every purchase written here does.
+        //
+        // NEVER BLOCKS THE BILL. A ledger problem must not cost us the invoice — the invoice is the
+        // scarcer evidence, and the same reasoning RepairCaptureService applies to its own asset
+        // writes. A failure is logged and swept up by `parts:backfill-garage-lines` afterwards.
+        try {
+            $this->partsLedger->syncInvoice($invoice, $actor);
+        } catch (\Throwable $e) {
+            logger()->warning('parts_ledger.invoice_sync_failed', [
+                'maintenance_invoice_id' => $invoice->id,
+                'error'                  => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

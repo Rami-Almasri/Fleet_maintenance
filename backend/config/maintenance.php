@@ -189,4 +189,37 @@ return [
         'approver_permissions' => ['parts.investigate', 'maintenance.manage'],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Finding approval gate
+    |--------------------------------------------------------------------------
+    |
+    | Two things a person can log that the DATA already disagrees with, and which
+    | therefore stop being one person's decision:
+    |
+    |   not_needed — a monitored routine (oil / battery / tyres) logged while the
+    |                car's own live status says it is NOT due. "Change the oil" on
+    |                a car with 5,415 km of its interval left.
+    |   repeat     — the same finding was already raised on this car inside the
+    |                window below. Either it never got fixed, or it is being
+    |                logged twice.
+    |
+    | Neither is refused. Both are HELD: the finding is parked awaiting approval,
+    | it is not promoted into a workable fault, and the ticket cannot leave its
+    | stage until an approver signs it off or throws it out. See
+    | [[FindingApprovalService]].
+    |
+    | `repeat_window_days` is what "again" means. 90 days is long enough that a
+    | genuinely recurring fault is caught and short enough that a car's second
+    | scratch in a year is not called a duplicate.
+    |
+    */
+    'finding_approval' => [
+        'repeat_window_days' => (int) env('FINDING_APPROVAL_REPEAT_WINDOW_DAYS', 90),
+        // WHO signs one of these off. Same doctrine as every other list in this
+        // file: the permission that the approve/reject route itself is gated by,
+        // so the people notified are exactly the people who can act.
+        'approver_permission' => env('FINDING_APPROVAL_PERMISSION', 'maintenance.manage'),
+    ],
+
 ];

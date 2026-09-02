@@ -358,6 +358,26 @@ class MaintenanceWorkflowResource extends JsonResource
             // before vs during the repair.
             'findings'           => array_values($t->findings ?? []),
 
+            // THE HOLD, hoisted to the top of the payload. Each entry carries its own `approval` block
+            // already, but a card must be able to answer "is this ticket stuck, and on what?" without
+            // walking the findings array — the board renders a badge from `blocked`, and the drawer
+            // renders its approve/reject panel from `pending_finding_approvals`. An empty list is the
+            // overwhelmingly common case and reads as "nothing to sign off".
+            // See [[FindingApprovalService]].
+            'pending_finding_approvals' => collect($t->findings ?? [])
+                ->filter(fn ($f) => is_array($f) && ($f['approval']['state'] ?? null) === 'pending')
+                ->map(fn ($f) => [
+                    'finding'      => $f['text'] ?? null,
+                    'source'       => $f['source'] ?? null,
+                    // CODE + measured params, never an English sentence — the screen composes the
+                    // wording so it reads natively in Arabic ([[reason-code-contract]]).
+                    'reason'       => $f['approval']['reason'] ?? null,
+                    'params'       => $f['approval']['params'] ?? [],
+                    'requested_by' => $f['approval']['requested_by'] ?? null,
+                    'requested_at' => $f['approval']['requested_at'] ?? null,
+                ])
+                ->values()->all(),
+
             // Multi-garage routing — each fault as a first-class task with its own status + garage, plus
             // a rolled-up progress summary. Lets one ticket card show "Fault A → Garage 1, Fault B →
             // Garage 2" and gate the container on "all faults resolved". Only present when eager-loaded.

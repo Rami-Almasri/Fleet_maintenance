@@ -60,6 +60,11 @@ class VehicleComponentController extends Controller
                     // Drives the Position dropdown: [] means the type takes no position at all, and
                     // sending one anyway is a 422.
                     'positions'               => $c->positionsFor(),
+                    // WHICH SPEC FIELDS to render for this type — the install form builds its
+                    // spec inputs from these keys against the dictionary at
+                    // /part-specs/dictionary, so a field added in config appears here without a
+                    // frontend change. @see \App\Support\PartSpecs
+                    'spec_fields'             => array_keys($c->specFields()),
                     'default_warranty_months' => $c->default_warranty_months,
                     'expected_life_km'        => $c->expected_life_km,
                     'expected_life_months'    => $c->expected_life_months,

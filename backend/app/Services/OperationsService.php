@@ -560,7 +560,41 @@ class OperationsService
             $vehicle->update(['operational_status' => $status]);
         }
 
+        // REAL-TIME GARAGE INTELLIGENCE. This method is the one choke point every path that can change
+        // a car's garage occupancy already funnels through — each maintenance-workflow transition (via
+        // MaintenanceWorkflowService::cascade), each contract open/close, each logistics movement and
+        // each hand-entered workshop event. Hooking the re-read here gives the whole feature a single
+        // integration point, scoped to the one affected car, instead of a listener per event; and it
+        // fires on the state change itself rather than on blanket model saves.
+        //
+        // Unconditional on purpose: a rental opening or closing changes how much of the car's
+        // maintenance time counts as true off-road downtime (Rental is King), so "not a garage event"
+        // is not the same as "cannot move the reading".
+        $this->evaluateGarageIntelligence($vehicle);
+
         return $status;
+    }
+
+    /**
+     * Hand the car to the Garage Intelligence engine, best-effort. Muted during bulk work (the caller
+     * runs one sweep instead) and a no-op when the feature or its real-time mode is switched off.
+     * Never allowed to throw: alerting must not be able to fail a dispatch or block a ticket closing.
+     *
+     * @see \App\Services\Garage\GarageIntelligenceService
+     */
+    private function evaluateGarageIntelligence(Vehicle $vehicle): void
+    {
+        if (\App\Services\Garage\GarageIntelligenceService::$muted
+            || ! config('garage_intelligence.enabled', true)
+            || ! config('garage_intelligence.realtime', true)) {
+            return;
+        }
+
+        try {
+            app(\App\Services\Garage\GarageIntelligenceService::class)->evaluate($vehicle);
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     /** Vehicle ids currently out on an open Logistics Dispatch (status 'in_transit'). */

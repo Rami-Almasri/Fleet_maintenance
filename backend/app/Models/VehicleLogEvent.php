@@ -90,6 +90,19 @@ class VehicleLogEvent extends Model
     public const EVENT_CLEANING_UPDATED    = 'cleaning_updated';    // ReadinessController::setChecklistField(): a car's cleaning status changed (e.g. dirty → clean)
     public const EVENT_ODOMETER_CORRECTED  = 'odometer_corrected';  // OdometerChangeRequestController::approve(): a significant manual odometer edit was approved
     // ── Per-fault (maintenance_task) events — each scoped to one task via maintenance_task_id ─────
+    // ── The ODOO FINANCIAL BRIDGE (§33) ────────────────────────────────────────────────────────────
+    // A cost leaving FleetView for the accounting system is a financial act on the car, so it belongs
+    // in the car's own timeline rather than only in an integration log. These five are the moments an
+    // auditor asks about: an obligation was recognised, somebody approved it, it went, it landed, it
+    // did not. The per-attempt technical detail (payloads, error codes, retries) stays in
+    // financial_event_attempts — this is the human-readable trail beside the repair it paid for.
+    public const EVENT_FINANCIAL_EVENT_RAISED = 'financial_event_raised'; // a cost was recognised as owed to Odoo
+    public const EVENT_FINANCIAL_APPROVED     = 'financial_approved';     // a person approved it for sending
+    public const EVENT_FINANCIAL_SYNC_STARTED = 'financial_sync_started'; // a push began (status → SENDING)
+    public const EVENT_FINANCIAL_SYNCED       = 'financial_synced';       // Odoo confirmed the document
+    public const EVENT_FINANCIAL_SYNC_FAILED  = 'financial_sync_failed';  // Odoo refused / could not be reached
+    public const EVENT_FINANCIAL_CANCELLED    = 'financial_cancelled';    // the obligation was withdrawn
+
     public const EVENT_TASK_IDENTIFIED   = 'task_identified';   // a fault was logged on the ticket
     public const EVENT_TASK_ASSIGNED     = 'task_assigned';     // the fault was routed to a garage (stint opened)
     public const EVENT_TASK_TRANSFERRED  = 'task_transferred';  // the fault was moved to a different garage
@@ -98,6 +111,18 @@ class VehicleLogEvent extends Model
     public const EVENT_TASK_REINSPECTION_FAILED = 'task_reinspection_failed'; // QC: the garage returned it unfixed, failed re-inspection
     public const EVENT_TASK_MARKED_INCORRECT    = 'task_marked_incorrect';    // delegate overruled the inspector — the fault was a mis-diagnosis
     public const EVENT_TASK_LABOR_CORRECTED     = 'task_labor_corrected';     // an already-recorded attempt labor time was deliberately corrected (old → new + reason)
+
+    // ── The per-fault WORK CLOCK (maintenance_task_work_sessions) ──────────────────────────────────
+    // Four events because a repair's time is four separate facts: when hands went on the fault, when
+    // they came off and WHY it stopped, when they went back on, and when the bench released it. A
+    // timeline that only says "worked 6h" cannot distinguish three hours of labor from three hours of
+    // waiting for a part — these events are what makes that distinction auditable after the fact.
+    public const EVENT_TASK_WORK_STARTED  = 'task_work_started';  // a work session opened on this fault
+    public const EVENT_TASK_WORK_PAUSED   = 'task_work_paused';   // work stopped; meta.block_reason says what for
+    public const EVENT_TASK_WORK_RESUMED  = 'task_work_resumed';  // the block ended and work resumed
+    public const EVENT_TASK_WORK_STOPPED  = 'task_work_stopped';  // the running interval was closed by a release/transfer/resolve
+    // An exceptional, permission-gated acceptance of labor hours ABOVE the recorded active-work ceiling.
+    public const EVENT_TASK_LABOR_OVERRIDE = 'task_labor_override';
 
     // ── System check requirements — the obligation chain ([[VehicleCheckRequirement]]) ──────────────
     // The system asked for a check; an inspector answered it; a decision was taken; the obligation
@@ -113,6 +138,15 @@ class VehicleLogEvent extends Model
     // ── Severity Review (Diagnostic QC) — a supervisor's decision on an under-graded ticket ─────────
     public const EVENT_SEVERITY_UPGRADED    = 'severity_upgraded';    // QC upgrade applied: fault_severity raised to the recommendation
     public const EVENT_SEVERITY_REVIEW_KEPT = 'severity_review_kept'; // QC "keep current": the recommendation was reviewed and dismissed as a false alarm
+
+    // ── Finding approval — a finding the car's own data disagrees with ([[FindingApprovalService]]) ──
+    // Three events rather than one, for the same reason the check chain has four: "someone tried to log
+    // an oil change this car did not need" and "a manager approved it anyway" are separate facts, and the
+    // car's history is unreadable if the second one silently erases the first. WHO TRIED is on the
+    // `required` row; WHO DECIDED is on the approved/rejected one, which also names the requester.
+    public const EVENT_FINDING_APPROVAL_REQUIRED = 'finding_approval_required'; // logged, but held: the data disagrees
+    public const EVENT_FINDING_APPROVED          = 'finding_approved';          // an approver overruled the data — the job goes ahead
+    public const EVENT_FINDING_REJECTED          = 'finding_rejected';          // an approver refused it — it never becomes work
 
     // Deferred-invoice decoupling — repair signed off with the invoice still pending, then received.
     // The maintenance visit's own contract (type 'U'), opened when the car is booked in for a look and
@@ -161,6 +195,36 @@ class VehicleLogEvent extends Model
     public const EVENT_SPARE_KEY_RECEIVED           = 'spare_key_received';            // physical key(s) arrived and became components
     public const EVENT_SPARE_KEY_CANCELLED          = 'spare_key_cancelled';           // the need was withdrawn (found / raised in error)
 
+    // ── Warranty-aware operations — the trail of "could somebody else have paid for this?" ────────
+    //
+    // These are on the VEHICLE timeline rather than only on the case, because the question they
+    // answer is asked about a CAR: "why did we pay for this gearbox?" is read on the car's history,
+    // months later, by somebody who has never heard of the case. Each row carries the case id, the
+    // verdict and its reason code in `meta`, so the timeline reads as a sentence and the audit reads
+    // as data.
+    public const EVENT_WARRANTY_RECORDED        = 'warranty_recorded';        // a promise was written down
+    public const EVENT_WARRANTY_UPDATED         = 'warranty_updated';         // its terms were corrected
+    public const EVENT_WARRANTY_VOIDED          = 'warranty_voided';          // destroyed before it ran out
+    public const EVENT_WARRANTY_EXPIRING        = 'warranty_expiring';        // the pre-expiry warning fired
+    public const EVENT_COVERAGE_REVIEW_OPENED   = 'coverage_review_opened';   // "we don't know" became somebody's job
+    public const EVENT_COVERAGE_CONFIRMED       = 'coverage_confirmed';       // a human said: they owe us this
+    public const EVENT_COVERAGE_REJECTED        = 'coverage_rejected';        // a human said: this one is ours
+    public const EVENT_WARRANTY_CASE_OPENED     = 'warranty_case_opened';     // the claim path started
+    public const EVENT_WARRANTY_AUTHORIZED      = 'warranty_authorized';      // the provider gave a go-ahead
+    public const EVENT_WARRANTY_SENT_TO_PROVIDER = 'warranty_sent_to_provider'; // the car/part went to them
+    public const EVENT_WARRANTY_CLAIM_SUBMITTED = 'warranty_claim_submitted'; // the paperwork went in
+    public const EVENT_WARRANTY_CLAIM_APPROVED  = 'warranty_claim_approved';  // they accepted it
+    public const EVENT_WARRANTY_CLAIM_REJECTED  = 'warranty_claim_rejected';  // they refused — and why
+    public const EVENT_WARRANTY_RECOVERY        = 'warranty_recovery_recorded'; // what we got back / avoided
+    public const EVENT_WARRANTY_CASE_CLOSED     = 'warranty_case_closed';
+    /**
+     * THE ONE THAT MATTERS MOST. Somebody bought something the manufacturer might have owed us, on
+     * purpose, with a reason. Not a rule being broken — a rule being applied and then consciously
+     * set aside, which is the only version of this that is safe to allow. Carries the actor, the
+     * reason and the verdict that was overridden.
+     */
+    public const EVENT_WARRANTY_PROCUREMENT_OVERRIDE = 'warranty_procurement_override';
+
     // ── Asset Layer — display mirror of component_events (that table stays the source of truth;
     //    these rows make asset movements visible on the Vehicle Timeline with no new joins) ─────
     public const EVENT_COMPONENT_INSTALLED   = 'component_installed';   // a physical component was fitted to this car
@@ -206,6 +270,13 @@ class VehicleLogEvent extends Model
         self::EVENT_CONTRACT_CLOSED    => Maintenance::FINDING_INSPECTOR,
         self::EVENT_AWAITING_INVOICE   => Maintenance::FINDING_INSPECTOR, // sign-off with invoice deferred
         self::EVENT_INVOICE_RECEIVED   => Maintenance::FINDING_INSPECTOR,
+        // Bookkeeping on our own records — the accounting bridge is our side, never the workshop's.
+        self::EVENT_FINANCIAL_EVENT_RAISED => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_FINANCIAL_APPROVED     => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_FINANCIAL_SYNC_STARTED => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_FINANCIAL_SYNCED       => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_FINANCIAL_SYNC_FAILED  => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_FINANCIAL_CANCELLED    => Maintenance::FINDING_INSPECTOR,
         self::EVENT_GARAGE_INVOICE_SUBMITTED => Maintenance::FINDING_GARAGE,   // the garage sent the invoice
         self::EVENT_GARAGE_INVOICE_ACCEPTED  => Maintenance::FINDING_INSPECTOR, // our team's audit decision
         self::EVENT_GARAGE_INVOICE_REJECTED  => Maintenance::FINDING_INSPECTOR,
@@ -242,6 +313,11 @@ class VehicleLogEvent extends Model
         // Severity Review is a supervisory grading decision → inspector-side audit bucket.
         self::EVENT_SEVERITY_UPGRADED        => Maintenance::FINDING_INSPECTOR,
         self::EVENT_SEVERITY_REVIEW_KEPT     => Maintenance::FINDING_INSPECTOR,
+        // Holding, approving or refusing a finding is a management decision about whether work should
+        // happen at all — it is taken before any spanner is lifted → inspector-side audit bucket.
+        self::EVENT_FINDING_APPROVAL_REQUIRED => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_FINDING_APPROVED          => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_FINDING_REJECTED          => Maintenance::FINDING_INSPECTOR,
         // Asset Layer — fitting or stripping a part is hands-on-the-car work performed at the
         // workshop bench, so the whole component lifecycle sits in the garage audit bucket.
         self::EVENT_COMPONENT_INSTALLED      => Maintenance::FINDING_GARAGE,

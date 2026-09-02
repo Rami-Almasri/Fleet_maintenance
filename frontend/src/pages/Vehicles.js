@@ -36,6 +36,11 @@ export default function Vehicles() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [flag, setFlag] = useState(''); // '' | 'available' | 'reserved' | 'rented' | 'maint'
+  // Warranty state filter — '' | 'under_warranty' | 'expiring_soon' | 'expired' | 'none'.
+  // Filtered client-side against the state the SERVER computed per row (VehicleResource.warranty):
+  // whether cover still holds depends on months OR kilometres against each car's odometer, so the
+  // browser never derives it, only groups by it. @see lib/warranty.js
+  const [warrantyState, setWarrantyState] = useState('');
   const [sharedOnly, setSharedOnly] = useState(false); // show only vehicles on a reused (shared) plate
   const [page, setPage] = useState(1);
 
@@ -99,6 +104,10 @@ export default function Vehicles() {
       (flag === 'register_clash' && registerConflict(v));
     const matchSearch = (v) =>
       !q || [v.plate_display, v.plate_no, v.vin, v.make, v.model].some((f) => (f || '').toLowerCase().includes(q));
+    // A row with no `warranty` block simply wasn't shipped one (the relation was not eager-loaded).
+    // Treated as `none` rather than hidden: filtering a car out because of a payload shape would
+    // make the list quietly incomplete, which is worse than showing it as unrecorded.
+    const matchWarranty = (v) => !warrantyState || (v.warranty?.state || 'none') === warrantyState;
 
     // "Shared plate only" filter: EVERY vehicle sitting on a reused plate — including the sold /
     // previous holders (we deliberately don't hide them here, that's the whole point) — grouped
@@ -106,7 +115,7 @@ export default function Vehicles() {
     if (sharedOnly) {
       const rows = list
         .filter((v) => reusedKeys.has(plateId(v))
-          && (status ? v.status === status : true) && matchFlag(v) && matchSearch(v))
+          && (status ? v.status === status : true) && matchFlag(v) && matchSearch(v) && matchWarranty(v))
         .sort(orderByPlateGroup(reusedKeys));
       return { rows, reused: rows.length > 0 };
     }
@@ -115,7 +124,7 @@ export default function Vehicles() {
       // Displayed status is the OfficeManager lifecycle status (status_no). Cars that have
       // left the fleet (sold / disposed) are hidden unless explicitly picked from the dropdown.
       const matchStatus = status ? v.status === status : (v.status !== 'sold' && v.status !== 'disposed');
-      return matchStatus && matchFlag(v) && matchSearch(v);
+      return matchStatus && matchFlag(v) && matchSearch(v) && matchWarranty(v);
     });
 
     // Only when a search actually surfaces a REUSED plate do we change the view: pull the
@@ -132,7 +141,7 @@ export default function Vehicles() {
     });
     const merged = Array.from(byId.values()).sort(orderByPlateGroup(keys));
     return { rows: merged, reused: true };
-  }, [list, search, status, flag, sharedOnly, reusedKeys]);
+  }, [list, search, status, flag, warrantyState, sharedOnly, reusedKeys]);
 
   // How many distinct plates are shared, for the checkbox label.
   const sharedPlateCount = reusedKeys.size;
@@ -255,6 +264,40 @@ export default function Vehicles() {
     if (g === 'orange') return <span className="ds-chip sm ds-paused"><span className="ds-dot" />{t('vehicles.cond.orange')}</span>;
     return <span className="ds-chip sm ds-none"><span className="ds-dot" />{t('vehicles.cond.ok')}</span>;
   };
+
+  /**
+   * The warranty chip — could somebody else still be paying for this car?
+   *
+   * The state is whatever the SERVER computed for this row; nothing here re-derives it. Cover ends
+   * on months OR kilometres, whichever comes first, judged against the car's odometer — a browser
+   * comparing `expires_on` to today would report cover on exactly the hard-driven cars whose
+   * warranties are worth the most and lapse the soonest.
+   *
+   * `none` is neutral, NOT critical: a car whose booklet is still in the glovebox has not failed at
+   * anything, and colouring it like a problem trains people to ignore the colour everywhere else.
+   * The tooltip carries what is left on both legs, so the column stays one glyph wide.
+   */
+  const warrantyChip = (v) => {
+    const w = v.warranty;
+    const state = w?.state || 'none';
+    if (state === 'none') return <span className="ds-chip sm ds-none">{t('warrantyOps.stateShort.none')}</span>;
+
+    const cls = state === 'under_warranty' ? 'ds-ok' : state === 'expiring_soon' ? 'ds-paused' : 'ds-none';
+    const left = [
+      w?.days_remaining != null ? t('warrantyOps.vehicle.remainingDays', { n: w.days_remaining }) : null,
+      w?.km_remaining != null ? t('warrantyOps.vehicle.remainingKm', { n: Number(w.km_remaining).toLocaleString(numLocale) }) : null,
+    ].filter(Boolean).join(' / ');
+
+    return (
+      <span
+        className={`ds-chip sm ${cls}`}
+        title={[t(`warrantyOps.state.${state}`), left, w?.distance_unknown ? t('warrantyOps.vehicle.distanceUnknown') : null]
+          .filter(Boolean).join(' — ')}
+      >
+        <span className="ds-dot" />{t(`warrantyOps.stateShort.${state}`)}
+      </span>
+    );
+  };
   const KPIS = [
     { key: 'available', label: t('vehicles.kpi.available'), value: availableCount, tone: 'avail', icon: 'car', hint: t('vehicles.kpi.availableHint') },
     { key: 'reserved', label: t('vehicles.kpi.reserved'), value: reservedCount, tone: 'reserved', icon: 'calendar', hint: t('vehicles.kpi.reservedHint') },
@@ -313,6 +356,21 @@ export default function Vehicles() {
               <option value="">{t('vehicles.allStatuses')}</option>
               {VEHICLE_STATUSES.map((s) => <option key={s} value={s}>{t(`vehicles.status.${s}`)}</option>)}
             </select>
+            {/* Warranty state. Its own dropdown rather than a quick-flag button because it is not a
+                movement — a car can be rented, in the garage or idle and still be under warranty,
+                so it composes with the filters beside it instead of replacing them. */}
+            <select
+              className="opx-select"
+              value={warrantyState}
+              onChange={(e) => resetFilters(() => setWarrantyState(e.target.value))}
+              title={t('warrantyOps.list.filterLabel')}
+            >
+              <option value="">{t('warrantyOps.list.filterAll')}</option>
+              <option value="under_warranty">{t('warrantyOps.list.filterUnder')}</option>
+              <option value="expiring_soon">{t('warrantyOps.list.filterSoon')}</option>
+              <option value="expired">{t('warrantyOps.list.filterExpired')}</option>
+              <option value="none">{t('warrantyOps.list.filterNone')}</option>
+            </select>
             {/* Shared-plate filter: show every car sitting on a reused plate (incl. sold holders). */}
             <label
               title={t('vehicles.sharedPlatesHint')}
@@ -368,14 +426,18 @@ export default function Vehicles() {
                   {/* Status chips + the live paperwork underneath — no longer maintenance-only. */}
                   <th>{t('vehicles.col.statusContracts')}</th>
                   <th>{t('vehicles.col.condition')}</th>
+                  {/* WARRANTY — the column that answers "before we spend on this car, could the
+                      manufacturer be paying?" at a glance, next to the condition it so often
+                      determines the cost of. */}
+                  <th>{t('warrantyOps.list.column')}</th>
                   <th className="r">{t('vehicles.col.actions')}</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={6}><div className="opx-skel" style={{ height: 260 }} /></td></tr>
+                  <tr><td colSpan={7}><div className="opx-skel" style={{ height: 260 }} /></td></tr>
                 ) : paged.length === 0 ? (
-                  <tr><td colSpan={6}><div className="opx-empty"><div className="big">🛰️</div>{t('vehicles.empty')}</div></td></tr>
+                  <tr><td colSpan={7}><div className="opx-empty"><div className="big">🛰️</div>{t('vehicles.empty')}</div></td></tr>
                 ) : paged.map((v) => (
                   <tr key={v.id} className={rowTone(v)}>
                     <td>
@@ -402,6 +464,7 @@ export default function Vehicles() {
                       />
                     </td>
                     <td>{condChip(v)}</td>
+                    <td>{warrantyChip(v)}</td>
                     <td>
                       <div className="opx-actions">
                         {canResolveDefer && v.is_deferred_maintenance && <button className="opx-ibtn" onClick={() => resolveDefer(v)} title={t('vehicles.resolveDeferHint')}>✓ {t('vehicles.resolve')}</button>}

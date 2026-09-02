@@ -51,6 +51,9 @@ class NotificationScanner
         'part_delivery_overdue:', 'test_interrupted:',
         'oil_projection:', // carries the projection ANCHOR, so a new mileage reading rotates it and re-arms the chase
         'oil_decision:',   // same anchor discipline: asked once per reading, re-armed by the next one
+        // Warranty conditions. Each keyed on the WARRANTY or the CASE, never on the car: a vehicle
+        // with two warranties has two separate things expiring, and one key would silence the second.
+        'warranty_expiring:', 'warranty_review:', 'warranty_provider_overdue:', 'warranty_case_stale:',
     ];
 
     /**
@@ -91,6 +94,28 @@ class NotificationScanner
         'oil_projection'              => 'reminders.manage',              // ask the customer for a mileage reading — further narrowed by an allow-list, see userMayReceive()
         'oil_decision'                => 'reminders.manage',              // the car can't finish inside the tolerance: recall it, or accept + service on return
         'oil_recall_task'             => 'reminders.manage',              // a recall was ordered: phone the customer and arrange the return
+
+        // ── Garage Intelligence ─────────────────────────────────────────────────────────────────
+        // A car going into the garage too often, or staying too long. Both are EVENT-DRIVEN (raised
+        // by GarageIntelligenceService the moment a car's grade climbs) and deliberately NOT listed
+        // in MANAGED_KEY_PREFIXES: resolveStale() would clear them on the next scan, because the scan
+        // does not detect these conditions and so would never find their keys in its active set.
+        // Their audience is narrowed again at send time by config('garage_intelligence.recipients'),
+        // so this map is the READ-side gate — it is what stops the rows showing up in a driver's or
+        // an inspector's feed. @see \App\Services\Garage\GarageIntelligenceService
+        'garage_visit_frequency'      => 'maintenance.manage',
+        'garage_downtime'             => 'maintenance.manage',
+
+        // ── Warranty ────────────────────────────────────────────────────────────────────────────
+        // All gated on `warranty.review` — the permission that DEFINES the warranty desk. Nobody
+        // else needs to hear that a dealer is three days late answering a claim, and a manager holds
+        // it anyway. The event-driven warranty alerts (a case opening, an authorisation landing) are
+        // fanned out by WarrantyCaseService to a wider audience and never pass through this map.
+        // @see \App\Support\WarrantyResponsibility
+        'warranty_expiring'         => \App\Support\WarrantyResponsibility::REVIEW,
+        'warranty_review_overdue'   => \App\Support\WarrantyResponsibility::REVIEW,
+        'warranty_provider_overdue' => \App\Support\WarrantyResponsibility::REVIEW,
+        'warranty_case_stale'       => \App\Support\WarrantyResponsibility::REVIEW,
     ];
 
     /**
@@ -118,6 +143,8 @@ class NotificationScanner
         private MaintenanceDelayResolver $delayResolver,
         private LeftGarageInvoiceService $leftGarageQueue,
         private OilChangeProjectionService $oilProjection,
+        /** Warranty conditions — see the note on the detect() concat below. */
+        private \App\Services\Warranty\WarrantyAlertService $warranty,
     ) {}
 
     /**
@@ -335,6 +362,12 @@ class NotificationScanner
             ->concat($this->testRecommendationsInterrupted())
             ->concat($this->leftGarageInvoiceMissing())
             ->concat($this->oilProjectionChases())
+            // Warranty conditions — cover about to run out, reviews nobody has answered, dealers who
+            // have gone quiet. Produced elsewhere and merged here so they inherit this scanner's
+            // dedup key discipline, its per-user permission gate and its auto-resolve sweep rather
+            // than reimplementing all three in a second scheduled command.
+            // @see \App\Services\Warranty\WarrantyAlertService
+            ->concat($this->warranty->detect())
             ->all();
     }
 

@@ -207,6 +207,29 @@ class MaintenanceTaskResource extends JsonResource
                 // Per-attempt manual labor (mechanic's actual hours) — carried by the stint that ends
                 // the attempt; immutable history, never overwritten by a later attempt.
                 'labor_hours' => $a->labor_hours !== null ? (float) $a->labor_hours : null,
+                // WHAT that number was checked against — measured (against the active work ledger),
+                // legacy_window, declared (nothing to check it against), or override. A UI showing an
+                // hours figure must be able to say whether it is evidence or merely a claim.
+                'labor_basis' => $a->labor_basis,
+                'labor_override_reason' => $a->labor_override_reason,
+            ])->values()),
+
+            // The ACTIVE-WORK LEDGER — the work/blocked intervals clocked on this fault. This is the
+            // evidence behind the active time: a reader can show "2h worked, 4h waiting for parts"
+            // instead of one opaque six-hour span. Present only when eager-loaded.
+            'work_sessions'  => $this->whenLoaded('workSessions', fn () => $t->workSessions->map(fn ($s) => [
+                'id'           => $s->id,
+                'stint_id'     => $s->maintenance_task_assignment_id,
+                'kind'         => $s->kind,
+                'block_reason' => $s->block_reason,
+                'label'        => $s->label(),
+                'started_at'   => optional($s->started_at)->toIso8601String(),
+                'ended_at'     => optional($s->ended_at)->toIso8601String(),
+                'is_open'      => $s->isOpen(),
+                'seconds'      => $s->seconds(),
+                'note'         => $s->note,
+                // Reconstructed by the backfill vs actually clocked — never average the two.
+                'source'       => $s->source,
             ])->values()),
 
             // Per-fault REPAIR TIME (Derived) — attempt segmentation + cumulative elapsed/labor from the

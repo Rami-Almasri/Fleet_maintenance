@@ -704,6 +704,94 @@
 .intel-report .ir-toggle button { background: transparent; border: 0; color: var(--ir-muted); padding: 9px 14px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
 .intel-report .ir-toggle button[aria-pressed='true'] { background: rgba(56, 189, 248, 0.16); color: #bae6fd; }
 
+/* ── The selected period ────────────────────────────────────────────────────────────────────── */
+
+/* The date-range control. Its own row under the system picker: it is the second thing a reader
+   reaches for and it needs the width for two date inputs plus the quick ranges. */
+.intel-report .ir-daterange {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.intel-report .ir-daterange-title { align-self: center; margin: 0; font-weight: 800; }
+.intel-report .ir-daterange-field { display: flex; flex-direction: column; gap: 4px; }
+.intel-report .ir-daterange-field > span { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ir-dim); }
+/* The dash between the two fields sits on the inputs' baseline, not on the labels' above them. */
+.intel-report .ir-daterange-dash { align-self: center; padding-top: 14px; color: var(--ir-muted); }
+.intel-report .ir-daterange-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-inline-start: auto; }
+.intel-report .ir-button-quiet { padding: 7px 10px; font-size: 12px; font-weight: 600; color: var(--ir-muted); }
+.intel-report .ir-button:disabled { opacity: 0.45; cursor: not-allowed; }
+.intel-report .ir-daterange-error { flex-basis: 100%; color: #fecaca; font-size: 12.5px; font-weight: 700; }
+
+/* Dates are typed left-to-right whatever the page's direction, and the native picker icon is
+   invisible against the dark surface without this. */
+.intel-report input[type='date'].ir-control { direction: ltr; min-width: 158px; }
+.intel-report input[type='date'].ir-control::-webkit-calendar-picker-indicator { filter: invert(0.75); cursor: pointer; }
+
+/* THE PERIOD BANNER PRINTS. A PDF that does not say which dates it covers reads as all history. */
+.intel-report .ir-period-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+  margin-bottom: 18px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.4);
+  font-size: 13px;
+}
+
+.intel-report .ir-period-banner.is-filtered { border-inline-start: 3px solid var(--ir-accent); }
+.intel-report .ir-period-term { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ir-dim); font-weight: 800; }
+.intel-report .ir-period-value { color: var(--ir-text); font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* The sentence first, the tiles under it: a reader who stops after one line still has the answer. */
+.intel-report .ir-period-sentence { font-size: 14.5px; line-height: 1.7; color: var(--ir-text); margin-bottom: 14px; }
+.intel-report .ir-period-summary .ir-kpis { margin: 0; }
+
+/* One section per problem, stacked — not a grid. Each carries its own occurrence list and its own
+   "did it come back?" line, and a two-column layout breaks that chain across a gutter. */
+.intel-report .ir-problems { display: flex; flex-direction: column; gap: 16px; }
+
+.intel-report .ir-problem {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+/* A problem the record shows coming back gets the red edge — that is the finding of the page. */
+.intel-report .ir-problem.is-repeat { border-inline-start: 3px solid var(--ir-red); }
+.intel-report .ir-problem.is-workshop-only { border-style: dashed; opacity: 0.92; }
+
+.intel-report .ir-problem-head { margin-bottom: 10px; }
+/* The fault is the garage's own wording — its direction follows the text, not the page. */
+.intel-report .ir-problem-head h3 { margin: 0 0 7px; font-size: 15.5px; line-height: 1.35; unicode-bidi: plaintext; text-align: start; }
+.intel-report .ir-problem-no { color: var(--ir-dim); font-variant-numeric: tabular-nums; }
+.intel-report .ir-problem-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.intel-report .ir-problem-line { margin-top: 7px; font-size: 12px; color: var(--ir-muted); unicode-bidi: plaintext; }
+
+.intel-report .ir-occurrence { padding-bottom: 12px; }
+.intel-report .ir-occ-foot { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 12px; }
+
+/* The recurrence sentence is the conclusion of the section, so it sits below the evidence. */
+.intel-report .ir-problem-return {
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--ir-text);
+}
+
 /* ── Data Origin + footer ───────────────────────────────────────────────────────────────────── */
 
 .intel-report .ir-origin { font-size: 12.5px; color: var(--ir-muted); line-height: 1.65; }
@@ -782,5 +870,25 @@
   .intel-report .ir-table-wrap { max-height: none; overflow: visible; }
   .intel-report .ir-controls,
   .intel-report .ir-no-print { display: none !important; }
+
+  /* THE PERIOD PRINTS, and prints legibly. The control that set it does not — a PDF cannot be
+     filtered — but the dates it produced are the document's own scope and must be on the page. */
+  .intel-report .ir-period-banner {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .intel-report .ir-period-term { color: #475569; }
+  .intel-report .ir-period-value { color: #0f172a; }
+  .intel-report .ir-period-sentence { color: #0f172a; }
+  .intel-report .ir-problem {
+    background: #ffffff;
+    border-color: #cbd5e1;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .intel-report .ir-problem-line { color: #475569; }
+  .intel-report .ir-problem-return { color: #0f172a; border-top-color: #cbd5e1; }
   .intel-report .ir-titem { break-inside: avoid; page-break-inside: avoid; }
 }

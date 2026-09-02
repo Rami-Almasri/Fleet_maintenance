@@ -49,8 +49,18 @@ class MaintenanceTaskAssignment extends Model
         // Manual "actual mechanic time" for the attempt this stint ends — a human FACT, write-once
         // (filled only while null; edits go through FaultRepairTimeService::overwriteAttemptLabor with
         // an audit event). Never confused with the DERIVED wall-clock elapsed (assigned_at→released_at).
-        'labor_hours', 'labor_recorded_by', 'labor_recorded_at',
+        // labor_basis records what the number was CHECKED AGAINST (measured | legacy_window | declared |
+        // override) so analytics can separate validated labor from a value taken on trust.
+        'labor_hours', 'labor_basis', 'labor_override_reason', 'labor_recorded_by', 'labor_recorded_at',
     ];
+
+    /** How a recorded labor_hours was validated — see the labor_basis migration comment. */
+    public const LABOR_MEASURED      = 'measured';       // checked against the active work-session total
+    public const LABOR_LEGACY_WINDOW = 'legacy_window';  // no sessions; checked against work_started_at→released_at
+    public const LABOR_DECLARED      = 'declared';       // no work timeline at all — trusted, NOT measured
+    public const LABOR_OVERRIDE      = 'override';       // ceiling deliberately exceeded, permission + reason + audit
+    /** The bases that represent an actually-verified number — the ones analytics may treat as evidence. */
+    public const LABOR_VERIFIED_BASES = [self::LABOR_MEASURED, self::LABOR_LEGACY_WINDOW];
 
     protected $casts = [
         'assigned_at'       => 'datetime',
@@ -91,5 +101,12 @@ class MaintenanceTaskAssignment extends Model
     public function scopeOpen(Builder $q): Builder
     {
         return $q->whereNull('released_at');
+    }
+
+    /** The work/blocked intervals clocked during THIS stint — per-garage active hours after a transfer. */
+    public function workSessions(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(MaintenanceTaskWorkSession::class, 'maintenance_task_assignment_id')
+            ->orderBy('started_at')->orderBy('id');
     }
 }

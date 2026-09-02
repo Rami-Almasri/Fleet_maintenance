@@ -14,6 +14,7 @@ import { SectionCard } from '../ui/Table';
 import { Skeleton } from '../ui/Skeleton';
 import FindingsList from '../workflow/FindingsList';
 import { fmtDate, num, aed2 } from '../../lib/format';
+import storageSrc from '../../lib/storageUrl';
 
 // workflow_status → chip label + colour (the "lifecycle stage with colour coding").
 // `t` is threaded in because these live outside the component body.
@@ -36,27 +37,21 @@ const reasonMap = (t) => ({
 
 const odo = (n) => (n ? `${num(n)} km` : '—');
 
-// The backend origin behind the API client (e.g. http://127.0.0.1:8000), so local `public`-disk
-// photo URLs resolve to the dev backend regardless of APP_URL. S3 signed URLs (different host,
-// carrying a signature) are left exactly as-is.
-const API_ORIGIN = (api.defaults.baseURL || '').replace(/\/api\/?$/, '');
-function photoSrc(url) {
-  if (!url) return null;
-  try {
-    const u = new URL(url, API_ORIGIN || window.location.origin);
-    if (API_ORIGIN && u.pathname.startsWith('/storage/')) return `${API_ORIGIN}${u.pathname}`;
-    return u.href;
-  } catch {
-    return url;
-  }
-}
+// Garage-behaviour attention level → Badge tone. Mirrors App\Support\GarageSeverity's ladder; the
+// grade itself is decided server-side (config/garage_intelligence.php holds the thresholds) so this
+// map only ever colours a verdict, it never forms one.
+const GARAGE_TONE = { normal: 'green', warning: 'amber', high: 'orange', critical: 'red' };
+
+// Resolving a stored photo's URL onto the API origin lives in lib/storageUrl — the Mulkiya card
+// needs the same rule, and a subtly-different copy of it would eventually drift.
+const photoSrc = storageSrc;
 
 // Which blocks to render. Lets the tabbed Vehicle Profile put Health/Findings/Workflow on the
 // Maintenance tab and the Condition Timeline photos on the Media tab, from the same component.
 const ALL_SECTIONS = ['health', 'findings', 'workflow', 'photos'];
 
 export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTIONS }) {
-  const { t } = useI18n();
+  const { t, tf } = useI18n();
   const { can } = usePermissions();
   const allowed = can('maintenance.view');
   const show = (s) => sections.includes(s);
@@ -80,6 +75,7 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
   if (!allowed) return null;
 
   const health = data?.health;
+  const garage = data?.garage_intelligence;   // null when the feature is off or the car is unevaluated
   const tickets = data?.tickets || [];
   const photos = data?.photos || [];
   const lastOdo = data?.last_odometer_photo;
@@ -123,6 +119,98 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
               </div>
             )}
           </div>
+        </div>
+      </div>
+      )}
+
+      {/* GARAGE BEHAVIOUR — how OFTEN this car goes in, and how LONG it stays. Sits directly under
+          Health because the two answer different questions about the same car: Health is where it is
+          right now, this is the pattern it has been showing. Both figures, their attention levels and
+          the sentences under "Why" are exactly what the admin alert is raised from — one reading,
+          rendered here and delivered to the bell, so the page and the notification cannot disagree. */}
+      {show('health') && !loading && garage && (
+      <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {tf('vehicleProfile.garage.title', 'Garage Behaviour')}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {tf('vehicleProfile.garage.subtitle', 'Last {days} days', { days: garage.window_days })}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {garage.currently_in_garage && (
+              <Badge tone="blue">{tf('vehicleProfile.garage.inGarageNow', 'In a garage now')}</Badge>
+            )}
+            <Badge tone={GARAGE_TONE[garage.severity] || 'slate'}>
+              {tf(`vehicleProfile.garage.level.${garage.severity}`, garage.severity)}
+            </Badge>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-px bg-slate-100 sm:grid-cols-3">
+          {[
+            {
+              k: 'visits',
+              label: tf('vehicleProfile.garage.visits', 'Garage visits'),
+              value: num(garage.visits),
+              level: garage.visit_severity,
+            },
+            {
+              k: 'downtime',
+              label: tf('vehicleProfile.garage.downtime', 'Garage downtime'),
+              value: tf('vehicleProfile.garage.days', '{n} days', { n: garage.downtime_days }),
+              level: garage.downtime_severity,
+            },
+            {
+              k: 'share',
+              label: tf('vehicleProfile.garage.share', 'Share of the period'),
+              value: `${garage.downtime_pct ?? 0}%`,
+              // The percentage is the downtime figure expressed differently, not a third signal —
+              // giving it its own chip would imply a grade nothing actually assigns.
+              level: null,
+            },
+          ].map((tile) => (
+            <div key={tile.k} className="bg-white px-4 py-3">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{tile.label}</p>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-xl font-semibold text-slate-800">{tile.value}</span>
+                {tile.level && tile.level !== 'normal' && (
+                  <Badge tone={GARAGE_TONE[tile.level] || 'slate'}>
+                    {tf(`vehicleProfile.garage.level.${tile.level}`, tile.level)}
+                  </Badge>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* WHY — the same plain sentences the notification carries. A car with nothing to report says
+            so, rather than showing an empty heading. */}
+        <div className="px-4 py-3">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
+            {tf('vehicleProfile.garage.why', 'Why')}
+          </p>
+          {garage.reasons?.length ? (
+            <ul className="mt-1.5 space-y-1">
+              {garage.reasons.map((reason, i) => (
+                <li key={i} className="flex gap-2 text-sm text-slate-600">
+                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-300" />
+                  <span>{reason}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1.5 text-sm text-slate-500">
+              {tf('vehicleProfile.garage.settled', 'Nothing unusual — this car is going in about as often, and for about as long, as the fleet expects.')}
+            </p>
+          )}
+          {garage.last_entry_at && (
+            <p className="mt-2 text-xs text-slate-400">
+              {tf('vehicleProfile.garage.lastEntry', 'Last garage entry')}: {fmtDate(garage.last_entry_at)}
+            </p>
+          )}
         </div>
       </div>
       )}

@@ -82,6 +82,14 @@ class ResponseHelper
             return self::FailureResponse($e->context ?: null, $e->getMessage(), 422);
         }
 
+        // The warranty gate declined a purchase. Same envelope as a workflow refusal on purpose: the
+        // frontend already knows how to read a 422 whose `data` explains the refusal, so this arrives
+        // as a card the form can render (which warranties are live, who to ring, may I override?)
+        // rather than as a new error protocol nobody has wired up.
+        if ($e instanceof \App\Exceptions\WarrantyGateException) {
+            return self::FailureResponse($e->context ?: null, $e->getMessage(), 422);
+        }
+
         if ($e instanceof AuthenticationException) {
             return self::FailureResponse(null, 'Unauthenticated.', 401);
         }

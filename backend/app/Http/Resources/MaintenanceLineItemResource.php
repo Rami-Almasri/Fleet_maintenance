@@ -20,9 +20,17 @@ class MaintenanceLineItemResource extends JsonResource
 
         return [
             'id'                 => $li->id,
-            'kind'               => $li->kind,                 // 'part' | 'labor'
+            'kind'               => $li->kind,                 // 'part' | 'labor' | 'vat' | 'discount' | 'adjustment'
             'description'        => $li->description,
             'part_number'        => $li->part_number,
+            // WHICH WORK ITEM this charge belongs to. `finding_text` is the wording the line was
+            // attributed to (Diagnosis-First); this is the fault / service row on the ticket it resolved
+            // to, which is what lets a bill be read back as "this service cost this much" rather than as
+            // a list of prices under a heading.
+            'maintenance_task_id' => $li->maintenance_task_id,
+            // The catalog part's own name, when the relation was loaded — the identity, as opposed to the
+            // billed wording. Null both when no part is referenced and when the caller didn't load it.
+            'catalog_part_name'  => $li->relationLoaded('catalogPart') ? $li->catalogPart?->name : null,
             // The part's IDENTITY. The editor re-opens on this, not on `description` — a line whose
             // id is null is history typed before the picker and is shown as still needing a part.
             'component_catalog_id' => $li->component_catalog_id,

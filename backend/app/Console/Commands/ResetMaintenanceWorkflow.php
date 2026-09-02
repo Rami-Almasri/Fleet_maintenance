@@ -55,6 +55,11 @@ class ResetMaintenanceWorkflow extends Command
 
     public function handle(): int
     {
+        // Bulk rewind: each per-vehicle reconcile below would otherwise re-grade the car's garage
+        // behaviour and could alert on state being unwound rather than lived. Silence it — the
+        // nightly `garage:intelligence-sweep` re-reads the whole fleet afterwards.
+        \App\Services\Garage\GarageIntelligenceService::$muted = true;
+
         $dryRun = (bool) $this->option('dry-run');
 
         $query = Maintenance::query()->whereNotNull('workflow_status');

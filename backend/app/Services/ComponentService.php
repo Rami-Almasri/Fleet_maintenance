@@ -6,12 +6,14 @@ use App\Models\ActionCatalog;
 use App\Models\ComponentCatalog;
 use App\Models\ComponentEvent;
 use App\Models\Maintenance;
+use App\Models\MaintenanceLineItem;
 use App\Models\MaintenanceTaskAction;
 use App\Models\PartPurchase;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleComponent;
 use App\Models\VehicleLogEvent;
+use App\Support\PartSpecs;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -54,8 +56,10 @@ class ComponentService
         VehicleComponent::DISP_SOLD_WITH_VEHICLE => [VehicleComponent::STATUS_RETIRED,  VehicleComponent::LOC_SOLD,      true],
     ];
 
-    public function __construct(private VehicleLogService $log)
-    {
+    public function __construct(
+        private VehicleLogService $log,
+        private VehiclePartSpecService $partSpecs,
+    ) {
     }
 
     // ───────────────────────────── workflow install (the Scenario-1 write) ─────────────────────────────
@@ -123,6 +127,10 @@ class ComponentService
                 // model code is given, the catalog type carries the noun so the label is always a
                 // thing rather than a brand.
                 'label'       => trim(($identity['brand'] ?? '') . ' ' . ($identity['model'] ?? $catalog->name)) ?: $purchase->part_name,
+                // What was FITTED, preferring what the installer stated over what was ordered — the
+                // two differ whenever the shop supplied the nearest size they had, and the fitted
+                // figure is the one the car now has.
+                'specs'       => $identity['specs'] ?? $purchase->specs,
                 'quantity'    => $purchase->quantity ?: 1,
                 'position'    => $position,
 
@@ -298,6 +306,156 @@ class ComponentService
             ]);
 
             return $component->fresh();
+        });
+    }
+
+    // ───────────────────────────── garage-billed install (the invoice-line door) ─────────────────
+
+    /**
+     * Fit a part that a GARAGE supplied and billed for, from the part line on its bill.
+     *
+     * THE THIRD DOOR, and the one that was missing. Until now a component could be born from a
+     * purchase we raised (installFromPurchase) or from a technician's capture (installFromAction).
+     * Neither covers the commonest way a part actually reaches these cars: the garage fits its own
+     * stock and itemises it on the invoice. Those parts were money and nothing else — no component,
+     * no warranty, no part history — so a car's known configuration was silently missing exactly the
+     * parts most likely to have been changed.
+     *
+     * WHAT IT REFUSES TO DO. Each refusal names itself in `$reason` so the caller can report it
+     * rather than swallow it; a refusal is never an error and never blocks the invoice:
+     *
+     *   · NO CANONICAL PART → `no_canonical_part`. A line whose wording never resolved to a catalog
+     *     entry is not a known part, and guessing which one it is to raise a success rate is exactly
+     *     how a ledger fills with confident nonsense.
+     *   · CONSUMABLE → `consumable_never_a_component`. The standing rule, unchanged.
+     *   · POSITION REQUIRED, NONE KNOWN → `deferred_missing_position`. An invoice line says "Front
+     *     brake pads (set)"; it does not say which corner. Placing it in the null slot would invent a
+     *     physical placement AND — worse — occupy the slot, so the real fitting could never be
+     *     recorded afterwards. Deferring keeps the case reviewable and costs nothing but a row that
+     *     does not exist yet.
+     *   · SLOT OCCUPIED → `deferred_slot_occupied`. Replacing a known part means closing out its
+     *     predecessor, and a close-out needs a reason AND a disposition ("no disposition, no
+     *     removal"). An invoice does not say what happened to the old part. Same refusal
+     *     installFromAction makes, for the same reason.
+     *
+     * WHAT IT WILL NOT INVENT. `installed_at` is the line's own `installed_on` or NULL — never
+     * today's date, because the day a bill was keyed is not the day a part went on. A null install
+     * date means the component's age reads Unknown, which is true. warranty_until then derives to
+     * null on its own (VehicleComponent's boot hook), so no warranty is manufactured either.
+     *
+     * PROVENANCE. `purchase` evidence with `garage_supplied` acquisition — the orthogonal pair the
+     * column docs describe. The evidence channel is `purchase` because there IS paperwork and a
+     * price behind this row, which is what permits it to carry purchase_cost. The acquisition is
+     * `garage_supplied` because the part came off the garage's shelf, which deliberately withholds
+     * the catalog's default warranty months (ACQ_WARRANTABLE) — that warranty is a conversation with
+     * the garage, not an entitlement on our ledger. A warranty the bill STATES is still honoured.
+     *
+     * @param  string|null  $reason  out-param naming the refusal when null is returned
+     */
+    public function installFromGarageLine(
+        PartPurchase $purchase,
+        MaintenanceLineItem $line,
+        User $actor,
+        ?string &$reason = null,
+    ): ?VehicleComponent {
+        $reason = null;
+
+        if (! $line->component_catalog_id || ! ($catalog = ComponentCatalog::find($line->component_catalog_id))) {
+            $reason = 'no_canonical_part';
+
+            return null;
+        }
+
+        if ($catalog->isConsumable()) {
+            $reason = 'consumable_never_a_component';
+
+            return null;
+        }
+
+        if (! $line->vehicle_id) {
+            $reason = 'no_vehicle';
+
+            return null;
+        }
+
+        // Already done. Asked before the transaction so a re-run is cheap, and enforced again by the
+        // unique index on part_purchases.maintenance_line_item_id one level up.
+        if ($existing = VehicleComponent::where('source_line_item_id', $line->id)->first()) {
+            return $existing;
+        }
+
+        // A part type that takes a position needs one. An invoice line has no position column and
+        // never will — the paper does not say which corner. See the docblock.
+        if ($catalog->positionsFor() !== []) {
+            $reason = 'deferred_missing_position';
+
+            return null;
+        }
+
+        return DB::transaction(function () use ($purchase, $line, $actor, $catalog, &$reason) {
+            if ($this->lockSlot($catalog, $line->vehicle_id, null)) {
+                $reason = 'deferred_slot_occupied';
+
+                logger()->info('asset_layer.garage_line_slot_occupied', [
+                    'vehicle_id'   => $line->vehicle_id,
+                    'catalog'      => $catalog->slug,
+                    'line_item_id' => $line->id,
+                ]);
+
+                return null;
+            }
+
+            $component = $this->makeComponent($catalog, [
+                'part_number' => $line->part_number,
+                'label'       => $line->description ?: $catalog->name,
+                // A serialized type is one physical object; a batch type carries its count in the
+                // quantity column rather than becoming N rows (the shape every other door uses).
+                'quantity'    => $catalog->isSerialized() ? 1 : ($line->quantity ?: 1),
+                'position'    => null,
+
+                // The bill's own date, or nothing. Never Carbon::now() — see the docblock.
+                'installed_at'       => $line->installed_on,
+                'installed_odometer' => $line->installed_odometer,
+                'installed_by'       => $actor->id,
+                'installed_by_name'  => $actor->name ?: $actor->email,
+                // The garage both supplied AND fitted it, so it is the installer and the seller.
+                'installer_vendor_id' => $purchase->source_vendor_id,
+                'supplier_vendor_id'  => $purchase->source_vendor_id,
+
+                'purchase_cost' => $purchase->purchase_price,
+                'currency'      => $purchase->currency ?: 'AED',
+                // Only what the bill actually states. No catalog default: a garage-supplied part is
+                // not ACQ_WARRANTABLE, and inventing months here would manufacture an entitlement.
+                'warranty_months' => $line->warranty_months,
+
+                'source_part_purchase_id'    => $purchase->id,
+                'source_line_item_id'        => $line->id,
+                'source_maintenance_task_id' => $line->maintenance_task_id,
+                'source'                     => VehicleComponent::SOURCE_WORKFLOW,
+                'evidence_channel'           => VehicleComponent::EV_PURCHASE,
+                'acquisition'                => VehicleComponent::ACQ_GARAGE_SUPPLIED,
+            ], status: VehicleComponent::STATUS_ACTIVE, location: VehicleComponent::LOC_ON_VEHICLE, vehicleId: $line->vehicle_id, allowMissingSerial: true);
+
+            $this->recordEvent($component, ComponentEvent::EVENT_INSTALLED, $actor, [
+                'to_vehicle_id'       => $line->vehicle_id,
+                'odometer'            => $line->installed_odometer,
+                'maintenance_id'      => $line->maintenance_id,
+                'maintenance_task_id' => $line->maintenance_task_id,
+                'note'                => 'Supplied and fitted by the garage, billed on line #' . $line->id,
+                'meta'                => [
+                    'evidence_channel'       => VehicleComponent::EV_PURCHASE,
+                    'acquisition'            => VehicleComponent::ACQ_GARAGE_SUPPLIED,
+                    'part_purchase_id'       => $purchase->id,
+                    'maintenance_line_item_id' => $line->id,
+                ],
+            ]);
+
+            // refresh() rather than fresh(): the SAME instance is returned, so `wasRecentlyCreated`
+            // survives and callers can tell a component this call built from one it merely found.
+            // The backfill's honesty about how much it actually wrote depends on that distinction.
+            $component->refresh();
+
+            return $component;
         });
     }
 
@@ -759,6 +917,9 @@ class ComponentService
                 'brand'       => $data['brand'] ?? null,
                 'model'       => $data['model'] ?? null,
                 'label'       => $data['label'] ?? $purchase?->part_name,
+                // A shelf part has a size too, and it is the fact that decides which car it can go
+                // on later — a 60Ah spare and a 70Ah spare are not interchangeable stock.
+                'specs'       => $data['specs'] ?? $purchase?->specs,
                 'quantity'    => $data['quantity'] ?? ($purchase?->quantity ?: 1),
 
                 'supplier_vendor_id' => $data['supplier_vendor_id'] ?? $purchase?->source_vendor_id,
@@ -1042,6 +1203,26 @@ class ComponentService
         // whenever somebody corrects a type — and the Replaced view then shows a limit that was
         // never in force while that part was fitted. An explicit value in $attrs wins: a fitting may
         // legitimately carry its own limit (a heavy-duty variant, a supplier's stated interval).
+        // WHAT the part is — 12V 60Ah, 225/65R17. Normalised through the shared dictionary at the
+        // one place every component is born, so a spec typed on the install form, imported from a
+        // purchase and captured by a technician all land in the same shape and render identically
+        // wherever the part is shown afterwards.
+        //
+        // Unparseable values are DROPPED, not thrown on: this runs inside closing a ticket, and a
+        // note about the battery's voltage is never worth failing an install the workshop has
+        // already performed. The honest outcome is that the spec stays blank. @see PartSpecs
+        if (! empty($attrs['specs'])) {
+            try {
+                $attrs['specs'] = PartSpecs::validate($catalog, (array) $attrs['specs']) ?: null;
+            } catch (\Throwable $e) {
+                logger()->info('part_specs.install_value_rejected', [
+                    'catalog' => $catalog->slug,
+                    'reason'  => $e->getMessage(),
+                ]);
+                $attrs['specs'] = null;
+            }
+        }
+
         $component = new VehicleComponent(array_merge([
             'expected_life_km'     => $catalog->expected_life_km,
             'expected_life_months' => $catalog->expected_life_months,
@@ -1060,6 +1241,17 @@ class ComponentService
             : VehicleComponent::VALIDATION_PROVISIONAL;
 
         $component->save();
+
+        // The part that went on this car becomes what this car is known to take — so the NEXT
+        // person ordering one is shown 12V 60Ah before they type anything.
+        //
+        // Recorded as an OBSERVATION, and labelled as one everywhere it is shown: it is evidence of
+        // what was fitted, not a ruling that it was correct. The service refuses to overwrite a
+        // figure a human entered, which is where that rule is actually enforced.
+        if ($component->vehicle_id && $component->specs) {
+            $component->setRelation('catalog', $catalog);
+            $this->partSpecs->learnFromComponent($component);
+        }
 
         return $component;
     }
@@ -1220,13 +1412,22 @@ class ComponentService
             default                                 => "{$type} {$event}",
         };
 
-        $suffix = $detail;
+        // WHAT WAS FITTED, not just that something was — "Battery installed — Bosch S5 · 12V · 60 Ah".
+        // This is the line that makes the timeline answer "did they put the right one in?", which is
+        // the question a biography of a car with three batteries in two years actually raises. The
+        // spec is stamped into the sentence at write time rather than resolved on read, for the same
+        // reason expected_life is snapshotted: a timeline entry must keep saying what was true on the
+        // day, even after the part is corrected or the catalog is edited.
+        $specLine = PartSpecs::summary($component->catalog, $component->specs);
+        $bits     = array_filter([$detail, $specLine ?: null]);
+
         if ($event === ComponentEvent::EVENT_REMOVED && ($reason = $data['meta']['removal_reason'] ?? null)) {
-            $reasonText = str_replace('_', ' ', $reason);
-            $suffix = $detail ? "{$detail} · {$reasonText}" : $reasonText;
+            $bits[] = str_replace('_', ' ', $reason);
         }
 
-        return $suffix ? "{$headline} — {$suffix}" : $headline;
+        $suffix = implode(' · ', $bits);
+
+        return $suffix !== '' ? "{$headline} — {$suffix}" : $headline;
     }
 
     private function terminalEventFor(string $disposition): string
@@ -1282,7 +1483,14 @@ class ComponentService
                     $this->log->recordVehicle($vehicle, $logEvent, $actor, [
                         'source_tag'  => 'components',
                         'description' => $this->timelinePhrase($component, $event, $data),
-                        'meta'        => ['component_id' => $component->id, 'component_event_id' => $row->id] + ($data['meta'] ?? []),
+                        'meta'        => [
+                            'component_id'       => $component->id,
+                            'component_event_id' => $row->id,
+                            // Also carried structurally, beside the sentence that already contains
+                            // it, so a timeline filter can ask "show me every 60Ah battery" without
+                            // parsing prose.
+                            'spec_summary'       => PartSpecs::summary($component->catalog, $component->specs) ?: null,
+                        ] + ($data['meta'] ?? []),
                     ]);
                 }
             }

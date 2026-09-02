@@ -142,7 +142,16 @@ class FaultLocationService
     public function maxQuantity(): int
     {
         $configured = (int) config('vehicle_locations.max_quantity', 40);
-        $stored     = AppSetting::get(self::SETTING_MAX_QUANTITY);
+
+        // Wrapped like every other lookup in this service, and for the same reason: a missing table
+        // must degrade to the authored default, not throw. This one was NOT wrapped, so on a
+        // half-migrated environment — the exact case the fallbacks above exist for — a sanity rail
+        // took the whole request down with it.
+        try {
+            $stored = AppSetting::get(self::SETTING_MAX_QUANTITY);
+        } catch (\Throwable $e) {
+            $stored = null; // table missing (pre-migration) — the authored default covers it
+        }
 
         $max = is_numeric($stored) ? (int) $stored : $configured;
 

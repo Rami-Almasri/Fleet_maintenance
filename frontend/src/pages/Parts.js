@@ -15,6 +15,7 @@ import PartsAnalytics from '../components/analytics/PartsAnalytics';
 import PartPurchaseHistory from '../components/parts/PartPurchaseHistory';
 import PartRecordModal from '../components/parts/PartRecordModal';
 import PartReturnModal from '../components/parts/PartReturnModal';
+import PartSpecFields from '../components/parts/PartSpecFields';
 import { SHOW_FINANCIALS } from '../config/features';
 import { aed, fmtAgo, num } from '../lib/format';
 import { useI18n } from '../i18n/I18nContext';
@@ -58,7 +59,9 @@ const SOURCE_TONE = { customer: 'violet', garage: 'amber' };
 const REQUEST_SOURCE_LABEL = { customer: 'Customer', garage: 'Garage' };
 
 // Where a prior part was bought, for the duplicate warning's "Bought from …" line.
-const sourceLabel = (src) => (src === 'garage' ? 'Garage' : src === 'supplier' ? 'Parts supplier' : null);
+// `store` is a source like the other two: a part taken off our own shelf. It names no vendor, which
+// is the point — the money was spent when the part was bought INTO the store.
+const sourceLabel = (src) => (src === 'garage' ? 'Garage' : src === 'supplier' ? 'Parts supplier' : src === 'store' ? 'Storehouse' : null);
 
 // The five reasons the buyer must pick when a duplicate purchase is flagged.
 const DUP_REASONS = [
@@ -90,6 +93,10 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
     quantity: 1,
     po_number: '',
     notes: '',
+    // WHAT was bought — 12V 60Ah, 225/65R17. Typed here because this is the one moment somebody is
+    // holding the part and knows. It is what lets the fleet later ask which battery is worth buying
+    // instead of only what a battery costs. @see lib/partSpecs
+    specs: {},
     duplicate_reason_code: '',
     duplicate_reason_note: '',
   });
@@ -97,6 +104,10 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
   const [saving, setSaving] = useState(false);
   const [dup, setDup] = useState(null);        // duplicate-check result
   const [checking, setChecking] = useState(false);
+  // What the storehouse holds of this part. A buyer about to spend money is the last person who can
+  // still avoid spending it, so the shelf is checked here as well as at request time.
+  const [stock, setStock] = useState(null);
+  const [issuing, setIssuing] = useState(false);
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
@@ -113,13 +124,30 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
       quantity: request.quantity || 1,
       po_number: '',
       notes: '',
+      // Pre-filled with what was ASKED for, so the buyer confirms a size rather than retyping it —
+      // and so a request that specified 60Ah does not lose that fact just because the counter was
+      // busy. The buyer can change it; what they leave is what gets recorded.
+      specs: request.specs || {},
       duplicate_reason_code: '',
       duplicate_reason_note: '',
     });
     setErrors({});
     setDup(null);
+    setStock(null);
 
     let alive = true;
+
+    api.get('/store/availability', {
+      params: {
+        component_catalog_id: request.component_catalog_id || undefined,
+        part_name: request.part_name,
+        part_number: request.part_number || undefined,
+      },
+    })
+      .then((r) => { if (alive) setStock(payload(r)); })
+      // Advisory only — a storehouse that will not answer must never block a purchase.
+      .catch(() => { if (alive) setStock(null); });
+
     setChecking(true);
     api.get('/part-purchases/duplicate-check', {
       params: {
@@ -164,6 +192,9 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
         quantity: Number(form.quantity) || 1,
         po_number: form.po_number.trim() || null,
         notes: form.notes.trim() || null,
+        // Omitted entirely when nothing was typed: an empty map and "no spec recorded" are the same
+        // fact, and sending {} would write an empty JSON object where null reads more honestly.
+        specs: Object.keys(form.specs || {}).length ? form.specs : undefined,
       };
       if (isDuplicate) {
         body.duplicate_reason_code = form.duplicate_reason_code;
@@ -185,6 +216,31 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
 
   const prev = dup?.context?.previous;
 
+  // The shelf can only answer for the quantity being bought — holding two when four are needed is
+  // not an alternative to the purchase, so the offer is not made.
+  const onHand = Number(stock?.qty_on_hand) || 0;
+  const storeCanCover = onHand >= (Number(form.quantity) || 1);
+
+  /** Take it off the shelf instead of buying it. Same request, different door. */
+  const takeFromStore = async () => {
+    if (!stock?.item?.id) return;
+    setIssuing(true);
+    try {
+      await api.post(`/store/issue/${request.id}`, {
+        store_item_id: stock.item.id,
+        quantity: Number(form.quantity) || 1,
+      });
+      toast.success(t('Taken from the storehouse — ready to fit'));
+      onDone();
+      onClose();
+    } catch (err) {
+      const r = err.response?.data;
+      toast.error(r?.message || r?.msg || t('Could not take this part from the storehouse'));
+    } finally {
+      setIssuing(false);
+    }
+  };
+
   return (
     <Modal
       open={open}
@@ -201,6 +257,37 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
     >
       <div className="space-y-4">
         {checking && <div className="text-xs text-slate-400">{t('parts.purchase.loadingRecord')}</div>}
+
+        {/* WE ALREADY HAVE ONE. Placed above the duplicate warning and the source toggle because it
+            is the only thing on this form that can stop the spend entirely, and it is useless once
+            the money is committed. Taking it charges the ticket what the fleet paid for the unit —
+            not a new price, and not nothing. */}
+        {onHand > 0 && (
+          <div className="rounded-xl bg-emerald-50 px-4 py-3 ring-1 ring-inset ring-emerald-600/20">
+            <p className="font-bold text-emerald-900">{t('The storehouse has this part')}</p>
+            <p className="mt-1 text-sm text-emerald-800">
+              {stock?.unit_cost != null
+                ? t('{n} on the shelf{where} — about {price} each, at what we paid for them.', {
+                    n: num(onHand),
+                    where: stock?.item?.location ? t(' (shelf {location})', { location: stock.item.location }) : '',
+                    price: aed(stock.unit_cost),
+                  })
+                : t('{n} on the shelf{where}. No priced receipt stands behind them, so no cost will be charged to this ticket.', {
+                    n: num(onHand),
+                    where: stock?.item?.location ? t(' (shelf {location})', { location: stock.item.location }) : '',
+                  })}
+            </p>
+            {storeCanCover ? (
+              <Button className="mt-2.5" variant="success" size="sm" loading={issuing} onClick={takeFromStore}>
+                {t('Take it from the storehouse instead')}
+              </Button>
+            ) : (
+              <p className="mt-1.5 text-xs font-medium text-emerald-900">
+                {t('You are buying {wanted}, and the shelf holds {n} — not enough to cover it from stock.', { wanted: num(Number(form.quantity) || 1), n: num(onHand) })}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Duplicate-purchase warning — prominent, and it gates the submit button. */}
         {isDuplicate && (
@@ -298,6 +385,18 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
               onChange={(e) => set('purchase_price', e.target.value)}
             />
             <Input label={t('parts.purchase.currency')} className="w-20" value={form.currency} onChange={(e) => set('currency', e.target.value)} />
+          </div>
+          {/* Rendered by the part TYPE, so a battery asks for voltage and capacity while a tyre asks
+              for the size — and a part type with no specs shows nothing at all rather than an empty
+              heading. Deliberately beside the price: the two together are the whole comparison the
+              variant report is later able to make. */}
+          <div className="sm:col-span-3">
+            <PartSpecFields
+              catalogId={request?.component_catalog_id}
+              value={form.specs}
+              disabled={saving}
+              onChange={(specs) => set('specs', specs)}
+            />
           </div>
           <Input
             label={t('parts.purchase.quantity')}

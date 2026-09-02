@@ -50,6 +50,16 @@ const STATES = {
 
 const NON_REPAIR = ['cancelled', 'not_found'];
 
+// The kinds of row a bill can carry. Parts and labour are the WORK; VAT, a discount and an adjustment
+// belong to the document itself and are charged to no fault (MaintenanceLineItem::KINDS).
+const LINE_KIND = {
+  part:       { label: 'Part',       chip: 'bg-blue-100 text-blue-700' },
+  labor:      { label: 'Labor',      chip: 'bg-cyan-100 text-cyan-700' },
+  vat:        { label: 'VAT',        chip: 'bg-slate-200 text-slate-600' },
+  discount:   { label: 'Discount',   chip: 'bg-emerald-100 text-emerald-700' },
+  adjustment: { label: 'Adjustment', chip: 'bg-amber-100 text-amber-700' },
+};
+
 // A ticket carries WORK of four kinds and an oil change is not a fault — the desk groups and counts by
 // each item's own kind (MaintenanceTask::KIND_META, carried on the task as kind / kind_meta).
 const KIND_ORDER = ['fault', 'service', 'inspection', 'damage'];
@@ -107,7 +117,9 @@ function MatchRing({ matched = 0, total = 0, size = 92 }) {
       </div>
       <div className="text-xs">
         <p className="font-semibold text-slate-700">{t('Matched')}</p>
-        <p className="tabular-nums text-slate-400">{t('{billed} of {total} billed', { billed: matched, total })}</p>
+        {/* CARS, not work items. This read "1 of 6 billed" — the same phrase the queue rows use for a
+            car's own faults — so the desk's headline looked like a count of billed work. */}
+        <p className="tabular-nums text-slate-400">{t('{n} of {total} cars back', { n: matched, total })}</p>
       </div>
     </div>
   );
@@ -355,10 +367,21 @@ function ChargedLines({ invoices, activeInvoiceId, onHover }) {
                   {inv.line_items.map((li) => (
                     <tr key={li.id} className="border-b border-slate-100 last:border-0">
                       <td className="py-1.5 pe-2">
-                        <span className={`me-1.5 inline-block rounded px-1 py-0.5 text-[9px] font-bold uppercase ${li.kind === 'labor' ? 'bg-cyan-100 text-cyan-700' : 'bg-blue-100 text-blue-700'}`}>
-                          {li.kind === 'labor' ? t('Labor') : t('Part')}
+                        {/* A bill carries four kinds of row, not two. VAT, a discount and an adjustment
+                            were all falling through to "Part", which reads as a component that was
+                            fitted — so a tax line looked like a part nobody could find on the car. */}
+                        <span className={`me-1.5 inline-block rounded px-1 py-0.5 text-[9px] font-bold uppercase ${LINE_KIND[li.kind]?.chip || LINE_KIND.part.chip}`}>
+                          {t(LINE_KIND[li.kind]?.label || LINE_KIND.part.label)}
                         </span>
-                        <span className="text-slate-700">{li.description}</span>
+                        {/* WHICH PART was fitted — the catalog identity leads, the billed wording follows
+                            only when the garage wrote it differently. */}
+                        <span className="text-slate-700" dir="auto">{li.catalog_part_name || li.description}</span>
+                        {li.catalog_part_name && li.description && li.catalog_part_name !== li.description && (
+                          <span className="ms-1 text-slate-400" dir="auto">“{li.description}”</span>
+                        )}
+                        {li.part_number && <span className="ms-1 font-mono text-[10px] text-slate-400">{li.part_number}</span>}
+                        {/* WHAT IT WAS FOR. VAT and a discount belong to the document and name no fault,
+                            so they are not dressed up with one. */}
                         {li.finding_text && <span className="ms-1 text-slate-400">· {li.finding_text}</span>}
                       </td>
                       <td className="whitespace-nowrap py-1.5 text-end tabular-nums text-slate-400">

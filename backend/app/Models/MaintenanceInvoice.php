@@ -23,7 +23,7 @@ use Illuminate\Support\Facades\Storage;
  * `amount` (= parts_total + labor_total) is this invoice's grand total, kept honest from its lines. The
  * ticket's `cost` stays the sum of ALL its lines (unchanged), i.e. the sum of its invoices' amounts.
  */
-class MaintenanceInvoice extends Model
+class MaintenanceInvoice extends Model implements \App\Contracts\FinancialEventSource
 {
     use \App\Models\Concerns\IsFinancialDocument;
 
@@ -93,6 +93,12 @@ class MaintenanceInvoice extends Model
     public function documentRefunded(): float
     {
         return 0.0;
+    }
+
+    /** A garage bill is keyed on its ticket, by whoever runs maintenance — the gate its own routes carry. */
+    public function paperPermission(): string
+    {
+        return 'maintenance.manage';
     }
 
     /** A garage bill carries no separate invoice date — it is reckoned from when we recorded it. */
@@ -184,6 +190,134 @@ class MaintenanceInvoice extends Model
     public function isReconciled(): bool
     {
         return $this->reconciliation_status === Maintenance::RECON_RECONCILED;
+    }
+
+    // ── Financial event source (App\Contracts\FinancialEventSource) ────────────────────────────────
+    //
+    // A garage bill is the CANONICAL producer of a repair/routine obligation, and it already holds
+    // every fact the accounting system needs: the supplier, the number, the date, the receipt scan and
+    // the itemised lines. So the financial layer ASKS this object rather than asking a person to type
+    // the same things into a finance screen — that is §31, enforced by the interface rather than
+    // remembered by a developer. Everything below is a read of existing state; nothing new is stored.
+
+    /**
+     * Which kind of cost this bill is, taken from the ticket's own classification.
+     *
+     * The ticket already answers "was this a breakdown or a scheduled service", so the expense type is
+     * derived from it rather than being a second thing to set. A bill with nothing to pay generates NO
+     * obligation and returns null — its event becomes NOT_REQUIRED, which is how a zero-cost or warranty
+     * bill stays visible as "no money involved" instead of silently having no event at all.
+     */
+    public function financialExpenseType(): ?string
+    {
+        if (round((float) $this->amount, 2) <= 0) {
+            return null;
+        }
+
+        return $this->maintenance?->maintenance_type === Maintenance::TYPE_ROUTINE
+            ? \App\Support\ExpenseType::ROUTINE
+            : \App\Support\ExpenseType::REPAIR;
+    }
+
+    public function financialAmount(): float
+    {
+        return round((float) $this->amount, 2);
+    }
+
+    public function financialCurrency(): string
+    {
+        return 'AED';
+    }
+
+    public function financialVehicleId(): ?int
+    {
+        return $this->maintenance?->vehicle_id;
+    }
+
+    public function financialMaintenanceId(): ?int
+    {
+        return $this->maintenance_id;
+    }
+
+    /**
+     * The garage that issued the bill.
+     *
+     * An INTERNAL job (is_internal) has no third party to pay, so it names no vendor — and because a
+     * vendor bill requires a mapped partner, such an event blocks with `supplier_missing` until somebody
+     * decides how in-house work should be recorded. That is the honest outcome: we genuinely do not know
+     * who to bill, and guessing would post a cost against the wrong partner.
+     */
+    public function financialVendorId(): ?int
+    {
+        return $this->is_internal ? null : $this->vendor_id;
+    }
+
+    public function financialInvoiceNumber(): ?string
+    {
+        $no = trim((string) $this->invoice_no);
+
+        return $no === '' ? null : $no;
+    }
+
+    /** The bill's own date — recorded_at, which is what documentDate() already reckons this bill from. */
+    public function financialInvoiceDate(): ?string
+    {
+        return $this->documentDate();
+    }
+
+    /** @return array{disk:?string, key:?string}|null */
+    public function financialAttachment(): ?array
+    {
+        return $this->receipt_photo_key
+            ? ['disk' => $this->receipt_photo_disk, 'key' => $this->receipt_photo_key]
+            : null;
+    }
+
+    public function financialDescription(): string
+    {
+        $plate  = $this->maintenance?->vehicle?->plate_no ?: $this->maintenance?->plate;
+        $garage = $this->vendor?->name;
+
+        return trim(implode(' — ', array_filter([
+            'Maintenance ticket #' . $this->maintenance_id,
+            $plate ? 'Vehicle ' . $plate : null,
+            $garage,
+        ])));
+    }
+
+    /**
+     * The postable lines: the bill's own WORK lines, and only those.
+     *
+     * VAT, discount and adjustment bands are deliberately excluded. They share the lineItems() relation
+     * with work lines ([[invoice-bands-are-ledger-lines]]), but they are document-level arithmetic
+     * rather than things bought — Odoo computes tax from its own tax records on the bill, so sending a
+     * VAT line as a product line would tax the bill twice. The event's amount therefore reconciles
+     * against the WORK total, and {@see \App\Services\Odoo\FinancialEventBuilder} sets it from these
+     * lines rather than from `amount`.
+     *
+     * @return list<array{origin_type:?string, origin_id:?int, component_catalog_id:?int, kind:string,
+     *                    description:string, quantity:float, uom:?string, unit_price:float}>
+     */
+    public function financialLines(): array
+    {
+        $lines = $this->relationLoaded('lineItems') ? $this->lineItems : $this->lineItems()->get();
+
+        return $lines
+            ->whereIn('kind', MaintenanceLineItem::WORK_KINDS)
+            ->map(fn (MaintenanceLineItem $li) => [
+                'origin_type'          => $li->getMorphClass(),
+                'origin_id'            => $li->id,
+                'component_catalog_id' => $li->component_catalog_id,
+                'kind'                 => $li->kind === MaintenanceLineItem::KIND_PART
+                    ? \App\Models\FinancialEventLine::KIND_PART
+                    : \App\Models\FinancialEventLine::KIND_LABOR,
+                'description'          => (string) ($li->description ?: 'Line ' . $li->id),
+                'quantity'             => (float) $li->quantity,
+                'uom'                  => $li->uom,
+                'unit_price'           => (float) $li->unit_price,
+            ])
+            ->values()
+            ->all();
     }
 
     /** A viewable URL for the uploaded receipt photo (signed temporary for S3, plain URL otherwise). */

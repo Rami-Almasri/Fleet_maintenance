@@ -24,6 +24,7 @@
 
 const phrasesAr = {
   ' · first {shown} of {total}': ' · أول {shown} من أصل {total}',
+  '(logged on return)': '(سُجِّل عند العودة)',
   '1 item needs attention now': 'بند واحد يحتاج انتباهًا الآن',
   '1 item to watch': 'بند واحد للمتابعة',
   '1 repeat fault': 'عطل متكرر واحد',
@@ -40,8 +41,10 @@ const phrasesAr = {
   'Badge': 'شارة',
   'Bought — waiting for the key to arrive': 'تم الشراء — بانتظار وصول المفتاح',
   'Brand (optional)': 'الماركة (اختياري)',
+  'Came back that day': 'عادت في ذلك اليوم',
   'Cancel requirement': 'إلغاء الطلب',
   'Cancel this requirement': 'إلغاء هذا الطلب',
+  'Cars in a garage': 'سيارات في الورشة',
   'Cars still owed a spare key — a refused purchase counts, because the car still has none': 'السيارات التي لا تزال بحاجة إلى مفتاح احتياطي — والشراء المرفوض يُحتسب، لأن السيارة ما زالت بلا مفتاح',
   'Choose the primary and accent colours the whole app is painted in. Saved on this device only.': 'اختر اللون الأساسي واللون المميز اللذين يُطلى بهما التطبيق بالكامل. يُحفظ على هذا الجهاز فقط.',
   'Colours': 'الألوان',
@@ -55,7 +58,9 @@ const phrasesAr = {
   'Custom shade': 'درجة مخصصة',
   'Dark': 'داكن',
   'Dark mode shade': 'درجة الوضع الداكن',
+  'Days in by then': 'الأيام حتى ذلك اليوم',
   'Deep Ocean': 'أعماق المحيط',
+  'Due back that day': 'مستحقة العودة ذلك اليوم',
   'Espresso': 'إسبريسو',
   'Estimated price (optional)': 'السعر التقديري (اختياري)',
   'Every': 'كل',
@@ -78,10 +83,12 @@ const phrasesAr = {
   'Happened once — {date}': 'حدث مرة واحدة — {date}',
   'How many keys': 'عدد المفاتيح',
   'How many keys arrived': 'عدد المفاتيح التي وصلت',
+  'In a garage on the day': 'في ورشة في ذلك اليوم',
   'In procurement': 'قيد الشراء',
   'In the Garage': 'في الورشة',
   'In the workshop': 'داخل الورشة',
   'Including the ones already met': 'بما فيها الطلبات التي تم تلبيتها',
+  'Inside the promise': 'ضمن الموعد',
   'Keep it': 'الإبقاء عليه',
   'Key code / serial (if the key carries one)': 'رمز المفتاح / الرقم التسلسلي (إن وُجد)',
   'Key lost': 'فقدان المفتاح',
@@ -91,8 +98,11 @@ const phrasesAr = {
   'Last time': 'آخر مرة',
   'Last workshop visit': 'آخر زيارة ورشة',
   'Last-service odometer or interval is missing': 'قراءة عداد آخر صيانة أو الفاصل غير مسجّل',
+  'Late by 1 day': 'متأخرة يومًا واحدًا',
+  'Late by {n} days': 'متأخرة {n} يومًا',
   'Light': 'فاتح',
   'Link': 'رابط',
+  'Logged on return': 'سُجِّل عند العودة',
   'Looks': 'الأنماط',
   'Manual': 'يدوي',
   'Mark Received': 'تسجيل الاستلام',
@@ -101,6 +111,8 @@ const phrasesAr = {
   'Most often at': 'الأكثر تكراراً في',
   'New — not yet rented': 'جديدة — لم تُؤجَّر بعد',
   'Next one due around': 'المرة القادمة متوقعة حوالي',
+  'No car was at a garage on {date}.': 'لا توجد سيارة في ورشة بتاريخ {date}.',
+  'No date promised': 'لا تاريخ موعود',
   'No fault has been recorded more than once on this car.': 'لم يتكرر تسجيل أي عطل أكثر من مرة على هذه المركبة.',
   'No garage recorded.': 'لا توجد ورشة مسجلة.',
   'No purchase on record': 'لا يوجد شراء مسجّل',
@@ -117,15 +129,20 @@ const phrasesAr = {
   'Nothing outstanding — paperwork, service and workshop records are all clear.': 'لا يوجد ما يستدعي الانتباه — الأوراق والصيانة وسجلات الورشة كلها سليمة.',
   'Nothing requested yet': 'لم يُطلب شيء بعد',
   'Obsidian': 'أوبسيديان',
+  'OfficeManager': 'أوفيس مانجر',
+  'On one day': 'في يوم واحد',
   'Open on the parts board': 'فتحه في لوحة قطع الغيار',
   'Outstanding only': 'المعلّقة فقط',
+  'Over a period': 'خلال فترة',
   'Owes the garage a visit': 'عليها زيارة مؤجلة للورشة',
   'Partly received': 'مستلم جزئيًا',
+  'Past their promised date': 'تجاوزت التاريخ الموعود',
   'Pick the colours the whole app is painted in.': 'اختر الألوان التي يُطلى بها التطبيق بالكامل.',
   'Plate, car, person…': 'اللوحة، السيارة، الشخص…',
   'Plum': 'برقوقي',
   'Preview': 'معاينة',
   'Primary': 'اللون الأساسي',
+  'Promised days': 'الأيام الموعودة',
   'Pulled out early': 'أُخرجت مبكرًا',
   'Purchase rejected': 'رُفض الشراء',
   'Purchase request #{id}': 'طلب شراء رقم {id}',
@@ -137,6 +154,7 @@ const phrasesAr = {
   'Raised {date} by {who}': 'سُجّل في {date} بواسطة {who}',
   'Received {date}': 'استُلم في {date}',
   'Recorded as belonging to this vehicle right now': 'المسجّلة كملك لهذه المركبة الآن',
+  'Recorded by': 'مسجَّل بواسطة',
   'Remaining to service': 'المتبقي حتى الصيانة',
   'Rentable — tell the customer': 'قابلة للتأجير — أبلغ العميل',
   'Repair Records': 'سجلات الإصلاح',
@@ -144,6 +162,8 @@ const phrasesAr = {
   // Repair Records page. The tab labels are translated elsewhere (vehicles.registry in labels.js,
   // 'Completed Repairs', 'History'); these are the hub's own strings.
   'Replacement': 'استبدال',
+  'Report date': 'تاريخ التقرير',
+  'Reported issue': 'العطل المُبلّغ عنه',
   'Request #{id}': 'طلب رقم {id}',
   'Request Spare Key': 'طلب مفتاح احتياطي',
   'Request again': 'إعادة الطلب',
@@ -173,9 +193,11 @@ const phrasesAr = {
   'Spare key received and registered to the vehicle.': 'تم استلام المفتاح الاحتياطي وتسجيله للمركبة.',
   'Spare key received and registered to this vehicle.': 'تم استلام المفتاح الاحتياطي وتسجيله لهذه المركبة.',
   'Steel': 'فولاذي',
+  'Still out': 'ما زالت بالخارج',
   'Sunset': 'غروب',
   'Supplier not named': 'المورّد غير مذكور',
   'That did not work.': 'لم تنجح العملية.',
+  'The expected-return date comes from the workshop sheet. On a visit that has already ended it is usually rewritten to the day the car actually came back — those {n} rows are shown as “logged on return” and counted as neither late nor on time. The flag is dependable for a car that was still in the shop on the day you picked.': 'تاريخ العودة المتوقع مصدره جدول الورشة. في الزيارة المنتهية غالبًا ما يُعاد كتابته ليطابق اليوم الذي عادت فيه السيارة فعلًا — تلك الصفوف الـ{n} تظهر بوصفها «سُجِّل عند العودة» ولا تُحتسب متأخرة ولا في موعدها. العلامة موثوقة للسيارة التي كانت ما زالت في الورشة في اليوم الذي اخترته.',
   'The key is physically here. This registers it as a component belonging to the vehicle.': 'المفتاح موجود فعليًا. هذا يسجّله كمكوّن يخصّ المركبة.',
   'The purchase was refused — the car still has no spare key': 'رُفض الشراء — ولا يزال المفتاح الاحتياطي غير متوفر للسيارة',
   'The second key was found in the office.': 'تم العثور على المفتاح الثاني في المكتب.',
@@ -184,6 +206,8 @@ const phrasesAr = {
   'Theme studio': 'استوديو الألوان',
   'This car has had a spare-key requirement before, but no physical key has ever been registered against it here. Imported sheet history records the process, not the key — see the history below.': 'سبق أن سُجّل لهذه السيارة طلب مفتاح احتياطي، لكن لم يُسجَّل أي مفتاح فعلي هنا. السجلات المستوردة من الشيت توثّق الإجراء لا المفتاح نفسه — راجع السجل أدناه.',
   'This records a requirement and notifies the supervisors. Nothing is bought yet.': 'هذا يسجّل الطلب ويُشعر المشرفين. لم يتم شراء أي شيء بعد.',
+  'This system': 'هذا النظام',
+  'Try another date, or widen the record source.': 'جرّب تاريخًا آخر، أو وسّع مصدر التسجيل.',
   'Use this when the key turned up or the requirement was raised in error.': 'استخدم هذا عند العثور على المفتاح أو إذا سُجّل الطلب بالخطأ.',
   'Vehicle sections': 'أقسام المركبات',
   'Every car in the fleet — what it costs to run, how much of its owned time it earns, and the finished work behind it: the signed-off ledger of what was fixed, and each car’s workshop history, trip by trip.': 'كل سيارة في الأسطول — ما تكلّفه لتشغيلها، وكم من مدة ملكيتها تكسب، والعمل المنتهي خلفها: السجل المعتمَد لما أُصلح، وسجل ورشة كل سيارة، زيارة بزيارة.',
@@ -193,12 +217,15 @@ const phrasesAr = {
   'Waiting for a purchase request': 'بانتظار طلب شراء',
   'Waiting for approval': 'بانتظار الموافقة',
   'Warranties': 'الضمانات',
+  'Went in that day': 'دخلت في ذلك اليوم',
   'What goes wrong on this car': 'ما الذي يتعطل في هذه المركبة',
   'What people report': 'ما يبلّغ عنه الناس',
   'What the car holds today, and every requirement it has ever had. The two are different numbers on any car that has lost a key.': 'ما تملكه السيارة اليوم، وكل طلب سُجّل لها عبر تاريخها. الرقمان مختلفان في أي سيارة فقدت مفتاحًا.',
   'What we owe': 'ما نَدين به',
   'Where the work is done': 'أين يُنفَّذ العمل',
+  'Where this comes from': 'من أين تأتي هذه البيانات',
   'Which garage is good at what, which one to send this car to, and which cars are standing at a workshop right now.': 'أي ورشة جيدة في أي عمل، وإلى أيها نرسل هذه السيارة، وأي السيارات واقفة في ورشة الآن.',
+  'Which question to ask': 'أي سؤال تريد طرحه',
   'Who we buy from and what we owe them — outstanding balances by age, how each supplier performs, every payment that has left the account, and the supplier register itself.': 'ممّن نشتري وكم نَدين لهم — المبالغ المستحقة حسب قِدَمها، وكيف يؤدّي كل مورّد، وكل دفعة خرجت من الحساب، وسجلّ الموردين نفسه.',
   'Workshop history': 'سجل الورشة',
   'Workshop history (latest 30 of {n})': 'سجل الورشة (أحدث 30 من أصل {n})',
@@ -229,6 +256,7 @@ const phrasesAr = {
   '{doc} expired': 'انتهت صلاحية {doc}',
   '{doc} expires in {n} days': 'تنتهي صلاحية {doc} خلال {n} يوم',
   '{fault} came back {n} times': 'تكرر {fault} {n} مرات',
+  '{n} cars carry no promised date at all — nobody entered one, and the page does not invent it.': '{n} سيارة بلا تاريخ موعود إطلاقًا — لم يُدخله أحد، والصفحة لا تخترعه.',
   '{n} days after the one before': 'بعد {n} يوم من التي قبلها',
   '{n} days ago · {date}': 'منذ {n} يوم · {date}',
   '{n} days last gap': 'آخر فاصل {n} يوم',
@@ -242,6 +270,7 @@ const phrasesAr = {
   '{n} km remaining': 'متبقٍ {n} كم',
   '{n} km since': '{n} كم منذ ذلك الحين',
   '{n} matching entries carry no date and are left out of these figures.': '{n} من السجلات المطابقة بلا تاريخ ولم تُحتسب في هذه الأرقام.',
+  '{n} of {total} cars had a date they were promised back by.': '{n} من {total} سيارة لديها تاريخ موعود للعودة.',
   '{n} of {total} received': 'تم استلام {n} من أصل {total}',
   '{n} of {total} visits': '{n} من أصل {total} زيارة',
   '{n} refused attempt(s)': '{n} محاولة مرفوضة',
@@ -918,6 +947,7 @@ const phrasesAr = {
   'Approval': 'الاعتماد',
   'Approval note (optional)': 'ملاحظة الاعتماد (اختياري)',
   'Approval Pending': 'بانتظار الاعتماد',
+  'Approval withdrawn': 'تم سحب الاعتماد',
   'Approvals': 'الموافقات',
   'Approvals and interrupted work': 'الاعتمادات والأعمال المتوقفة',
   'Approve': 'اعتماد',
@@ -1130,6 +1160,7 @@ const phrasesAr = {
   'Can’t project': 'يتعذّر التقدير',
   'Cancel': 'إلغاء',
   'Cancel any recall call or collection that was previously open.': 'إلغاء أي مهمة استدعاء أو استلام كانت مفتوحة سابقًا.',
+  'Cancel invoice': 'إلغاء الفاتورة',
   'Cancel this move to {destination}? The car is released from this trip and its driver is left with no task.': 'هل تريد إلغاء هذا التنقّل إلى {destination}؟ ستتحرّر المركبة من هذه الرحلة ويبقى سائقها بلا مهمة.',
   'Cancel this move? The car is released from this trip and its driver is left with no task.': 'هل تريد إلغاء هذا التنقّل؟ ستتحرّر المركبة من هذه الرحلة ويبقى سائقها بلا مهمة.',
   'Cancelled': 'ملغاة',
@@ -1500,6 +1531,7 @@ const phrasesAr = {
   'Could not remove the event': 'تعذّرت إزالة الحدث',
   'Could not reset': 'تعذّرت إعادة التعيين',
   'Could not restore the event': 'تعذّرت استعادة الحدث',
+  'Could not return the invoice.': 'تعذّرت إعادة الفاتورة.',
   'Could not revert the correction.': 'تعذّر التراجع عن التصحيح.',
   'Could not run {name}': 'تعذّر تنفيذ {name}',
   'Could not save contract': 'تعذّر حفظ العقد',
@@ -1527,10 +1559,12 @@ const phrasesAr = {
   'Could not update the checklist': 'تعذّر تحديث قائمة التحقق',
   'Could not update the cleaning status': 'تعذّر تحديث حالة النظافة',
   'Could not update the condition grade': 'تعذّر تحديث درجة الحالة',
+  'Could not update the invoice.': 'تعذّر تحديث الفاتورة.',
   'Could not update the recall': 'تعذّر تحديث الاستدعاء',
   'Could not update the reminder': 'تعذّر تحديث التذكير',
   'Could not update the repair gate': 'تعذّر تحديث بوابة الإصلاح',
   'Could not update the user.': 'تعذّر تحديث المستخدم.',
+  'Could not withdraw the approval.': 'تعذّر سحب الاعتماد.',
   'Couldn’t load readiness: {error}': 'تعذّر تحميل الجاهزية: {error}',
   'Couldn’t load this car’s visits. Please try again.': 'تعذّر تحميل زيارات هذه السيارة. يرجى المحاولة مرة أخرى.',
   'Couldn’t load this contract': 'تعذّر تحميل هذا العقد',
@@ -1699,6 +1733,7 @@ const phrasesAr = {
   'Delete driver?': 'حذف السائق؟',
   'Delete payment {ref} ({amount})? This cannot be undone.': 'حذف الدفعة {ref} ({amount})؟ لا يمكن التراجع عن هذا الإجراء.',
   'Delete photo': 'حذف الصورة',
+  'Delete invoice {no}? The parts it covers stay, and go back to being un-invoiced.': 'هل تريد حذف الفاتورة {no}؟ تبقى القطع التي تغطيها كما هي، وتعود قطعًا بلا فاتورة.',
   'Delete service record {number}? This cannot be undone.': 'هل تريد حذف سجل الخدمة {number}؟ لا يمكن التراجع عن هذا الإجراء.',
   'Delete this checkpoint and its evidence?': 'هل تريد حذف نقطة المتابعة هذه والأدلة المرفقة بها؟',
   'Delete this reminder?': 'حذف هذا التذكير؟',
@@ -2500,7 +2535,9 @@ const phrasesAr = {
   'Invoice Overdue': 'فاتورة متأخرة',
   'Invoice payment recorded': 'تم تسجيل دفعة الفاتورة',
   'Invoice recorded': 'تم تسجيل الفاتورة',
+  'Invoice returned for correction': 'أُعيدت الفاتورة للتصحيح',
   'Invoice submitted': 'تم إرسال الفاتورة',
+  'Invoice submitted for review': 'أُرسلت الفاتورة للمراجعة',
   'Invoice this receipt is tied to, or contract-level if none.': 'الفاتورة المرتبط بها هذا الإيصال، أو على مستوى العقد إن لم توجد.',
   'Invoice total': 'إجمالي الفاتورة',
   'Invoice updated': 'تم تحديث الفاتورة',
@@ -2853,6 +2890,7 @@ const phrasesAr = {
   'Monthly expense · last 12 months': 'المصروف الشهري · آخر 12 شهرًا',
   'More': 'المزيد',
   'More actions': 'إجراءات إضافية',
+  'More actions for invoice {no}': 'إجراءات إضافية للفاتورة {no}',
   'Mortgaged by': 'مرهونة لصالح',
   'Mortgaged By': 'مرهونة لدى',
   'Most active customers': 'العملاء الأكثر نشاطًا',
@@ -4170,6 +4208,7 @@ const phrasesAr = {
   'Return {pct}%': 'الإرجاع {pct}%',
   'Return {pct}% ({fraction})': 'الإرجاع {pct}% ({fraction})',
   'Return credit': 'قيد الإرجاع',
+  'Return for correction': 'إعادة للتصحيح',
   'Return Handover': 'تسليم الإرجاع',
   'Return logged. The ticket keeps the cost until the refund lands.': 'تم تسجيل الإرجاع. تبقى التكلفة على التذكرة إلى أن يصل المبلغ المُسترد.',
   'Return odo': 'عدّاد الإرجاع',
@@ -5102,6 +5141,7 @@ const phrasesAr = {
   'What is wrong with the car?': 'ما المشكلة في السيارة؟',
   'What lands here:': 'ما الذي يصل إلى هنا:',
   'What needs attention now — every car in the shop (from the sheet contract and from the app’s own tickets) and how it’s tracking against its repair ETA': 'ما يحتاج انتباهك الآن — كل سيارة في الورشة (من عقد الجدول ومن تذاكر التطبيق نفسه) ومدى التزامها بالموعد المتوقع للإصلاح',
+  'What needs correcting? The person who keyed this bill will see it.': 'ما الذي يحتاج إلى تصحيح؟ سيطّلع على ملاحظتك من أدخل هذه الفاتورة.',
   'What the customer reported': 'ما أبلغ عنه العميل',
   'What the driver observed': 'ما لاحظه السائق',
   'What the driver reported': 'ما أبلغ عنه السائق',
@@ -5152,6 +5192,7 @@ const phrasesAr = {
   'Who requests odometer edits': 'من يطلب تعديل قراءات العدّاد',
   "Who's at fault": 'على من تقع المسؤولية',
   "Who's holding the work": 'من يتولّى العمل حالياً',
+  'Why?': 'ما السبب؟',
   'Why (optional)': 'السبب (اختياري)',
   'Why buy it again?': 'لماذا شراؤها مجددًا؟',
   'Why did the date move?': 'لماذا تغيّر التاريخ؟',
@@ -5159,6 +5200,7 @@ const phrasesAr = {
   'Why is this being rejected? (the requester can be notified)': 'لماذا يُرفض هذا الطلب؟ (يمكن إشعار مقدّم الطلب)',
   'Why is this car being set Ready despite the open advisories?': 'لماذا تُضبط هذه السيارة كجاهزة رغم وجود ملاحظات مفتوحة؟',
   'Why is this invoice being cancelled?': 'ما سبب إلغاء هذه الفاتورة؟',
+  'Why is this invoice being cancelled? It stops being an obligation, and the record stays.': 'ما سبب إلغاء هذه الفاتورة؟ لن تعُد التزامًا مستحقًا، ويبقى سجلّها محفوظًا.',
   'Why is this part needed?': 'لماذا هذه القطعة مطلوبة؟',
   'Why is this request being rejected?': 'لماذا يتم رفض هذا الطلب؟',
   'Why is this vehicle delayed?': 'لماذا تأخرت هذه المركبة؟',
@@ -5182,6 +5224,7 @@ const phrasesAr = {
   'With insurance': 'مع تأمين',
   'with no return date on the contract': 'بدون تاريخ عودة على العقد',
   'With registration': 'مع ملكية سارية',
+  'Withdraw approval': 'سحب الاعتماد',
   'Withdrawn': 'مسحوب',
   'Withdrawn by the system': 'سحبه النظام',
   'Within 100 km': 'خلال ١٠٠ كم',
@@ -5281,6 +5324,11 @@ const phrasesAr = {
   'Receipt disagrees': 'الإيصال لا يطابق',
   'Matched': 'مطابق',
   '{billed} of {total} billed': '{billed} من {total} على فواتير',
+  // The desk's headline ring counts CARS, not work items.
+  '{n} of {total} cars back': '{n} من {total} سيارة راجعة',
+  // The kinds of row a bill carries, beyond parts and labour.
+  'Discount': 'خصم',
+  'Adjustment': 'تسوية',
   'back {n}d': 'رجعت منذ {n} يوم',
   'Past SLA': 'تجاوز المهلة',
   'Fixed': 'تم الإصلاح',
@@ -5437,6 +5485,440 @@ const phrasesAr = {
   '{n}d after': 'بعد {n} يوم',
   'counted': 'محتسبة',
   'Could not load this right now.': 'تعذّر تحميل هذا الآن.',
+
+  // The Mulkiya card on the vehicle profile — the car's UAE Vehicle Licence scan.
+  // ("Mulkiya" itself is already Arabic; the key stays the English spelling used in the source.)
+  'Mulkiya': 'الملكية',
+  'The car’s UAE Vehicle Licence — the scan currently in force': 'رخصة مركبة السيارة — النسخة السارية حاليًا',
+  'Add photo': 'إضافة صورة',
+  'Change photo': 'تغيير الصورة',
+  'Click to view full size': 'اضغط لعرض الصورة بالحجم الكامل',
+  'Mulkiya for {plate}': 'ملكية اللوحة {plate}',
+  'In force': 'سارية',
+  // ('PDF' itself needs no entry — it is the same acronym in both languages.)
+  'PDF document — no inline preview': 'ملف PDF — لا توجد معاينة داخل الصفحة',
+  'Preview unavailable': 'المعاينة غير متاحة',
+  'Open full size': 'فتح بالحجم الكامل',
+  // ('Remove' already has an entry above and reads the same here.)
+  'Open scan': 'فتح النسخة',
+  'No Mulkiya on file for this car': 'لا توجد ملكية محفوظة لهذه السيارة',
+  'Upload a photo or PDF of the licence card — drag it here, or use Add photo.': 'ارفع صورة أو ملف PDF لبطاقة الملكية — اسحبه إلى هنا أو استخدم «إضافة صورة».',
+  'Ask a fleet manager to add the licence scan.': 'اطلب من مسؤول الأسطول إضافة نسخة الملكية.',
+  'Filed by {name}': 'رفعها {name}',
+  'No upload details recorded': 'لا توجد تفاصيل رفع مسجّلة',
+  'Replaced {when}': 'استُبدلت في {when}',
+  'Mulkiya saved': 'تم حفظ الملكية',
+  'Mulkiya replaced — the previous licence is kept in the history': 'تم استبدال الملكية — الرخصة السابقة محفوظة في السجل',
+  'Could not upload the Mulkiya': 'تعذّر رفع الملكية',
+  'Scan removed': 'تم حذف النسخة',
+  'Could not remove the scan': 'تعذّر حذف النسخة',
+
+  // ── The Storehouse — the fleet's own shelf of parts ──────────────────────────
+  // Vocabulary note: a shelf is «رف», a unit on it is «قطعة», and taking one out to
+  // a job is «صرف» (issue) — never «شراء», because no money moves at that moment.
+  'Storehouse': 'المخزن',
+  'Parts the fleet owns before any car needs them. A unit leaves here only when a job takes it, and the ledger below says which car it went to.':
+    'قطع يملكها الأسطول قبل أن تحتاجها أي سيارة. لا تخرج القطعة من هنا إلا عندما يأخذها عمل، والسجل بالأسفل يبيّن إلى أي سيارة ذهبت.',
+  'Parts we buy and keep here in advance, so a car that needs one does not have to wait for a shop run. A part leaves only when a job takes it, and the History tab says which car got it.':
+    'قطع نشتريها ونحتفظ بها هنا مسبقاً، حتى لا تنتظر السيارة التي تحتاجها جولة شراء. لا تخرج القطعة إلا عندما يأخذها عمل، وتبويب «السجل» يبيّن إلى أي سيارة ذهبت.',
+
+  // The three tabs, and the one line under each that says what you are looking at.
+  'What we have': 'ما لدينا',
+  'Every part we hold right now, and how many are left of each.': 'كل قطعة نملكها الآن، وكم بقي من كل منها.',
+  'On its way': 'في الطريق',
+  'Parts somebody asked the store to buy. Nothing reaches a shelf until it is received here.':
+    'قطع طلب أحدهم من المخزن شراءها. لا شيء يصل إلى الرف حتى يُستلم هنا.',
+  'Every unit that came in or went out, newest first — the evidence behind every count above.':
+    'كل قطعة دخلت أو خرجت، الأحدث أولاً — الدليل خلف كل رقم بالأعلى.',
+
+  // "Is there anything for me to do?" — asked and answered before any figure on the page.
+  'Needs someone': 'يحتاج إلى متابعة',
+  'Nothing needs doing — nothing is waiting for a decision and nothing is running low.':
+    'لا شيء يحتاج إلى عمل — لا قرار معلّق ولا قطعة على وشك النفاد.',
+  '{n} stock requests are waiting for someone to say yes or no.': '{n} طلب تخزين بانتظار الموافقة أو الرفض.',
+  'Review them': 'راجعها',
+  '{n} approved parts have not been put on a shelf yet.': '{n} قطعة موافق عليها لم توضع على الرف بعد.',
+  'Receive them': 'استلمها',
+  '{n} parts have dropped to the level where someone asked to be told.':
+    '{n} قطعة وصلت إلى الحد الذي طلب أحدهم التنبيه عنده.',
+  'Show me which': 'أرِني أيها',
+
+  // The three tiles that are left — facts nobody has to act on.
+  'Different parts in stock': 'أنواع القطع المتوفرة',
+  'Pieces on the shelves': 'القطع على الرفوف',
+  'What it is all worth': 'قيمة المخزون كاملاً',
+
+  // Toolbar.
+  'Only what is low': 'المنخفض فقط',
+  'Showing only low stock': 'يُعرض المنخفض فقط',
+  'Include finished ({n})': 'أظهر المنتهية ({n})',
+  'Everything': 'الكل',
+  'Came in': 'دخل',
+  'Went out': 'خرج',
+  'Ask the store to buy one': 'اطلب من المخزن شراءها',
+
+  // A shelf as a card: the one number anyone came for, and a bar for "is that a lot or a little".
+  'on the shelf': 'على الرف',
+  'None left': 'لم يتبقَّ شيء',
+  'No part number or shelf recorded': 'بلا رقم قطعة أو رف مسجّل',
+  'Nobody has said when this is too few': 'لم يحدد أحد متى يُعد هذا قليلاً',
+  'Tell someone when it reaches {n}': 'نبّه أحداً عند الوصول إلى {n}',
+  'Price unknown': 'السعر غير معروف',
+  '{price} each': '{price} للقطعة',
+  'Fix the count': 'صحّح الجرد',
+  'Nothing is in the store yet': 'لا شيء في المخزن بعد',
+  'No part is running low right now — a good place to be.': 'لا توجد قطعة على وشك النفاد الآن — وضع جيد.',
+
+  // A stock request said as a sentence, with where it has got to rather than its database state.
+  '{n} × {part}': '{n} من {part}',
+  'Waiting for a decision': 'بانتظار قرار',
+  'Approved — not here yet': 'موافق عليها — لم تصل بعد',
+  'Ordered — not here yet': 'مطلوبة — لم تصل بعد',
+  'On the shelf': 'على الرف',
+  'Turned down': 'مرفوضة',
+  'asked by {name}': 'طلبها {name}',
+  'new to the store': 'جديدة على المخزن',
+  'the shelf holds {n} right now': 'الرف فيه {n} حالياً',
+  'about {price} each': 'نحو {price} للقطعة',
+  'Turned down: {reason}': 'مرفوضة: {reason}',
+  'Yes, buy it': 'نعم، اشترِها',
+  'It arrived': 'وصلت',
+  'Nothing is waiting': 'لا شيء بالانتظار',
+  'Every request has been dealt with. Turn on “Include finished” to see the ones already closed.':
+    'عولجت جميع الطلبات. فعّل «أظهر المنتهية» لرؤية المغلقة منها.',
+  'Turn this request down': 'رفض هذا الطلب',
+  'Turn it down': 'ارفضه',
+  'The person who asked will see this, so say enough that they know what to do instead.':
+    'سيرى صاحب الطلب هذا، فاكتب ما يكفي ليعرف ما يفعله بدلاً منه.',
+
+  // A movement as a line of the story.
+  '{n} left on the shelf': 'المتبقي على الرف {n}',
+  'Part, number, shelf…': 'القطعة أو الرقم أو الرف…',
+  'Shelf {location}': 'الرف {location}',
+  'Shelf / bin': 'الرف / الصندوق',
+  'Shelf': 'الرف',
+  'On hand': 'المتوفر',
+  'On the shelf ({n})': 'على الرف ({n})',
+  'Requests ({n})': 'الطلبات ({n})',
+  'Movements ({n})': 'الحركات ({n})',
+  'Reorder at': 'يُعاد الطلب عند',
+  'Unit cost': 'تكلفة القطعة',
+  'Cost per unit': 'التكلفة لكل قطعة',
+  'Not costed': 'بلا تكلفة مسجلة',
+  'No priced receipt stands behind this shelf, so a unit off it carries no cost.':
+    'لا يوجد استلام مسعّر خلف هذا الرف، لذلك لا تحمل القطعة الخارجة منه أي تكلفة.',
+  'Stock value': 'قيمة المخزون',
+  'Adjust': 'تعديل',
+  'Asked for': 'المطلوب',
+  'On shelf now': 'المتوفر الآن',
+  'New to the store': 'جديدة على المخزن',
+  'Est. price': 'السعر المتوقع',
+  'by {name}': 'بواسطة {name}',
+  'Units': 'القطع',
+  'Left on shelf': 'المتبقي على الرف',
+  'Where': 'الوجهة',
+  'Value': 'القيمة',
+  'Could not load the storehouse.': 'تعذّر تحميل المخزن.',
+  'Parts on the shelf': 'قطع على الرف',
+  '{n} part types tracked in total': 'يُتابَع {n} نوع قطعة إجمالاً',
+  'Units held': 'القطع المتوفرة',
+  'Everything physically in the storehouse right now': 'كل ما هو موجود فعلياً في المخزن الآن',
+  '{n} shelves have stock but no recorded cost — they are not in this figure':
+    '{n} من الرفوف فيها مخزون بلا تكلفة مسجلة — وهي غير محتسبة في هذا الرقم',
+  'At the average price we paid': 'بمتوسط السعر الذي دفعناه',
+  'Running low': 'على وشك النفاد',
+  'At or below the reorder level someone set': 'عند حد إعادة الطلب الذي حدده أحدهم أو دونه',
+  'Open stock requests': 'طلبات تخزين مفتوحة',
+  'Asked for but not yet on the shelf': 'مطلوبة ولم تصل الرف بعد',
+  'The storehouse is empty': 'المخزن فارغ',
+  'Nothing has been booked in yet. Use “Put stock in” for what is already on the shelf, or request a part so it is bought into the store.':
+    'لم يُسجَّل أي إدخال بعد. استخدم «إدخال مخزون» لما هو موجود على الرف فعلاً، أو اطلب قطعة ليتم شراؤها للمخزن.',
+  'No shelf matches that.': 'لا يوجد رف مطابق.',
+  'No stock requests yet': 'لا توجد طلبات تخزين بعد',
+  'A stock request asks for a part to be put on the shelf — no car, no ticket. It moves no stock until someone receives it.':
+    'طلب التخزين يطلب وضع قطعة على الرف — بلا سيارة وبلا تذكرة. ولا يحرّك أي مخزون حتى يستلمها أحد.',
+  'Nothing has moved yet.': 'لم تحدث أي حركة بعد.',
+  'Nothing has moved on this shelf yet.': 'لم تحدث أي حركة على هذا الرف بعد.',
+  'Everything that moved': 'كل ما تحرّك',
+  '{n} left': 'المتبقي {n}',
+  'Put stock in': 'إدخال مخزون',
+  'Raises the shelf. Every unit booked here is one a job can take later.':
+    'يرفع رصيد الرف. كل قطعة تُسجَّل هنا يمكن أن يأخذها عمل لاحقاً.',
+  'Book it in': 'سجّل الإدخال',
+  'How many': 'الكمية',
+  'Leave blank if unknown — the shelf will show as not costed rather than free.':
+    'اتركه فارغاً إن كان غير معروف — سيظهر الرف بلا تكلفة مسجلة بدلاً من أن يبدو مجانياً.',
+  'Tell me when it drops to': 'نبّهني عند الوصول إلى',
+  'What is this': 'ما هذا الإدخال',
+  'A buy that arrived': 'شراء وصل',
+  'Stock we already had (first count)': 'مخزون كان لدينا (الجرد الأول)',
+  'Stock booked into the storehouse': 'تم إدخال المخزون إلى المخزن',
+  'Could not book the stock in': 'تعذّر إدخال المخزون',
+  'Request a part for the store': 'اطلب قطعة للمخزن',
+  'No car and no ticket — this asks for the part to be put on the shelf, ready for whichever job needs it.':
+    'بلا سيارة وبلا تذكرة — هذا طلب لوضع القطعة على الرف، جاهزة لأي عمل يحتاجها.',
+  'Send the request': 'أرسل الطلب',
+  'The storehouse already holds {n} of this. Ask only for what you still need.':
+    'المخزن يحتوي بالفعل {n} من هذه القطعة. اطلب ما تحتاجه فعلاً فقط.',
+  'Expected price per unit': 'السعر المتوقع للقطعة',
+  'Why the store needs it': 'لماذا يحتاجها المخزن',
+  'Stock request created': 'تم إنشاء طلب التخزين',
+  'Could not create the stock request': 'تعذّر إنشاء طلب التخزين',
+  'Stock request approved': 'تمت الموافقة على طلب التخزين',
+  'Stock request rejected': 'تم رفض طلب التخزين',
+  'Why is this stock request being rejected?': 'لماذا يُرفض طلب التخزين؟',
+  'Receive into store': 'استلام في المخزن',
+  'Receive into the store': 'الاستلام في المخزن',
+  'It is on the shelf': 'وصلت إلى الرف',
+  'How many actually arrived': 'كم وصل فعلياً',
+  '{n} were asked for': 'المطلوب كان {n}',
+  'Stock received into the storehouse': 'تم استلام المخزون في المخزن',
+  'Could not receive the stock': 'تعذّر استلام المخزون',
+  'Adjust the count': 'تعديل الجرد',
+  '{part} — {n} on hand': '{part} — المتوفر {n}',
+  'Which way': 'الاتجاه',
+  'Take units off the shelf': 'خصم قطع من الرف',
+  'Add units to the shelf': 'إضافة قطع إلى الرف',
+  'Why': 'السبب',
+  'The count was wrong': 'الجرد كان خاطئاً',
+  'Damaged, lost or expired': 'تالفة أو مفقودة أو منتهية',
+  'Required — an unexplained change to a count cannot be told apart from an error.':
+    'مطلوب — التغيير غير المُفسَّر في الجرد لا يمكن تمييزه عن الخطأ.',
+  'Stock adjusted': 'تم تعديل المخزون',
+  'Could not adjust the stock': 'تعذّر تعديل المخزون',
+
+  // The two doors, at request time and at purchase time.
+  'The storehouse has this part': 'المخزن يحتوي هذه القطعة',
+  '{n} on the shelf{where} — about {price} each, at what we paid for them.':
+    '{n} على الرف{where} — بنحو {price} للقطعة، بما دفعناه فيها.',
+  ' (shelf {location})': ' (الرف {location})',
+  '{n} on the shelf{where}. No priced receipt stands behind them, so no cost will be charged to this ticket.':
+    '{n} على الرف{where}. لا يوجد استلام مسعّر خلفها، لذلك لن تُحمَّل أي تكلفة على هذه التذكرة.',
+  'You asked for {wanted}, and the shelf holds {n}. Buy this one, or lower the quantity to take what we have.':
+    'طلبت {wanted} والرف فيه {n}. اشترِ هذه، أو قلّل الكمية لتأخذ المتوفر.',
+  'You are buying {wanted}, and the shelf holds {n} — not enough to cover it from stock.':
+    'أنت تشتري {wanted} والرف فيه {n} — لا يكفي لتغطيتها من المخزن.',
+  'Take it from the storehouse': 'خذها من المخزن',
+  'Take it from the storehouse instead': 'خذها من المخزن بدلاً من الشراء',
+  'Take from the storehouse': 'الأخذ من المخزن',
+  'Buy a new one': 'اشترِ واحدة جديدة',
+  'The part comes off the shelf as soon as this is submitted, and is ready to fit — nothing to order and nothing to wait for.':
+    'تُخصم القطعة من الرف فور الإرسال وتكون جاهزة للتركيب — لا شيء يُطلب ولا شيء يُنتظر.',
+  'Say so in the reason — whoever handles this request can take it from the shelf instead of buying one.':
+    'اذكر ذلك في السبب — يستطيع من يعالج هذا الطلب أخذها من الرف بدل شراء واحدة جديدة.',
+  'Taken from the storehouse — ready to fit': 'تم أخذها من المخزن — جاهزة للتركيب',
+  'Could not take this part from the storehouse': 'تعذّر أخذ هذه القطعة من المخزن',
+  'Taken from the storehouse': 'مأخوذة من المخزن',
+  'Storehouse shelf': 'رف المخزن',
+  'Issued from stock': 'مصروفة من المخزون',
+
+  // The bill behind a receipt. Putting a part on the shelf is a money event, so it carries the
+  // supplier's invoice — the same «فاتورة مورّد» that backs a part bought for a car.
+  'The supplier’s invoice': 'فاتورة المورّد',
+  'New invoice': 'فاتورة جديدة',
+  'Already keyed': 'فاتورة مُدخلة مسبقاً',
+  'Which invoice are these parts on?': 'على أي فاتورة هذه القطع؟',
+  'Choose an invoice…': 'اختر فاتورة…',
+  'No number': 'بلا رقم',
+  'Use this when the same supplier trip also bought parts for a car — one trip, one document.':
+    'استخدم هذا عندما تكون نفس الزيارة للمورّد قد اشترت قطعاً لسيارة أيضاً — زيارة واحدة، مستند واحد.',
+
+  // The check: the photo of the bill beside the figures somebody typed off it. The arithmetic was
+  // always here, but it compared two numbers the SAME person entered — the paper was a link that
+  // opened somewhere else, so nothing was ever actually read against it.
+  // Correcting what a shelf COSTS — the repair path a poisoned weighted average had no way back
+  // from. Separate from the count, and behind a higher permission.
+  'Fix the price': 'صحّح السعر',
+  'Correct what this shelf costs': 'تصحيح تكلفة هذا الرف',
+  'This is the price charged to the next car that takes one off this shelf. It does not change what any past receipt recorded, and it moves no stock.':
+    'هذا هو السعر الذي تُحاسَب به السيارة التالية التي تأخذ قطعة من هذا الرف. لا يغيّر ما سجّله أي استلام سابق، ولا يحرّك أي مخزون.',
+  'It costs now': 'التكلفة الحالية',
+  'It should cost': 'التكلفة الصحيحة',
+  '{n} on the shelf, so the stock becomes worth {value}.': '{n} على الرف، فتصبح قيمة المخزون {value}.',
+  'Why is the old price wrong?': 'لماذا السعر القديم خاطئ؟',
+  'Required — this is the one change to money with no document behind it, so the sentence is the evidence.':
+    'مطلوب — هذا هو التغيير المالي الوحيد بلا مستند خلفه، فالجملة هي الدليل.',
+  'Correct it': 'صحّحه',
+  'Shelf price corrected': 'تم تصحيح سعر الرف',
+  'Could not correct the price': 'تعذّر تصحيح السعر',
+  'Price corrections': 'تصحيحات السعر',
+  '{was} → {now} a unit': '{was} ← {now} للقطعة',
+  'Priced at {now}': 'سُعِّرت بـ {now}',
+
+  // A part is billed down two roads: a supplier's parts-only invoice, and a garage's invoice where
+  // the part sits beside the labour. The tab shows both, so its name stopped promising only one.
+  'Bills for parts': 'فواتير القطع',
+  'Every bill a part appears on. A supplier sells parts on their own invoice and it is keyed here; a garage that fits a part bills it beside the labour on the ticket’s invoice — those are listed lower down, and changed on their ticket.':
+    'كل فاتورة تظهر فيها قطعة. المورّد يبيع القطع على فاتورته الخاصة وتُدخل هنا؛ أما الورشة التي تركّب القطعة فتحاسب عليها بجانب أجرة العمل على فاتورة التذكرة — وتلك مدرجة بالأسفل وتُعدَّل من تذكرتها.',
+  'Parts billed by a garage': 'قطع محاسَب عليها من ورشة',
+  'When a garage fits a part it usually bills the part and the work on one document. Those parts are on the ticket’s invoice, not here — this is the list, so nothing about a part is invisible on the parts page.':
+    'عندما تركّب الورشة قطعة فإنها غالباً تحاسب على القطعة والعمل في مستند واحد. تلك القطع على فاتورة التذكرة لا هنا — وهذه قائمتها، حتى لا يبقى شيء عن القطعة غير ظاهر في صفحة القطع.',
+  'No garage has billed a part yet': 'لم تحاسب أي ورشة على قطعة بعد',
+  'When one does, the bill appears here with the part and the labour separated.':
+    'عندما يحدث ذلك ستظهر الفاتورة هنا مع فصل القطعة عن أجرة العمل.',
+  'Garage not named': 'الورشة غير مسماة',
+  'Bill total': 'إجمالي الفاتورة',
+  'Show the parts ({n})': 'أظهر القطع ({n})',
+  'Hide the parts': 'أخفِ القطع',
+  'Open the ticket': 'افتح التذكرة',
+
+  // The SECOND pair of eyes. Keying a bill and checking one are two jobs for two people; until this
+  // stage existed the only comparison ever made was between two numbers the same person typed.
+  '{n} bills are waiting to be checked against their photo': '{n} فاتورة بانتظار المطابقة مع صورتها',
+  '{n} bills did not match the paper': '{n} فاتورة لم تطابق الورق',
+  'Check it': 'طابِقها',
+  'Needs a photo first': 'تحتاج صورة أولاً',
+  'No photo': 'بلا صورة',
+  'Disputed': 'غير مطابقة',
+  'Not checked yet': 'لم تُطابَق بعد',
+  'Did not match': 'لم تطابق',
+  'Checked': 'مُطابَقة',
+  'keyed by {name}': 'أدخلها {name}',
+  'checked by {name}': 'طابقها {name}',
+  'Check this bill against its photo': 'طابِق هذه الفاتورة مع صورتها',
+  'You are the second pair of eyes. Read the photo, not the figures.':
+    'أنت المُدقِّق الثاني. اقرأ الصورة لا الأرقام.',
+  'It matches': 'مطابقة',
+  'It does not match': 'غير مطابقة',
+  'Say what does not agree.': 'اذكر ما الذي لا يتطابق.',
+  'Marked as matching the paper': 'سُجِّلت كمطابقة للورق',
+  'Marked as not matching': 'سُجِّلت كغير مطابقة',
+  'Could not record the check': 'تعذّر تسجيل المطابقة',
+  'Parts keyed on it': 'القطع المُدخلة عليها',
+  'VAT / tax': 'الضريبة',
+  'Total keyed': 'الإجمالي المُدخل',
+  'Total they typed off the paper': 'الإجمالي المنقول عن الورق',
+  'These two already disagree by {gap} — the reason given was: {why}':
+    'الرقمان مختلفان أصلاً بمقدار {gap} — والسبب المذكور: {why}',
+  'nothing': 'لا شيء',
+  'What does not agree? (needed only if it does not match)':
+    'ما الذي لا يتطابق؟ (مطلوب فقط عند عدم المطابقة)',
+
+  // The price gate. The shelf keeps a WEIGHTED AVERAGE, so a wrong price is not a wrong row — it is
+  // blended in permanently and becomes what every future car is charged off that shelf.
+  'This shelf has been costing {was} a unit.': 'كان هذا الرف يكلّف {was} للقطعة.',
+  'You typed {now} — {dir} by {gap}.': 'أدخلت {now} — {dir} بمقدار {gap}.',
+  'up': 'ارتفاعاً',
+  'down': 'انخفاضاً',
+  'Close enough to what we have been paying — nothing to explain.':
+    'قريب بما يكفي مما كنا ندفعه — لا شيء يحتاج إلى تفسير.',
+  'The shelf blends every price it is given, and that blend is what the next car is charged. Check the bill before you accept this.':
+    'يمزج الرف كل سعر يُعطى له، وهذا المزيج هو ما تُحاسَب عليه السيارة التالية. راجع الفاتورة قبل القبول.',
+  'Why has the price changed?': 'لماذا تغيّر السعر؟',
+  'Required — it is kept with this receipt, so the jump can be explained later.':
+    'مطلوب — يُحفظ مع هذا الاستلام ليمكن تفسير القفزة لاحقاً.',
+  'Price changed: {why}': 'تغيّر السعر: {why}',
+
+  'Check the bill against what you typed': 'طابِق الفاتورة مع ما أدخلته',
+  'Attach the bill and it appears here, next to the numbers.': 'أرفق الفاتورة لتظهر هنا بجانب الأرقام.',
+  'Open the photo full size': 'افتح الصورة بالحجم الكامل',
+  'These parts': 'هذه القطع',
+  'VAT / tax you typed': 'الضريبة التي أدخلتها',
+  'Comes to': 'المجموع',
+  'Printed on the bill': 'المطبوع على الفاتورة',
+  'Type the total printed on the bill above and it is compared here.':
+    'أدخل المجموع المطبوع على الفاتورة بالأعلى ليُقارَن هنا.',
+  'Off by {gap} — read the photo again, or say why below.':
+    'يوجد فرق {gap} — راجع الصورة مرة أخرى، أو اذكر السبب بالأسفل.',
+  'Matches the bill.': 'مطابق للفاتورة.',
+  'The bill you picked': 'الفاتورة التي اخترتها',
+  'No photo was attached to this bill.': 'لم تُرفق صورة بهذه الفاتورة.',
+  'Keyed on it so far': 'المُدخل عليها حتى الآن',
+  'These parts add': 'هذه القطع تضيف',
+  'Check the photo says the same supplier and number before you add to it.':
+    'تأكد من أن الصورة تحمل نفس المورّد ونفس الرقم قبل الإضافة إليها.',
+  // ('Invoice number', 'Invoice date', 'Pick a supplier…', 'Invoice' and 'Invoice {no}' are already
+  // translated above — one entry serves every screen that uses the phrase.)
+  'Or type who issued it': 'أو اكتب اسم من أصدرها',
+  'For a supplier with no record here': 'لمورّد غير مسجّل في النظام',
+  'VAT / tax on the bill': 'الضريبة على الفاتورة',
+  'Total printed on the bill': 'الإجمالي المطبوع على الفاتورة',
+  'These parts come to {lines}, plus tax {tax} = {total}.': 'مجموع هذه القطع {lines}، مع الضريبة {tax} = {total}.',
+  'The bill says {stated} — a difference of {gap}.': 'الفاتورة تقول {stated} — بفارق {gap}.',
+  'Explain the difference': 'وضّح سبب الفارق',
+  'Photo of the bill': 'صورة الفاتورة',
+  'Optional, but it is the only copy that survives the paper being lost.':
+    'اختيارية، لكنها النسخة الوحيدة التي تبقى إذا ضاع الأصل.',
+  'A first count needs no invoice — it is stock that was already here. Its price is unknown unless you enter one, and the shelf will say so.':
+    'الجرد الأول لا يحتاج فاتورة — فهو مخزون كان موجوداً أصلاً. سعره غير معروف ما لم تُدخله، وسيوضّح الرف ذلك.',
+  'View the bill': 'عرض الفاتورة',
+  'First count': 'الجرد الأول',
+  'Already paid': 'مدفوعة سابقاً',
+  'No bill on file': 'لا توجد فاتورة مسجلة',
+
+  // The movement ledger's vocabulary. ('Received', 'Ordered', 'Low' and 'Not set' are already
+  // translated above — one entry serves every screen that uses the word.)
+  'Opening count': 'الجرد الافتتاحي',
+  'Returned unused': 'أُعيدت دون استخدام',
+  'Issued to a job': 'صُرفت لعمل',
+  'Written off': 'شُطبت',
+  'Count corrected': 'تصحيح الجرد',
+
+  // Part specifications — WHAT a part is (12V 60Ah, 5W-30, 225/65R17). The FIELD names and their
+  // option labels are NOT here: they are served per-locale from config/part_specs.php, so the
+  // workshop word for a viscosity is curated beside the field it belongs to rather than duplicated
+  // in this file. Only the surrounding sentences live here.
+  'Specification': 'المواصفات',
+  'This vehicle takes': 'هذه السيارة تحتاج',
+  'Use this': 'استخدم هذه',
+  // ('Not recorded' is already translated above — one entry serves every screen that uses it.)
+  'This is not what the vehicle takes': 'هذه ليست المواصفة التي تحتاجها السيارة',
+  'the vehicle takes': 'السيارة تحتاج',
+  'You can still save this — check the part before you do.':
+    'يمكنك الحفظ على أي حال — تأكّد من القطعة قبل ذلك.',
+  'Getting this wrong damages the car': 'الخطأ في هذه الخانة يضرّ بالسيارة',
+
+  // The fitment sheet — "what this vehicle takes". The trust labels matter most here: an observed
+  // figure is what the garage last poured in, not what the car needs, and the Arabic has to keep
+  // that distinction as sharply as the English does.
+  'What this vehicle takes': 'ما تحتاجه هذه السيارة',
+  'The oil, battery and tyre sizes this car needs — shown wherever a part is chosen for it.':
+    'الزيت والبطارية ومقاس الإطار التي تحتاجها هذه السيارة — تظهر في كل مكان تُختار فيه قطعة لها.',
+  'This is shown wherever someone chooses a part for this vehicle.':
+    'يظهر هذا في كل مكان يختار فيه أحدهم قطعة لهذه السيارة.',
+  'Nothing recorded yet': 'لا يوجد شيء مسجّل بعد',
+  'This fills in by itself as parts are fitted. You can also enter what the handbook says.':
+    'يُملأ تلقائياً مع تركيب القطع. ويمكنك أيضاً إدخال ما يذكره دليل السيارة.',
+  'Not confirmed': 'غير مؤكّد',
+  'Confirmed': 'مؤكّد',
+  'Confirm or correct': 'أكّد أو صحّح',
+  'Where this came from — the handbook, the dealer, the sticker under the bonnet':
+    'من أين جاءت هذه المعلومة — دليل السيارة، الوكيل، أو الملصق تحت الكبوت',
+  'Saved': 'تم الحفظ',
+  'Could not save': 'تعذّر الحفظ',
+
+  // "What to buy" — part variants compared on cost per month of service. The distinction the Arabic
+  // has to carry is between السعر (what it cost at the counter) and التكلفة شهرياً (what it cost
+  // per month it actually lasted), because the whole page exists to separate those two.
+  'What to buy': 'ماذا نشتري',
+  'Every part the fleet has fitted, grouped by what it was — compared on cost per month of service, not sticker price.':
+    'كل قطعة رُكّبت في الأسطول، مجمّعة حسب مواصفتها — تُقارن بالتكلفة لكل شهر خدمة، لا بسعر الشراء.',
+  'Search a part': 'ابحث عن قطعة',
+  'No specs recorded yet — nothing to compare': 'لا توجد مواصفات مسجّلة بعد — لا شيء للمقارنة',
+  '{n}% have a spec recorded': '{n}٪ لها مواصفة مسجّلة',
+  'Kinds bought': 'الأنواع المشتراة',
+  'Fitted': 'رُكّبت',
+  'Finished lives': 'أعمار مكتملة',
+  'Total spent': 'إجمالي الإنفاق',
+  'Nothing fitted yet': 'لم تُركّب أي قطعة بعد',
+  'One row per kind of part bought. Cost per month is what decides it.':
+    'صف لكل نوع من القطع المشتراة. التكلفة شهرياً هي الفيصل.',
+  'None of these have a spec recorded, so they all sit in one group. Record the spec when you buy the part and this splits into a real comparison.':
+    'لا توجد مواصفة مسجّلة لأيٍّ منها، لذا تظهر كلها في مجموعة واحدة. سجّل المواصفة عند شراء القطعة لتنقسم إلى مقارنة حقيقية.',
+  '{specced} of {fitted} have a spec recorded · {lives} have a finished life to measure':
+    '{specced} من {fitted} لها مواصفة مسجّلة · {lives} لها عمر مكتمل يمكن قياسه',
+  'What it was': 'ما هي',
+  'Bought': 'اشتُريت',
+  'Typical life': 'العمر المعتاد',
+  'Still too early': 'ما زال الوقت مبكراً',
+  '{n} months': '{n} شهر',
+  '{shortest}–{longest} months': 'من {shortest} إلى {longest} شهر',
+  'Typical price': 'السعر المعتاد',
+  'Cost per month': 'التكلفة شهرياً',
+  'Based on': 'بناءً على',
+  '{n} finished': '{n} انتهى عمرها',
+  '{n} still running': '{n} ما زالت تعمل',
+  'too few to rely on': 'أقل من أن يُعتمد عليها',
 };
 
 export default phrasesAr;

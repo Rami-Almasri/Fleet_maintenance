@@ -53,10 +53,29 @@ class WarrantyResource extends JsonResource
             'maintenance_task_id'  => $w->maintenance_task_id,
             'maintenance_id'       => $w->maintenance_id,
 
-            // Who owes us.
+            // Who owes us, and how to reach them — a vehicle warranty is claimed by ringing a service
+            // department and quoting a number, so the contact travels with the promise.
             'provider_vendor_id' => $w->provider_vendor_id,
             'provider_name'      => $w->provider_name ?: $this->whenLoaded('provider', fn () => $w->provider?->name),
+            'provider_kind'      => $w->provider_kind,
             'reference_no'       => $w->reference_no,
+            'contact_name'       => $w->contact_name,
+            'contact_phone'      => $w->contact_phone,
+            'contact_email'      => $w->contact_email,
+
+            /**
+             * WHAT IS AND IS NOT COVERED, as ids in the shared parts vocabulary.
+             *
+             * NULL and [] are different answers and both are shipped as-is: null means "nobody has
+             * itemised this booklet", [] means "itemised, and this list is empty". `is_itemised` is
+             * the flag the UI branches on, because a warranty nobody has read yields UNKNOWN for
+             * every part and the page needs to say so rather than showing an empty covered list as if
+             * it meant "covers nothing".
+             */
+            'covered_catalog_ids'  => $w->covered_catalog_ids,
+            'excluded_catalog_ids' => $w->excluded_catalog_ids,
+            'is_itemised'          => $w->isItemised(),
+            'coverage_notes'       => $w->coverage_notes,
 
             // The window: the promise, then the two derived ends of it.
             'starts_on'       => $w->starts_on?->toDateString(),

@@ -13,6 +13,9 @@ class Vehicle extends Model
 {
     /** @use HasFactory<\Database\Factories\VehicleFactory> */
     use HasFactory, SoftDeletes;
+    // The car's side of the Odoo analytic-account mapping (§16) — reads only; writes go through
+    // OdooMappingService so a mapping always carries who decided it and when.
+    use \App\Models\Concerns\HasOdooMapping;
 
     /** Cars are replaced/sold 4 years after purchase. */
     public const REPLACEMENT_YEARS = 4;
@@ -471,6 +474,36 @@ class Vehicle extends Model
         return $this->hasMany(VehicleComponent::class)->where('status', VehicleComponent::STATUS_ACTIVE);
     }
 
+    /**
+     * Every promise anybody made about this car — the manufacturer's, the dealer's, a supplier's on
+     * one part, a garage's on one repair. Plural on purpose: a car under a 3-year bumper-to-bumper
+     * and a 5-year powertrain, with a battery fitted last month under its own 12-month cover, has
+     * three, and "is it under warranty?" is a question about the SET, not about a column.
+     *
+     * Ordered newest-started first because that is nearly always the one somebody is looking for.
+     * Whether any of them is still LIVE is never stored — see {@see Warranty::evaluate()}.
+     */
+    public function warranties(): HasMany
+    {
+        return $this->hasMany(Warranty::class)->orderByDesc('starts_on')->orderByDesc('id');
+    }
+
+    /**
+     * Only the whole-car promises — the manufacturer/dealer cover the car arrived with. This is the
+     * set behind the vehicle list's warranty badge; part and repair warranties are answers to a
+     * different question and would make a car with one replaced tyre read as "under warranty".
+     */
+    public function vehicleWarranties(): HasMany
+    {
+        return $this->hasMany(Warranty::class)->where('kind', Warranty::KIND_VEHICLE);
+    }
+
+    /** Every warranty case ever opened on this car, newest first. */
+    public function warrantyCases(): HasMany
+    {
+        return $this->hasMany(WarrantyClaim::class)->orderByDesc('id');
+    }
+
     /** Asset Layer: performed actions (oil changes, inspections, repair labor), newest first. */
     public function serviceRecords(): HasMany
     {
@@ -498,6 +531,24 @@ class Vehicle extends Model
     public function registration(): HasOne
     {
         return $this->hasOne(VehicleRegistration::class)->latestOfMany();
+    }
+
+    /** Every scanned document ever filed for this car — newest first, superseded versions included. */
+    public function documents(): HasMany
+    {
+        return $this->hasMany(VehicleDocument::class)->orderByDesc('id');
+    }
+
+    /**
+     * The Mulkiya scan in force — the card a manager or a traffic officer would be shown today.
+     * Superseded versions stay reachable through documents(); see [[VehicleDocument]].
+     */
+    public function mulkiya(): HasOne
+    {
+        return $this->hasOne(VehicleDocument::class)
+            ->where('kind', VehicleDocument::KIND_MULKIYA)
+            ->whereNull('superseded_at')
+            ->latestOfMany();
     }
 
     /**

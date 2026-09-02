@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Helpers\ResponseHelper;
+use App\Models\MaintenanceInvoice;
+use App\Models\MaintenanceLineItem;
 use App\Models\PartInvoice;
 use App\Models\PartPurchase;
 use App\Services\PartInvoiceService;
@@ -35,6 +37,15 @@ class PartInvoiceController extends Controller
             }
             if ($request->boolean('with_variance')) {
                 $q->whereNotNull('variance_explanation');
+            }
+            // The second-eyes queue. Oldest first here and only here: everywhere else the newest
+            // bill is the interesting one, but a bill nobody has checked gets MORE urgent with age,
+            // not less.
+            if ($request->boolean('awaiting_match')) {
+                $q->awaitingMatch()->reorder('invoice_date')->orderBy('id');
+            }
+            if ($request->boolean('disputed')) {
+                $q->disputed();
             }
             if ($from = $request->query('from')) {
                 $q->whereDate('invoice_date', '>=', $from);
@@ -119,6 +130,11 @@ class PartInvoiceController extends Controller
     public function update(Request $request, PartInvoice $partInvoice)
     {
         return $this->run(function () use ($request, $partInvoice) {
+            // Editing stops at approval. Checked before the payload is even read, so a refused edit
+            // cannot half-apply — and checked HERE rather than only in the UI, because a hidden button
+            // has never stopped anyone from calling the endpoint.
+            $this->invoices->assertEditable($partInvoice, 'edited');
+
             $this->decodeJsonArrays($request);
             $data = $request->validate($this->rules(false));
             $invoice = $this->invoices->update($partInvoice, $this->payload($data), $request->user(), $request->file('photo'));
@@ -131,9 +147,133 @@ class PartInvoiceController extends Controller
     public function destroy(Request $request, PartInvoice $partInvoice)
     {
         return $this->run(function () use ($request, $partInvoice) {
+            // Same gate as editing, and for a sharper reason: an approved bill can already have payments
+            // allocated against it, and deleting the document would leave that money pointing at nothing.
+            $this->invoices->assertEditable($partInvoice, 'deleted');
+
             $this->invoices->delete($partInvoice, $request->user());
 
             return ResponseHelper::SuccessResponse(null, 'Part invoice deleted');
+        });
+    }
+
+    /**
+     * The OTHER way a part gets billed: on the garage's own invoice, beside the labour.
+     *
+     * One supplier trip buys parts and nothing else, so it becomes a PartInvoice. But a garage that
+     * fits a part usually bills the part AND the work on one document — `maintenance_invoices`
+     * models that directly, with `parts_total` and `labor_total` side by side on the same row.
+     * PartInvoiceService deliberately REFUSES to let a garage-sourced part be keyed here as well,
+     * because the ticket would then be charged for it twice.
+     *
+     * That rule is right, and it left a hole in the READING: the Parts page showed supplier bills
+     * only, so a part billed by a garage was invisible on the one page named after parts. Somebody
+     * asking "what have we been billed for this part" saw a fraction of the answer and had no way to
+     * know it was a fraction.
+     *
+     * So this endpoint surfaces those bills WITHOUT merging the two entities. Read-only, on purpose:
+     * a garage invoice is written on its ticket, through MaintenanceInvoiceService, and keeping one
+     * write path per entity is what stops the double-count the refusal exists to prevent. What comes
+     * back is a pointer — here is the bill, here is its ticket, go there to change it.
+     */
+    public function garageBilled(Request $request)
+    {
+        return $this->run(function () use ($request) {
+            $q = MaintenanceInvoice::query()
+                ->with([
+                    'vendor:id,name',
+                    'maintenance:id,vehicle_id',
+                    'maintenance.vehicle:id,plate_no',
+                    'lineItems' => fn ($l) => $l->where('kind', MaintenanceLineItem::KIND_PART),
+                ])
+                // Only bills that actually carry a part. A pure-labour invoice belongs to the ticket
+                // and has no business on a page about parts.
+                ->whereHas('lineItems', fn ($l) => $l->where('kind', MaintenanceLineItem::KIND_PART))
+                ->latest('id');
+
+            if ($vendor = $request->query('vendor_id')) {
+                $q->where('vendor_id', $vendor);
+            }
+            if ($no = $request->query('invoice_no')) {
+                $q->where('invoice_no', 'like', '%' . $no . '%');
+            }
+
+            $rows = $q->paginate(min((int) $request->query('per_page', 50), 200));
+
+            return ResponseHelper::SuccessResponse([
+                'invoices' => collect($rows->items())->map(fn ($i) => [
+                    'id'             => $i->id,
+                    'invoice_no'     => $i->invoice_no,
+                    'garage'         => $i->vendor?->name ?: ($i->is_internal ? 'In-house' : null),
+                    'is_internal'    => (bool) $i->is_internal,
+                    'maintenance_id' => $i->maintenance_id,
+                    'vehicle_id'     => $i->maintenance?->vehicle_id,
+                    'plate'          => $i->maintenance?->vehicle?->plate_no,
+                    // The split is the whole point of showing this row: it says how much of a mixed
+                    // bill was the part and how much was the work.
+                    'parts_total'    => (float) $i->parts_total,
+                    'labor_total'    => (float) $i->labor_total,
+                    'amount'         => (float) $i->amount,
+                    'recorded_at'    => optional($i->recorded_at)->toIso8601String(),
+                    'parts'          => $i->lineItems->map(fn (MaintenanceLineItem $l) => [
+                        'id'          => $l->id,
+                        'description' => $l->description,
+                        'part_number' => $l->part_number,
+                        'quantity'    => (float) ($l->quantity ?: 1),
+                        'line_total'  => (float) $l->line_total,
+                    ])->values()->all(),
+                ])->all(),
+                'meta' => ['total' => $rows->total(), 'per_page' => $rows->perPage(), 'current_page' => $rows->currentPage()],
+            ], 'Garage-billed parts retrieved');
+        });
+    }
+
+    /**
+     * The second pair of eyes: somebody who did NOT key this bill looks at the photo and says
+     * whether it agrees with the figures.
+     *
+     * Two rules, both refusals rather than warnings:
+     *
+     *   1. NOT THE RECORDER. The whole value of this stage is that a second person looked. Letting
+     *      the person who typed the figures also confirm them turns the check into a formality and
+     *      records a lie — that two people agreed when one did.
+     *   2. A PHOTO MUST EXIST. There is nothing to match a bill against if the paper was never
+     *      attached; "checked" would then mean "read the same numbers back", which is what this
+     *      stage exists to stop.
+     *
+     * Disagreeing is a first-class outcome and needs a reason. Agreeing does not — being asked to
+     * justify "it is correct" is how a check becomes something people click through.
+     */
+    public function match(Request $request, PartInvoice $partInvoice)
+    {
+        return $this->run(function () use ($request, $partInvoice) {
+            $data = $request->validate([
+                'result' => ['required', Rule::in(PartInvoice::MATCH_RESULTS)],
+                'note'   => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            if ($data['result'] === PartInvoice::MATCH_DISPUTED && trim((string) ($data['note'] ?? '')) === '') {
+                abort(422, 'Say what does not agree — a dispute with no reason cannot be acted on.');
+            }
+
+            $user = $request->user();
+
+            // Both refusals live on the model — see PartInvoice::whyCannotBeCheckedBy() for why each
+            // one exists. 422 rather than 403 for either: neither is a permissions problem, they are
+            // both "this particular check would not mean anything".
+            if ($why = $partInvoice->whyCannotBeCheckedBy((int) $user->id)) {
+                abort(422, $why);
+            }
+
+            $partInvoice->forceFill([
+                'matched_at'      => now(),
+                'matched_by'      => $user->id,
+                'matched_by_name' => $user->name ?: $user->email,
+                'match_result'    => $data['result'],
+                'match_note'      => trim((string) ($data['note'] ?? '')) ?: null,
+            ])->save();
+
+            return ResponseHelper::SuccessResponse($this->present($partInvoice->fresh()), 'Invoice checked');
         });
     }
 
@@ -196,7 +336,15 @@ class PartInvoiceController extends Controller
             'photo_url'     => $invoice->photoUrl(),
             'notes'         => $invoice->notes,
             'recorded_by'   => $invoice->recorded_by_name,
+            'recorded_by_id' => $invoice->recorded_by,
             'recorded_at'   => optional($invoice->recorded_at)->toIso8601String(),
+            // The second pair of eyes. `matched_at` null means nobody has looked yet — which is a
+            // different thing from somebody having looked and disagreed (`match_result` disputed).
+            'matched_at'      => optional($invoice->matched_at)->toIso8601String(),
+            'matched_by'      => $invoice->matched_by_name,
+            'matched_by_id'   => $invoice->matched_by,
+            'match_result'    => $invoice->match_result,
+            'match_note'      => $invoice->match_note,
             'items'         => $invoice->purchases->map(fn (PartPurchase $p) => [
                 'purchase_id' => $p->id,
                 'part_name'   => $p->part_name,

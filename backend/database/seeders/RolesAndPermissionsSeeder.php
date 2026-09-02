@@ -45,10 +45,32 @@ class RolesAndPermissionsSeeder extends Seeder
         'maintenance.recurring.manage',      // record the management decision on a recurring-fault review case
         'maintenance.checkpoint.create',     // submit a Maintenance Checkpoint (workshop progress update + evidence) on an in-shop ticket
         'maintenance.checkpoint.manage',     // edit/delete checkpoints + set a ticket's responsible follow-up users (Waleed/Abdullah)
+        // ── Repair TIME authority, split three ways ────────────────────────────────────────────────
+        // These used to be covered by maintenance.delegate along with dispatch and status changes, which
+        // meant anyone who could move a car could also write the hours the garage is judged on. Booking
+        // time, changing someone else's booking, and overruling the measured ceiling are three different
+        // levels of trust and are now three different permissions.
+        'maintenance.labor.record',          // clock work start/pause/resume + enter THIS attempt's hours (technician, supervisor)
+        'maintenance.labor.correct',         // change an already-recorded labor value — audited, still bound by the ceiling (workshop manager)
+        'maintenance.labor.override',        // book hours ABOVE the recorded work time — reason required, row flagged `override` (admin)
         'parts.view',                        // see part requests / purchases / vehicle part history
         'parts.request',                     // create a part request (customer walk-in or garage diagnosis)
         'parts.purchase',                    // record a purchase (garage or supplier) + install the part
         'parts.investigate',                 // admin: review duplicate/recurrence alerts + approve exceptions
+        // ── Warranty-aware operations ──────────────────────────────────────────────────────────────
+        // Six permissions rather than the usual view/manage pair, because this area contains four
+        // genuinely different levels of trust and collapsing them would have made the guardrail
+        // decorative. Recording what a warranty says, DECIDING whether it applies, running a claim
+        // and OVERRULING the whole thing to buy anyway are not the same authority.
+        // @see \App\Support\WarrantyResponsibility — the audiences these define.
+        'warranty.view',                     // see warranties, cases and the warranty dashboard
+        'warranty.manage',                   // record/edit the cover, the window, the provider, the paperwork
+        'warranty.review',                   // DECIDE a coverage review — covered or not. THE money decision,
+                                             // and the permission that defines "the warranty desk" for every
+                                             // notification in this feature.
+        'warranty.claim',                    // open + advance a case: authorization, dealer, repair, claim
+        'warranty.override',                 // buy anyway despite live cover — reason required, audited by name
+        'warranty.close',                    // close a case and record what was recovered / avoided
         'components.view',                   // Asset Layer: see a car's installed components / history / warehouse inventory
         'components.manage',                 // Asset Layer: install / remove / transfer / dispose components + curate the catalog
         'components.backfill',               // Asset Layer: run the legacy-data backfill (super-admin/admin only)
@@ -60,6 +82,16 @@ class RolesAndPermissionsSeeder extends Seeder
         'intelligence.view',
         'dashboard.view',                    // dashboard KPIs + fleet expiring
         'sync.run',                          // run/monitor data syncs
+        // ── Odoo financial integration ─────────────────────────────────────────────────────────────
+        // Five rather than the usual view/manage pair, because sending a document to the accounting
+        // system, accepting a cost as real, and deciding what maps to what are three different levels
+        // of trust — and the last one is the highest. A wrong mapping does not fail loudly; it posts
+        // real money to the wrong account, correctly formatted, and nobody notices until a reconcile.
+        'financial.view',                    // see financial events, their blocking reasons and the mappings
+        'financial.approve',                 // accept a cost as a real obligation, or cancel one
+        'financial.sync',                    // SEND a document to Odoo
+        'financial.retry',                   // retry a failed send / reconcile a stranded one
+        'financial.manage_mappings',         // decide vehicle↔analytic, part↔product, supplier↔partner, type↔account
         'users.manage',                      // manage users & role assignments (admin only)
     ];
 
@@ -86,9 +118,20 @@ class RolesAndPermissionsSeeder extends Seeder
             'maintenance.initiate', 'maintenance.logistics', 'maintenance.delegate',
             'maintenance.recurring.view', 'maintenance.recurring.manage',
             'maintenance.checkpoint.create', 'maintenance.checkpoint.manage',
+            // Full repair-time authority including the audited override — the manager is the role that
+            // answers for a booked hour the clock cannot account for.
+            'maintenance.labor.record', 'maintenance.labor.correct', 'maintenance.labor.override',
             'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
+            // The full warranty set INCLUDING the override. The manager is the role that answers for a
+            // purchase made in the face of live cover — the same reasoning that keeps
+            // maintenance.labor.override here and nowhere else.
+            'warranty.view', 'warranty.manage', 'warranty.review', 'warranty.claim', 'warranty.override', 'warranty.close',
             'components.view', 'components.manage', // Asset Layer: full operational control includes asset custody
             'registration.view', 'registration.manage',
+            // The full financial set, for the same reason the labor and warranty overrides sit here: the
+            // manager is the role that answers for a cost that reached the accounting system.
+            'financial.view', 'financial.approve', 'financial.sync', 'financial.retry',
+            'financial.manage_mappings',
             'insights.view', 'intelligence.view', 'dashboard.view', 'sync.run',
         ],
         // Day-to-day desk: rentals, customers, moving cars in/out, taking payments.
@@ -104,6 +147,8 @@ class RolesAndPermissionsSeeder extends Seeder
             'logistics.view', 'logistics.dispatch', 'logistics.claim',
             'registration.view', 'maintenance.view', 'dashboard.view',
             'parts.view', 'parts.request', 'parts.purchase',
+            // The desk raises purchases, so it must be able to see WHY one was held.
+            'warranty.view',
             'components.view', // Asset Layer: read-only (desk role — no asset custody)
             // Fleet analytics: utilization, maintenance↔rental overlaps, active shop stays, the swap
             // board, mileage-chain audit and the oversight surfaces. Operations was the ONLY senior role
@@ -121,7 +166,15 @@ class RolesAndPermissionsSeeder extends Seeder
             'maintenance.initiate', 'maintenance.logistics', 'maintenance.delegate',
             'maintenance.recurring.view', 'maintenance.recurring.manage',
             'maintenance.checkpoint.create', 'maintenance.checkpoint.manage',
+            // Books time AND corrects it — the workshop manager is who a mechanic's mistyped hour goes
+            // to. NOT the override: overruling the measured clock is a step above running the workshop.
+            'maintenance.labor.record', 'maintenance.labor.correct',
             'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
+            // RUNS THE WARRANTY DESK: records the cover, decides coverage, works the claim, closes it.
+            // `warranty.review` is what makes this role the audience for every coverage-review
+            // notification. NOT the override — buying past live cover is a step above running the
+            // workshop, exactly as overruling the measured labor clock is.
+            'warranty.view', 'warranty.manage', 'warranty.review', 'warranty.claim', 'warranty.close',
             'components.view', 'components.manage', // Asset Layer: the workshop-manager role owns install/remove/transfer
             'logistics.view',
             'registration.view', 'insights.view', 'intelligence.view', 'dashboard.view',
@@ -137,11 +190,20 @@ class RolesAndPermissionsSeeder extends Seeder
             'maintenance.view', 'maintenance.delegate', 'maintenance.logistics',
             'maintenance.recurring.view',
             'maintenance.checkpoint.create', 'maintenance.checkpoint.manage',
+            // Clocks work and books the attempt's hours on the floor. Cannot rewrite a recorded value —
+            // that is the workshop manager's call, so the person entering the time is deliberately not
+            // the person who can quietly change it afterwards.
+            'maintenance.labor.record',
             // Parts board: the supervisor works the whole lane — raise the request, buy the part,
             // mark it delivered, install it, send it back if it's wrong. What he does NOT get is the
             // decision at the top of the lane: approving (or rejecting) a request is the money gate and
             // stays with admin / maintenance manager (parts.investigate|maintenance.manage on the route).
             'parts.view', 'parts.request', 'parts.purchase',
+            // Works a case that has ALREADY been judged covered — rings the dealer, chases the
+            // authorization, sends the car. Deliberately NOT warranty.review: the person raising the
+            // purchase must not also be the person who decides whether the purchase was allowed.
+            // Same separation as parts approval, one step up the same lane.
+            'warranty.view', 'warranty.claim',
             'components.view', 'components.manage', // Asset Layer: authorized maintenance delegates hold asset custody
             'logistics.view', 'logistics.dispatch',
             'intelligence.view',   // picks the destination garage — needs to see who is good at what
@@ -153,6 +215,8 @@ class RolesAndPermissionsSeeder extends Seeder
             'inspections.view', 'inspections.manage',
             'maintenance.view', 'maintenance.initiate',
             'parts.view', 'parts.request',
+            // Performs the pre-expiry warranty inspection, so must be able to read what the cover says.
+            'warranty.view',
             'components.view', // Asset Layer: read-only — technician-tier gets manage only by explicit per-user grant
             'logistics.view',
             'dashboard.view',
@@ -174,7 +238,13 @@ class RolesAndPermissionsSeeder extends Seeder
             'contracts.view', 'booking_readiness.view', 'inspections.view', 'billing.view', 'billing.manage',
             'reminders.view', 'reminders.manage',
             'parts.view',
+            // Records what a claim actually recovered — the money half of a case.
+            'warranty.view', 'warranty.close',
             'components.view', // Asset Layer: read-only (asset cost visibility)
+            // The Odoo bridge belongs to finance end to end — they see what is owed, accept it, send it,
+            // retry it, and own the mappings it depends on. This is the one role that gets all five.
+            'financial.view', 'financial.approve', 'financial.sync', 'financial.retry',
+            'financial.manage_mappings',
             'insights.view', 'dashboard.view',
         ],
         // Read-only across the board.
@@ -183,6 +253,10 @@ class RolesAndPermissionsSeeder extends Seeder
             'customers.view', 'contracts.view', 'booking_readiness.view', 'inspections.view', 'billing.view', 'registration.view',
             'reminders.view',
             'maintenance.view', 'logistics.view', 'parts.view', 'components.view', 'insights.view', 'dashboard.view',
+            'warranty.view',
+            // Read-only across the board includes seeing what is owed to the accounting system and why
+            // it is stuck — but never sending, approving or mapping anything.
+            'financial.view',
         ],
     ];
 

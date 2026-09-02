@@ -57,6 +57,10 @@ const EVENT_KIND = {
   report_filed: 'fault', task_identified: 'fault', task_transferred: 'fault', task_resolved: 'fault',
   task_reinspection_failed: 'fault', task_marked_incorrect: 'fault', part_recurrence_flagged: 'fault',
   severity_upgraded: 'fault', severity_review_kept: 'fault',
+  // The per-fault work clock. These file with the fault they measure, not as system noise: "paused —
+  // waiting for parts" is the single most useful line on a slow repair's timeline.
+  task_work_started: 'fault', task_work_paused: 'fault', task_work_resumed: 'fault',
+  task_work_stopped: 'fault', task_labor_corrected: 'fault', task_labor_override: 'fault',
   // Routine service
   service_logged: 'routine',
   // Dispatch / movement — `task_assigned` is the per-fault twin of `garage_assigned` and only survives
@@ -80,8 +84,11 @@ const EVENT_KIND = {
   // whole lifecycle without any of it being filed under a different heading.
   spare_key_required: 'parts', spare_key_purchase_requested: 'parts',
   spare_key_received: 'parts', spare_key_cancelled: 'parts',
-  // Approvals
+  // Approvals — including the finding gate: someone logged work the car's own data disagreed with,
+  // and somebody senior either overruled the data or refused the job. Three rows because they are
+  // three facts: who tried, and who decided, and which way. See [[FindingApprovalService]].
   review_approved: 'approval', review_rejected: 'approval', incident_acknowledged: 'approval',
+  finding_approval_required: 'approval', finding_approved: 'approval', finding_rejected: 'approval',
   // Recommendations
   recommendation_approved: 'recommendation', recommendation_dismissed: 'recommendation',
   recommendation_scheduled: 'recommendation',
@@ -116,6 +123,10 @@ const EVENT_KIND = {
 const TASK_SCOPED = new Set([
   'task_identified', 'task_transferred', 'task_resolved', 'task_reinspection_failed',
   'task_marked_incorrect', 'severity_upgraded', 'severity_review_kept', 'task_assigned',
+  // Work-clock events are per-fault by construction — they carry a maintenance_task_id or they are
+  // meaningless, so their bucket must come from the task's kind like every other task-scoped row.
+  'task_work_started', 'task_work_paused', 'task_work_resumed', 'task_work_stopped',
+  'task_labor_corrected', 'task_labor_override',
 ]);
 
 // A tow is not stamped as its own event_type — it rides on the SAME dispatch events as a driven leg and

@@ -94,7 +94,7 @@ class TicketFinancialBandsTest extends CrudTestCase
             'invoice_no'      => 'G-1',
             'task_ids'        => [$task->id],
             'line_items'      => [
-                ['kind' => 'part',  'description' => 'Brake Pad Set', 'finding_text' => 'Brake noise', 'quantity' => 1, 'unit_price' => 400],
+                array_merge(['kind' => 'part', 'description' => 'Brake Pad Set', 'finding_text' => 'Brake noise', 'quantity' => 1, 'unit_price' => 400], $this->billablePart($ticket)),
                 ['kind' => 'labor', 'description' => 'Fit pads',      'finding_text' => 'Brake noise', 'quantity' => 1, 'unit_price' => 150],
             ],
             'vat_amount'      => 27.5,

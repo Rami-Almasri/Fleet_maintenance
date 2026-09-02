@@ -101,6 +101,10 @@ class MaintenanceWorkflowController extends Controller
         // Multi-garage routing: the ticket's faults, each with its garage-stint timeline + current garage.
         // lastFailedVendor drives the "Unresolved at Garage X" blame badge on a re-inspection failure.
         'tasks.assignments.vendor:id,name', 'tasks.assignments.assignedBy:id,name', 'tasks.assignments.releasedBy:id,name',
+        // The active-work ledger rides along with the stints: FaultRepairTimeService::forTask() reads it
+        // for every fault on the card, so loading it here is what keeps that a single query instead of
+        // one per fault.
+        'tasks.workSessions',
         'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name', 'tasks.media', 'tasks.markedIncorrectBy:id,name',
         // Event Type layer — the catalog row each fault/service/inspection was typed from, so the resource
         // can ship `catalog` (and resolve a service's reminder type) without an N+1 per task.
@@ -119,6 +123,10 @@ class MaintenanceWorkflowController extends Controller
         'pendingGarageInvoice',
         // One Ticket → Many Invoices: each garage bill with its garage, covered faults + line breakdown.
         'invoices.vendor:id,name', 'invoices.tasks:id,maintenance_invoice_id,symptom,status,kind', 'invoices.lineItems',
+        // WHICH PART a billed line actually fitted — the catalog row, not the wording typed on the paper.
+        // Without it the invoice can only print what the biller wrote, so a bill and the parts ledger can
+        // name the same part two ways and nothing on screen says they are the same thing.
+        'invoices.lineItems.catalogPart:id,name,name_ar,slug,category_key',
         // Enterprise Handover Workflow — the open discrepancy incident (if any), the latest pause/resume
         // custody handovers, and every generated comparison report on the ticket's history.
         'activeIncident.acknowledgedBy:id,name', 'lastPauseHandover', 'lastResumeHandover', 'handoverComparisons',
@@ -203,6 +211,8 @@ class MaintenanceWorkflowController extends Controller
         private \App\Services\MaintenanceForecastService $forecast,
         private \App\Services\RepairInspectionService $inspections,
         private \App\Services\MaintenanceRequiredPartService $requiredParts,
+        // Approve/reject a finding the car's own data disagrees with — the other end of the hold.
+        private \App\Services\FindingApprovalService $approvals,
         // Turns the workflow steps below into immutable domain events. The technician never sees it,
         // never enters anything extra for it, and a failure inside it can never fail their work —
         // see [[CaptureTranslator]].
@@ -1233,6 +1243,14 @@ class MaintenanceWorkflowController extends Controller
 
             return ResponseHelper::SuccessResponse([
                 'health'              => $this->vehicleHealth($vehicle, $tickets),
+                // How this car has BEHAVED, next to where it is right now: garage visits and garage
+                // downtime over the rolling window, each with its attention level and the plain
+                // sentences behind it. Served from the stored reading the alert engine already keeps
+                // up to date, so the profile and the notification can never disagree about the
+                // numbers — and so opening a car's page costs a single indexed row, not a
+                // recalculation. Null until the car has been evaluated at least once (a fresh
+                // install before the first sweep). @see \App\Services\Garage\GarageIntelligenceService
+                'garage_intelligence' => $this->garageIntelligence($vehicle),
                 'tickets'             => MaintenanceWorkflowResource::collection($tickets),
                 'photos'              => $photos,
                 'last_odometer_photo' => $photos->firstWhere('body_part', 'odometer'),
@@ -1240,6 +1258,46 @@ class MaintenanceWorkflowController extends Controller
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }
+    }
+
+    /**
+     * The car's garage-behaviour reading for the profile panel.
+     *
+     * Reads the stored state rather than recomputing: the row is refreshed on every event that can
+     * move it (and nightly for the rolling window), so it is current, and serving it from here keeps
+     * the page cheap. If a car has never been evaluated — a fresh install, before the first sweep —
+     * this evaluates it once, silently, rather than showing an empty panel and rather than raising an
+     * alert nobody asked for by opening a page.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function garageIntelligence(Vehicle $vehicle): ?array
+    {
+        $intel = app(\App\Services\Garage\GarageIntelligenceService::class);
+        if (! $intel->enabled()) {
+            return null;
+        }
+
+        $state = \App\Models\VehicleGarageAlertState::where('vehicle_id', $vehicle->id)->first()
+            ?: $intel->evaluate($vehicle, notify: false);
+
+        if (! $state) {
+            return null;
+        }
+
+        return [
+            'window_days'         => (int) $state->window_days,
+            'visits'              => (int) $state->visits,
+            'downtime_days'       => round($state->downtime_seconds / 86400, 1),
+            'downtime_pct'        => (float) $state->downtime_pct,
+            'visit_severity'      => $state->visit_severity,
+            'downtime_severity'   => $state->downtime_severity,
+            'severity'            => $state->severity,
+            'currently_in_garage' => (bool) $state->currently_in_garage,
+            'last_entry_at'       => optional($state->last_entry_at)->toIso8601String(),
+            'reasons'             => (array) ($state->reasons ?: []),
+            'evaluated_at'        => optional($state->evaluated_at)->toIso8601String(),
+        ];
     }
 
     /**
@@ -2851,6 +2909,49 @@ class MaintenanceWorkflowController extends Controller
      * storage hiccup never stops the recovery. Gated to a driver or supervisor
      * (maintenance.logistics|maintenance.delegate) on the route.
      */
+    /**
+     * Record what the tow COST and the towing company's paperwork (§7, §8).
+     *
+     * Separate from recoveryDispatch above on purpose: a recovery is dispatched in an emergency and the
+     * price usually arrives days later on the towing company's invoice. Demanding it at dispatch time
+     * would either block an urgent action or invite a guess that then becomes the figure posted to the
+     * ledger.
+     *
+     * This NEVER changes workflow_status. Operational completion and financial readiness are separate
+     * concepts (§8) — the car is back on the road whether or not the tow has been paid for — so this is
+     * callable at any stage, including after the ticket has closed. What it does change is the financial
+     * event, which the workflow service refreshes and which then blocks or turns READY on its own terms.
+     */
+    public function recoveryCost(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'recovery_cost'             => ['required', 'numeric', 'gt:0', 'max:9999999'],
+                'recovery_currency'         => ['nullable', 'string', 'max:8'],
+                'recovery_vendor_id'        => ['nullable', 'integer', Rule::exists('vendors', 'id')],
+                'recovery_invoice_required' => ['nullable', 'boolean'],
+                'recovery_invoice_no'       => ['nullable', 'string', 'max:128'],
+                'recovery_invoice_date'     => ['nullable', 'date'],
+                // The towing company's bill. Optional here — the validator decides whether the document
+                // type this becomes actually requires it, rather than this endpoint assuming so.
+                'recovery_invoice'          => ['nullable', 'file', 'max:8192'],
+            ]);
+
+            $ticket = $this->workflow->recordRecoveryCost(
+                $ticket,
+                $data,
+                $request->user(),
+                $request->file('recovery_invoice')
+            );
+
+            return ResponseHelper::SuccessResponse(
+                ['ticket' => MaintenanceWorkflowResource::make($ticket->load(self::EAGER))],
+                'Recovery cost recorded',
+                200
+            );
+        });
+    }
+
     public function recoveryDispatch(Request $request, Maintenance $ticket)
     {
         return $this->run(function () use ($request, $ticket) {
@@ -3032,6 +3133,48 @@ class MaintenanceWorkflowController extends Controller
             $ticket->load(self::EAGER);
 
             return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Garage findings added', 200);
+        });
+    }
+
+    /**
+     * APPROVE OR REJECT one held finding.
+     *
+     * The car's own data disagreed with something a person logged — an oil change on a car with most of
+     * its interval left, or a fault this car already had inside the window — so the finding was parked and
+     * the ticket stopped where it stood. This is the button on the other end of that notification.
+     *
+     * Approve = an approver overrules the data (they, or the person in front of the car, can see something
+     * it cannot): the finding becomes a real fault and the work goes ahead. Reject = it stays on the ticket
+     * marked refused, never becomes work, and the ticket is free to move. Both are recorded on the car's
+     * timeline naming WHO LOGGED IT and WHO DECIDED. See [[FindingApprovalService]].
+     */
+    public function decideFindingApproval(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                // The finding is named by its TEXT, which is its identity everywhere else in the
+                // workflow (findings, tasks and the audit trail are all matched on it) — never by an
+                // array index, which a concurrent write would silently shift under the approver.
+                'finding' => ['required', 'string', 'max:255'],
+                'action'  => ['required', 'string', Rule::in(['approve', 'reject'])],
+                'note'    => ['nullable', 'string', 'max:500'],
+            ]);
+
+            $ticket = $this->approvals->decide(
+                $ticket,
+                $data['finding'],
+                $data['action'],
+                $data['note'] ?? null,
+                $request->user(),
+            );
+
+            $ticket->load(self::EAGER);
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                $data['action'] === 'approve' ? 'Finding approved' : 'Finding rejected',
+                200,
+            );
         });
     }
 
@@ -3935,6 +4078,14 @@ class MaintenanceWorkflowController extends Controller
             // Which catalog part a part line fitted — the identity behind the billed wording. Nullable:
             // labor lines have none, and a line may still arrive from a surface without the picker.
             'line_items.*.component_catalog_id' => ['nullable', 'integer', 'exists:component_catalog,id'],
+            // WHERE the billed part came from — the purchase paid for, the request raised, or the
+            // inspector's required-part line. MaintenanceInvoiceService::assertPartBillable REFUSES a
+            // part line that names no such record ("part_not_on_ticket"), so without these two the
+            // endpoint could not bill a part at all: they were stripped by normalizeLineItems() and the
+            // guard then rejected every part as unrecorded. Same rules the /invoices endpoint already
+            // carries (MaintenanceInvoiceController) — the two write paths must accept the same shape.
+            'line_items.*.part_source'         => ['nullable', Rule::in(\App\Models\MaintenanceLineItem::PART_SOURCES)],
+            'line_items.*.part_source_id'      => ['nullable', 'integer', 'min:1'],
             // Diagnosis-First — every line MUST link to a finding on the ticket (validated against the
             // actual findings set in the service). No finding link = no cost, so no ghost spend.
             'line_items.*.finding_text'        => ['required', 'string', 'max:255'],
@@ -3974,6 +4125,9 @@ class MaintenanceWorkflowController extends Controller
     private function normalizeLineItems(array $lines): array
     {
         $allowed = ['kind', 'description', 'part_number', 'component_catalog_id', 'finding_text', 'category_key',
+                    // part_source/part_source_id are what prove a billed part was recorded on this ticket.
+                    // Dropping them here is what made every part line fail assertPartBillable().
+                    'part_source', 'part_source_id',
                     'quantity', 'uom', 'unit_price', 'installed_on', 'installed_odometer', 'warranty_months', 'entry_source',
                     'tire_brand', 'tire_dot', 'tire_tread_mm'];
 
@@ -4336,6 +4490,18 @@ class MaintenanceWorkflowController extends Controller
                 }
             }
 
+            // Recording labor is a distinct authority from moving a fault's status: this route is open to
+            // the whole workshop delegate role, but booking hours against a repair is the act that feeds
+            // cost and garage performance, so it carries its own permission. Omitting labor_hours needs
+            // nothing extra — only the person actually entering time is gated.
+            if (isset($data['labor_hours']) && $data['labor_hours'] !== ''
+                && ! $request->user()?->can('maintenance.labor.record')) {
+                throw new \App\Exceptions\WorkflowTransitionException(
+                    'You are not authorised to record labor time on a repair.',
+                    ['field' => 'labor_hours'],
+                );
+            }
+
             $this->tasks->setStatus(
                 $task,
                 $data['status'],
@@ -4364,6 +4530,77 @@ class MaintenanceWorkflowController extends Controller
 
             $this->tasks->confirmFault($task, $data['confirmation_status'], $request->user(), $data['note'] ?? null);
             return $this->ticketFor($task, 'Fault review recorded');
+        });
+    }
+
+    // ── THE PER-FAULT WORK CLOCK ──────────────────────────────────────────────────────────────────
+    // Four doors onto maintenance_task_work_sessions. They exist so "how long did this fault take" is
+    // measured rather than inferred: active labor is the sum of the work intervals clocked here, and
+    // everything else the car spent waiting for is recorded as a named block instead of silently
+    // inflating the repair. See FaultWorkSessionService for the one-open-session invariant.
+
+    /** START or RESUME hands-on work on this fault. Idempotent — a double-tap does not double the clock. */
+    public function startFaultWork(Request $request, \App\Models\MaintenanceTask $task, \App\Services\FaultWorkSessionService $sessions)
+    {
+        return $this->run(function () use ($request, $task, $sessions) {
+            $data = $request->validate(['note' => ['nullable', 'string', 'max:500']]);
+            $sessions->startWork($task, $request->user(), $data['note'] ?? null);
+
+            return $this->ticketFor($task, 'Work clock started');
+        });
+    }
+
+    /**
+     * PAUSE work and say what it is waiting for. The reason is mandatory and comes from a closed list —
+     * an unexplained pause is exactly the ambiguity this whole ledger exists to remove.
+     */
+    public function pauseFaultWork(Request $request, \App\Models\MaintenanceTask $task, \App\Services\FaultWorkSessionService $sessions)
+    {
+        return $this->run(function () use ($request, $task, $sessions) {
+            $data = $request->validate([
+                'block_reason' => ['required', Rule::in(\App\Models\MaintenanceTaskWorkSession::BLOCK_REASONS)],
+                'note'         => ['nullable', 'string', 'max:500'],
+            ]);
+            $sessions->block($task, $data['block_reason'], $request->user(), $data['note'] ?? null);
+
+            return $this->ticketFor($task, 'Work paused');
+        });
+    }
+
+    /**
+     * CORRECT an already-recorded attempt labor value. Behind `maintenance.labor.correct` (the route),
+     * needs a reason, writes an audit event — and is still bound by the work-time ceiling: correcting a
+     * number is not a way around the rule.
+     */
+    public function correctFaultLabor(Request $request, \App\Models\MaintenanceTaskAssignment $stint, \App\Services\FaultRepairTimeService $repairTime)
+    {
+        return $this->run(function () use ($request, $stint, $repairTime) {
+            $data = $request->validate([
+                'labor_hours' => ['required', 'numeric', 'min:0', 'max:' . \App\Services\FaultRepairTimeService::MAX_ATTEMPT_LABOR_HOURS],
+                'reason'      => ['required', 'string', 'max:500'],
+            ]);
+            $repairTime->overwriteAttemptLabor($stint, (float) $data['labor_hours'], $data['reason'], $request->user());
+
+            return $this->ticketFor($stint->task, 'Labor time corrected');
+        });
+    }
+
+    /**
+     * EXCEPTIONAL OVERRIDE — book labor ABOVE the recorded work time. Behind its own permission
+     * (`maintenance.labor.override`), needs a substantive reason, and stamps the row `labor_basis =
+     * override` plus a dedicated audit event naming the ceiling that was exceeded. Deliberately not a
+     * silent admin bypass: the number survives, flagged, and analytics can exclude it.
+     */
+    public function overrideFaultLabor(Request $request, \App\Models\MaintenanceTaskAssignment $stint, \App\Services\FaultRepairTimeService $repairTime)
+    {
+        return $this->run(function () use ($request, $stint, $repairTime) {
+            $data = $request->validate([
+                'labor_hours' => ['required', 'numeric', 'min:0', 'max:' . \App\Services\FaultRepairTimeService::MAX_ATTEMPT_LABOR_HOURS],
+                'reason'      => ['required', 'string', 'min:10', 'max:500'],
+            ]);
+            $repairTime->overrideAttemptLabor($stint, (float) $data['labor_hours'], $data['reason'], $request->user());
+
+            return $this->ticketFor($stint->task, 'Labor override recorded');
         });
     }
 

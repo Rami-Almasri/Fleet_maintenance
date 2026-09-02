@@ -307,6 +307,12 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
   // Reality-check warning — a SELECTED keyword that maps to a monitored routine (oil/battery/tyres)
   // whose car's live status says it is NOT due right now. Fires the instant the chip is tapped, before
   // submission, so a mis-tap or an unnecessary job gets caught here instead of on the Data Health audit.
+  //
+  // This is no longer only advice. Submitting it anyway is allowed — the person is in front of the car
+  // and may be able to see what the odometer cannot — but the finding is then HELD: it is not turned
+  // into work, and the ticket cannot leave its stage until an approver signs it off or refuses it. The
+  // sentence below says so, because a warning that hides a consequence is worse than no warning.
+  // See [[FindingApprovalService]].
   const conflicts = value
     .map((v) => {
       const condKey = CONDITION_FOR_KEYWORD[String(v).toLowerCase()];
@@ -356,6 +362,8 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
               <Icon.Alert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
               <span>
                 <strong>{kwLabel(keyword)}</strong> — {t('findingsPicker.statusConflict', { summary: cond.summary || t('findingsPicker.statusConflictFallback') })}
+                {' '}
+                <span className="font-semibold">{t('findingsPicker.statusConflictHeld')}</span>
               </span>
             </p>
           ))}

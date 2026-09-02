@@ -85,6 +85,29 @@ class FinancialDocumentService
         ];
     }
 
+    /**
+     * Refuse a submitted document and send it back to its author to be corrected.
+     *
+     * The move itself is not new — PENDING → DRAFT has always been in {@see Status::TRANSITIONS} — but
+     * nothing could perform it, so the only answer a reviewer could give a wrong bill was to cancel it.
+     * Cancelling says "this obligation does not exist"; returning says "this one does, and the paper is
+     * wrong". Conflating them destroys the bill rather than fixing it.
+     *
+     * The reason is required and recorded, because the person receiving it back has to know what to fix.
+     */
+    public function returnToDraft(Model $doc, User $actor, string $reason): Model
+    {
+        $reason = trim($reason);
+
+        return $this->transition(
+            $doc,
+            Status::DRAFT,
+            $actor,
+            fn () => ['approved_by' => null, 'approved_by_name' => null, 'approved_at' => null],
+            verb: 'returned for correction — ' . $reason,
+        );
+    }
+
     /** Send an approved document back for another look. Clears the approval that is being withdrawn. */
     public function unapprove(Model $doc, User $actor): Model
     {

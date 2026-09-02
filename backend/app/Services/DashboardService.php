@@ -2317,6 +2317,189 @@ class DashboardService
     }
 
     /**
+     * "WHICH CARS WERE AT A GARAGE ON THIS DAY" — the point-in-time counterpart to maintenanceHistory().
+     *
+     * The window list above answers how often and how long over a PERIOD; this answers the question a
+     * Controller actually asks in the morning: pick a date, and get the cars that were in a shop on it,
+     * how many days each had been in by that date, the date it was promised back, and whether it had
+     * already blown that promise AS OF THAT DAY. Nothing here is a forecast — every field is a date
+     * somebody entered.
+     *
+     * WHAT COUNTS AS "IN A SHOP" — an open type-'U' maintenance contract spanning the day, the same
+     * fact the rest of FleetView treats as canonical (out_date <= day <= in_date, or no return yet).
+     * Soft-deleted contracts are NOT filtered out, deliberately mirroring maintenanceIntervals(), so
+     * this snapshot and the page's visit counts can never disagree about what a visit is. Sold and
+     * disposed cars are dropped, matching the fleet scope of the list above.
+     *
+     * Unlike the window list this does NOT apply the in-service anchor: a car at a garage before its
+     * first rental was still at a garage that day, and a snapshot of a day must not hide it. That is
+     * the one place the two views count differently, and the page says so.
+     *
+     * $source filters by who opened the visit — 'officemanager' | 'system' (see
+     * FleetUtilizationService::visitSource); null keeps both.
+     *
+     * @return array{date:string, count:int, summary:array<string,int>, items:array<int,array<string,mixed>>, provenance:array<string,mixed>}
+     */
+    public function maintenanceInShopOn(string $date, ?string $source = null): array
+    {
+        $day    = Carbon::parse($date)->startOfDay();
+        $dayStr = $day->toDateString();
+        $src    = in_array($source, ['officemanager', 'system'], true) ? $source : null;
+
+        return $this->remember("maint_in_shop_on:{$dayStr}:" . ($src ?? 'all'), self::CACHE_TTL, function () use ($day, $dayStr, $src) {
+            $rows = DB::table('contracts as c')
+                ->join('vehicles as v', 'v.id', '=', 'c.vehicle_id')
+                ->where('c.contract_type', 'U')
+                ->whereNull('v.deleted_at')
+                ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+                ->whereNotNull('c.out_date')
+                ->whereDate('c.out_date', '<=', $dayStr)
+                ->where(fn ($q) => $q->whereNull('c.in_date')->orWhereDate('c.in_date', '>=', $dayStr))
+                ->orderBy('c.out_date')
+                ->get(['c.contract_no', 'c.vehicle_id', 'c.out_date', 'c.in_date', 'c.origin', 'c.source',
+                    'v.plate_no', 'v.make', 'v.model']);
+
+            // Every workshop-log row for these cars, so each contract can borrow the garage / issue /
+            // promised-back date its own row does not carry — the SAME ±3-day out-date bridge
+            // FleetUtilizationService::maintenanceVisits() uses, so the two never name different garages.
+            $vehIds = $rows->pluck('vehicle_id')->unique()->values()->all();
+            $sheet  = DB::table('maintenances')
+                ->whereIn('vehicle_id', $vehIds ?: [0])
+                ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                ->whereNotNull('out_date')
+                ->get(['vehicle_id', 'out_date', 'garage', 'service_main', 'service_sup', 'maintenance_type',
+                    'damage_location', 'expected_return_date', 'actual_in_date'])
+                ->groupBy('vehicle_id');
+
+            $items   = [];
+            $summary = ['late' => 0, 'due_today' => 0, 'on_track' => 0, 'no_promise' => 0,
+                'recorded_on_return' => 0, 'went_in_on_day' => 0, 'came_back_on_day' => 0,
+                'officemanager' => 0, 'system' => 0, 'unknown' => 0];
+
+            foreach ($rows as $r) {
+                $recordedBy = FleetUtilizationService::visitSource($r->origin ?? null, $r->source ?? null);
+                if ($src !== null && $recordedBy !== $src) {
+                    continue;
+                }
+
+                $outStr = substr((string) $r->out_date, 0, 10);
+                $inStr  = $r->in_date ? substr((string) $r->in_date, 0, 10) : null;
+                $out    = Carbon::parse($outStr);
+
+                // Every workshop-log row within ±3 days of the OUT date OR inside the stay so far —
+                // the same two-test bridge and field-wise merge maintenanceVisits() uses. The stay is
+                // clipped at the CHOSEN DAY: a snapshot must not borrow a garage the log only recorded
+                // after the date being reported on.
+                $near = [];
+                foreach ($sheet[$r->vehicle_id] ?? [] as $s) {
+                    $sDate = substr((string) $s->out_date, 0, 10);
+                    $d     = (int) abs(Carbon::parse($sDate)->diffInDays($out));
+                    if ($d <= 3 || ($sDate >= $outStr && $sDate <= $dayStr)) {
+                        $near[] = [
+                            'd'         => $d,
+                            'date'      => $sDate,
+                            'garage'    => trim((string) ($s->garage ?? '')) ?: null,
+                            'issue'     => FleetUtilizationService::workLabel($s),
+                            'expected'  => $s->expected_return_date ? substr((string) $s->expected_return_date, 0, 10) : null,
+                            'actual_in' => $s->actual_in_date ? substr((string) $s->actual_in_date, 0, 10) : null,
+                        ];
+                    }
+                }
+
+                // Where the car was on the chosen day = the newest entry up to that day; what it was
+                // promised = the entries nearest the out-date. Same split maintenanceVisits() makes.
+                $newestFirst = $near;
+                usort($newestFirst, fn ($x, $y) => $y['date'] <=> $x['date']);
+                $latest = FleetUtilizationService::mergeWorkshopRows($newestFirst, ['garage', 'issue']);
+
+                $nearestFirst = $near;
+                usort($nearestFirst, fn ($x, $y) => $x['d'] <=> $y['d']);
+                $opening = FleetUtilizationService::mergeWorkshopRows($nearestFirst, ['expected', 'actual_in']);
+
+                $promise = FleetUtilizationService::expectedPromise(
+                    $outStr,
+                    $opening['expected'] ?? null,
+                    $opening['actual_in'] ?? null,
+                );
+
+                // Day maths measured AT THE CHOSEN DAY, never at today — a report on a past date must
+                // read the way it read on that date, or it is not a snapshot.
+                $expectedOn   = $promise['expected_on'];
+                $daysInShop   = (int) $out->diffInDays($day);
+                $expectedDays = $expectedOn === null ? null : (int) $out->diffInDays(Carbon::parse($expectedOn));
+                $lateDays     = $expectedOn === null ? null : (int) Carbon::parse($expectedOn)->diffInDays($day, false);
+
+                /*
+                 * A date that was written INTO the expected column when the car came back is not a
+                 * promise, and comparing the day against it produces a lateness that is really just the
+                 * sheet and the contract disagreeing about the return. Those rows are shown with their
+                 * date and named for what they are — never counted late, never counted on time. Same
+                 * ruling GarageScorecardService applies when it refuses to grade on this column.
+                 */
+                $status = match (true) {
+                    $expectedOn === null           => 'no_promise',
+                    $promise['recorded_on_return'] => 'recorded_on_return',
+                    $lateDays > 0                  => 'late',
+                    $lateDays === 0                => 'due_today',
+                    default                        => 'on_track',
+                };
+                if ($status === 'recorded_on_return') {
+                    $lateDays = 0;
+                }
+
+                $summary[$status]++;
+                $summary[$recordedBy]++;
+                if ($outStr === $dayStr) {
+                    $summary['went_in_on_day']++;
+                }
+                if ($inStr === $dayStr) {
+                    $summary['came_back_on_day']++;
+                }
+
+                $items[] = [
+                    'vehicle_id'    => (int) $r->vehicle_id,
+                    'plate'         => $r->plate_no,
+                    'car'           => trim(($r->make ?? '') . ' ' . ($r->model ?? '')) ?: null,
+                    'contract_no'   => $r->contract_no,
+                    'recorded_by'   => $recordedBy,
+                    'out_date'      => $outStr,
+                    'in_date'       => $inStr,
+                    'returned'      => $inStr !== null,
+                    'came_back_on_day' => $inStr === $dayStr,
+                    'days_in_shop'  => $daysInShop,          // days elapsed AS OF the chosen day
+                    'expected_on'   => $expectedOn,
+                    'expected_days' => $expectedDays,        // the promised length of the stay
+                    'expected_recorded_on_return' => $promise['recorded_on_return'],
+                    'late_days'     => $lateDays !== null && $lateDays > 0 ? $lateDays : 0,
+                    'status'        => $status,
+                    'garage'        => $latest['garage'] ?? null,
+                    'issue'         => $latest['issue'] ?? null,
+                    'latest_log_on' => $latest['as_of'] ?? null,
+                ];
+            }
+
+            // Worst first: late by the most days, then the longest-held.
+            usort($items, fn ($a, $b) => ($b['late_days'] <=> $a['late_days']) ?: ($b['days_in_shop'] <=> $a['days_in_shop']));
+
+            return [
+                'date'       => $dayStr,
+                'is_today'   => $day->isSameDay(Carbon::today()),
+                'source'     => $src,
+                'count'      => count($items),
+                'summary'    => $summary,
+                'items'      => $items,
+                'provenance' => [
+                    'in_shop'  => "Type-'U' maintenance contracts open across {$dayStr} (OfficeManager).",
+                    'expected' => 'maintenances.expected_return_date on the nearest workshop-log row (±3 days of the out-date).',
+                    'caveat'   => 'On a visit that has already ended the expected date is usually rewritten to the day the car '
+                        . 'actually came back, so a finished visit rarely reads late. The flag is dependable for a car that was '
+                        . 'still in the shop on the day you picked.',
+                ],
+            ];
+        });
+    }
+
+    /**
      * SINGLE SOURCE OF TRUTH for per-vehicle maintenance days — delegates to FleetUtilizationService,
      * the exact same "Rental is King" calculation the Fleet Utilization page uses (overlaps merged,
      * rental-overlap days credited to rental not the shop, onboarding excluded, open stays run to

@@ -386,7 +386,7 @@ class PartInvoiceAndReturnTest extends CrudTestCase
             'invoice_no' => 'G-88',
             'task_ids'   => [$task->id],
             'line_items' => [
-                ['kind' => 'part',  'description' => 'Brake Pad Set', 'finding_text' => 'Brake noise', 'quantity' => 1, 'unit_price' => 400],
+                array_merge(['kind' => 'part', 'description' => 'Brake Pad Set', 'finding_text' => 'Brake noise', 'quantity' => 1, 'unit_price' => 400], $this->billablePart($ticket)),
                 ['kind' => 'labor', 'description' => 'Fit brake pads', 'finding_text' => 'Brake noise', 'quantity' => 1, 'unit_price' => 150],
             ],
         ])->assertSuccessful();

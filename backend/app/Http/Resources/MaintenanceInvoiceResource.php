@@ -30,6 +30,13 @@ class MaintenanceInvoiceResource extends JsonResource
             // Money.
             'parts_total'           => (float) $inv->parts_total,
             'labor_total'           => (float) $inv->labor_total,
+            // The other two bands on the same bill. They were written as ledger lines and rolled into
+            // `amount`, but were never published — so every reader could only print "parts + labor" for a
+            // total that also carried VAT, and the editor had no field to re-key them from.
+            // The discount is stored NEGATIVE (see MaintenanceInvoiceService::applyVatAndDiscount) and is
+            // published as it is stored, so `parts + labor + vat + discount` is a plain sum.
+            'vat_total'             => (float) $inv->vat_total,
+            'discount_total'        => (float) $inv->discount_total,
             'amount'                => (float) $inv->amount,
             'receipt_total'         => $inv->receipt_total !== null ? (float) $inv->receipt_total : null,
             'variance'              => $inv->variance(),

@@ -105,6 +105,9 @@ class PartRequestController extends Controller
                 // that does not can only ever be matched by its own spelling.
                 'component_catalog_id' => ['nullable', 'integer', 'exists:component_catalog,id'],
                 'part_number'         => ['nullable', 'string', 'max:255'],
+                // The size being asked for, so the buyer is not left guessing at the counter.
+                // Normalised against the part type in PartWorkflowService. @see \App\Support\PartSpecs
+                'specs'               => ['nullable', 'array'],
                 'category_key'        => ['nullable', 'string', 'max:60'],
                 'repair_location'     => ['nullable', Rule::in(PartRequest::LOCATIONS)],
                 'quantity'            => ['nullable', 'numeric', 'gt:0'],
@@ -169,7 +172,10 @@ class PartRequestController extends Controller
     {
         try {
             $data = $request->validate([
-                'purchase_source'       => ['required', Rule::in(\App\Models\PartPurchase::PURCHASE_SOURCES)],
+                // DIRECT sources only. A part off our own shelf is issued from the storehouse
+                // (POST /store/issue/{partRequest}), which takes the unit off the shelf in the same
+                // transaction; recording it here would book the cost with no stock movement behind it.
+                'purchase_source'       => ['required', Rule::in(\App\Models\PartPurchase::DIRECT_PURCHASE_SOURCES)],
                 'source_vendor_id'      => ['nullable', 'exists:vendors,id'],
                 'source_name'           => ['nullable', 'string', 'max:255'],
                 // The supplier's PO / invoice reference for a DIRECT buy. PartWorkflowService already
@@ -179,6 +185,13 @@ class PartRequestController extends Controller
                 'po_number'             => ['nullable', 'string', 'max:40'],
                 'repair_location'       => ['nullable', Rule::in(PartRequest::LOCATIONS)],
                 'purchase_price'        => ['required', 'numeric', 'gt:0'],
+                // WHAT WAS BOUGHT — 12V 60Ah, 5W-30, 225/65R17. Typed here, at the counter, by the
+                // person holding the part, because this is the only moment anybody knows it.
+                //
+                // Validated against the part type inside PartWorkflowService rather than by a rule
+                // here: the legal fields depend on which catalog row the request points at, which is
+                // not knowable from the request payload alone. @see \App\Support\PartSpecs
+                'specs'                 => ['nullable', 'array'],
                 'currency'              => ['nullable', 'string', 'size:3'],
                 'quantity'              => ['nullable', 'numeric', 'gt:0'],
                 'notes'                 => ['nullable', 'string', 'max:2000'],

@@ -5,8 +5,9 @@ import useFetch from '../../hooks/useFetch';
 import { useI18n } from '../../i18n/I18nContext';
 import { SHOW_FINANCIALS } from '../../config/features';
 import {
-  Alert, Chip, CONFIDENCE_TONE, DataOrigin, DataQuality, Donut, Durability, IncidentList, Kpi,
-  Panel, ReportShell, RiskComponent, SystemStory, VehicleBrief, WorkLedger,
+  Alert, CaseTimeline, Chip, CONFIDENCE_TONE, DataOrigin, DataQuality, DateRangeFilter, Donut,
+  Durability, IncidentList, Kpi, Panel, PeriodBanner, PeriodProblems, PeriodSummary, ReportShell,
+  RiskComponent, SystemStory, toneFor, VehicleBrief, WorkLedger,
 } from './reportBlocks';
 import { useTx } from './reportI18n';
 
@@ -36,9 +37,26 @@ export default function VehicleSystemDashboard() {
   const { vehicleId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const system = searchParams.get('system') || 'engine';
+  /*
+   * THE URL IS THE FILTER. Keeping the period in the query string rather than in component state is
+   * what makes a filtered report a real document: it survives a refresh, it can be sent to somebody,
+   * Print / Save as PDF prints the period that is in the address bar, and the browser's back button
+   * walks through the periods the reader actually looked at. Absent params mean ALL HISTORY, so every
+   * existing link keeps returning exactly the report it returned before this filter existed.
+   */
+  const from = searchParams.get('from') || null;
+  const to = searchParams.get('to') || null;
   const [systems, setSystems] = useState([]);
   const { t, tf, tp } = useI18n();
   const tx = useTx();
+
+  /** Rewrite the query string, dropping keys that are back to their default. */
+  const setParams = (next) => {
+    const merged = { system, from, to, ...next };
+    setSearchParams(
+      Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== null && v !== '' && v !== undefined)),
+    );
+  };
 
   useFetch(
     useCallback(async () => {
@@ -52,10 +70,14 @@ export default function VehicleSystemDashboard() {
 
   const { data, loading, error, reload } = useFetch(
     useCallback(async () => {
-      const res = await api.get(`/reports/vehicle-system/${vehicleId}`, { params: { system } });
+      // The period is a QUERY parameter, not a client-side filter: the service narrows by vehicle,
+      // system and date in SQL, so a three-month window reads three months of rows and no more.
+      const res = await api.get(`/reports/vehicle-system/${vehicleId}`, {
+        params: { system, ...(from ? { from } : {}), ...(to ? { to } : {}) },
+      });
       return res.data?.data;
-    }, [vehicleId, system]),
-    [vehicleId, system],
+    }, [vehicleId, system, from, to]),
+    [vehicleId, system, from, to],
     // A history dashboard is a document, not a live board — refresh is the explicit button.
     { revalidateOnFocus: false }
   );
@@ -149,7 +171,9 @@ export default function VehicleSystemDashboard() {
           id="ir-system"
           className="ir-control"
           value={system}
-          onChange={(e) => setSearchParams({ system: e.target.value })}
+          // Changing the system keeps the period: a reader comparing engine and brakes over one
+          // window should not have to retype the window.
+          onChange={(e) => setParams({ system: e.target.value })}
         >
           {systems.map((s) => (
             <option key={s.key} value={s.key}>
@@ -168,6 +192,17 @@ export default function VehicleSystemDashboard() {
         </button>
       </div>
 
+      <DateRangeFilter
+        from={from}
+        to={to}
+        busy={loading}
+        onApply={(nextFrom, nextTo) => setParams({ from: nextFrom, to: nextTo })}
+        onClear={() => setParams({ from: null, to: null })}
+      />
+
+      {/* Prints. A PDF that does not say which period it covers reads as the whole history. */}
+      <PeriodBanner period={data?.period} />
+
       {error ? (
         <Panel title={t('reportSystem.ui.errorTitle')}>
           <Alert tone="danger" heading={t('reportSystem.ui.errorHeading')}>
@@ -184,6 +219,74 @@ export default function VehicleSystemDashboard() {
 
       {!loading && data ? (
         <>
+          {/* ── THE PERIOD, COUNTED. Visits, distinct problems and repeats kept apart. ───── */}
+          <Panel
+            title={t('reportSystem.period.summaryTitle')}
+            hint={
+              data.period?.active
+                ? t('reportSystem.period.summaryHintFiltered')
+                : t('reportSystem.period.summaryHintAll')
+            }
+          >
+            <PeriodSummary summary={data.period_summary} period={data.period} />
+          </Panel>
+
+          {/* ── WHAT WENT WRONG, grouped by fault rather than listed by date. ───────────── */}
+          <Panel
+            title={
+              data.period?.active
+                ? t('reportSystem.period.problemsTitle')
+                : t('reportSystem.period.problemsTitleAll')
+            }
+            hint={t('reportSystem.period.problemsHint')}
+          >
+            <PeriodProblems
+              problems={data.problems}
+              workshopOnly={data.workshop_only}
+              period={data.period}
+            />
+          </Panel>
+
+          {/*
+            ── THE FAILURE SEQUENCE ────────────────────────────────────────────────────────────
+            The same rail the printed report has always used: one dot per incident, coloured by
+            severity, oldest at the top. The card list below carries the audit trail (source rows,
+            join reasons); this carries the SHAPE — how often, how close together, and whether the
+            dots cluster. A stack of cards cannot show that, which is why both exist.
+          */}
+          <Panel
+            title={t('reportSystem.sequence.title', { system: systemLabel })}
+            hint={t('reportSystem.sequence.hint')}
+          >
+            <CaseTimeline
+              empty={
+                data.period?.active
+                  ? t('reportSystem.period.emptyFiltered')
+                  : t('reportSystem.ui.noEvents')
+              }
+              items={(data.incidents || []).map((inc, i) => ({
+                key: `${inc.start}-${i}`,
+                severity: inc.severity,
+                meta: [
+                  inc.end && inc.end !== inc.start ? `${inc.start} → ${inc.end}` : inc.start,
+                  inc.garages?.length ? inc.garages.join(', ') : t('reportSystem.notRecorded'),
+                  inc.row_count > 1 ? tp('reportSystem.incident.rowCount', inc.row_count) : null,
+                ],
+                chip: inc.severity ? (
+                  <Chip tone={toneFor(inc.severity)}>{t(`reportSystem.severity.${inc.severity}`)}</Chip>
+                ) : (
+                  <Chip tone="neutral">{t('reportSystem.incident.notConfirmed')}</Chip>
+                ),
+                // The fault as the record names it, never this page's paraphrase of it.
+                title: inc.fault || t('reportSystem.incident.noFaultNamed'),
+                desc: (inc.records || [])
+                  .flatMap((r) => (r.system_lines?.length ? r.system_lines : r.all_lines || []))
+                  .filter((v, j, a) => v && a.indexOf(v) === j)
+                  .join('\n'),
+              }))}
+            />
+          </Panel>
+
           {/* ── THE ANSWER. Plain sentences, nothing else competing with them. ───────────── */}
           <Panel title={t('reportSystem.story.title', { system: systemLabel })}>
             <SystemStory data={data} systemLabel={systemLabel} />
@@ -198,20 +301,35 @@ export default function VehicleSystemDashboard() {
             })}
           >
             {data.incidents.length === 0 ? (
-              <div className="ir-empty">{t('reportSystem.ui.noEvents')}</div>
+              // "No event has ever been recorded" is a claim about the whole record and would be
+              // false under a filter. An empty PERIOD says so in its own words.
+              <div className="ir-empty">
+                {data.period?.active
+                  ? t('reportSystem.period.emptyFiltered')
+                  : t('reportSystem.ui.noEvents')}
+              </div>
             ) : (
               <IncidentList incidents={data.incidents} />
             )}
           </Panel>
 
-          {/* ── The supporting numbers, AFTER the story rather than in front of it. */}
+          {/*
+            The supporting numbers, AFTER the story rather than in front of it. Each tile says which
+            question it answers: five count the selected period, and the risk score is all-history by
+            construction. Six unmarked numbers in a row would read as six answers to one question, and
+            the odd one out is the one a manager would act on.
+          */}
           <section className="ir-kpis">
             {(data.kpis || []).map((k) => (
               <Kpi
                 key={k.key || k.label}
                 label={tx(k.label_i18n, k.label)}
                 value={k.value}
-                note={tx(k.note_i18n, k.note)}
+                note={
+                  data.period?.active && k.scope
+                    ? `${t(`reportSystem.period.scope.${k.scope}`)} · ${tx(k.note_i18n, k.note)}`
+                    : tx(k.note_i18n, k.note)
+                }
               />
             ))}
           </section>
@@ -230,7 +348,11 @@ export default function VehicleSystemDashboard() {
 
           {/* ── G. Evidence & calculations. */}
           <Panel
-            title={t('reportSystem.ui.riskTitle')}
+            title={
+              data.period?.active
+                ? t('reportSystem.period.riskTitleHistory')
+                : t('reportSystem.ui.riskTitle')
+            }
             hint={
               risk?.ceiling < 100
                 ? t('reportSystem.ui.riskHintCeiling', { score: risk?.score ?? 0, ceiling: risk.ceiling })
@@ -245,10 +367,28 @@ export default function VehicleSystemDashboard() {
             <Alert tone="neutral" heading={t('reportSystem.ui.howToRead')}>
               {tx(risk?.basis_i18n, risk?.basis)}
             </Alert>
+            {/*
+              THE ONE NUMBER ON THIS PAGE THAT DOES NOT MOVE WITH THE FILTER, said out loud. Its
+              arithmetic is all-history by construction — recency counts days from today, the ceiling
+              describes the whole record — so recomputing it over a chosen window would produce a
+              number on the same 0–100 scale that means something else entirely.
+            */}
+            {data.period?.active ? (
+              <Alert tone="warn" heading={t('reportSystem.period.riskScopeHeading')}>
+                {t('reportSystem.period.riskScopeBody')}
+              </Alert>
+            ) : null}
           </Panel>
 
           {/* ── H. Data quality — what is weak in the records themselves. */}
-          <Panel title={t('reportSystem.ui.dataQualityTitle')} hint={t('reportSystem.ui.dataQualityHint')}>
+          <Panel
+            title={t('reportSystem.ui.dataQualityTitle')}
+            hint={
+              data.data_quality_scope === 'period'
+                ? t('reportSystem.period.dataQualityHintPeriod')
+                : t('reportSystem.ui.dataQualityHint')
+            }
+          >
             <DataQuality warnings={data.data_quality} />
           </Panel>
 
@@ -271,7 +411,11 @@ export default function VehicleSystemDashboard() {
               }
             >
               {(data.failure_mix || []).length === 0 ? (
-                <div className="ir-empty">{t('reportSystem.ui.noEvents')}</div>
+                <div className="ir-empty">
+                  {data.period?.active
+                    ? t('reportSystem.period.emptyFiltered')
+                    : t('reportSystem.ui.noEvents')}
+                </div>
               ) : (
                 <Donut slices={data.failure_mix} unit={tp('reportSystem.ui.eventUnit', mixTotal)} />
               )}

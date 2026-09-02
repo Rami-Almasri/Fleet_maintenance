@@ -11,6 +11,10 @@ class Vendor extends Model
 {
     /** @use HasFactory<\Database\Factories\VendorFactory> */
     use HasFactory, SoftDeletes;
+    // The supplier's side of the Odoo partner mapping (§19). `external_id` on this table is the
+    // OfficeManager reference and is NOT an Odoo id — the two are different systems, so the Odoo
+    // answer lives in odoo_mappings where its provenance can be recorded.
+    use \App\Models\Concerns\HasOdooMapping;
 
     protected $fillable = [
         'name',

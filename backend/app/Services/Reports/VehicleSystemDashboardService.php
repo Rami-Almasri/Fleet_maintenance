@@ -41,6 +41,7 @@ class VehicleSystemDashboardService
     public function __construct(
         private GarageRecommendationService $categories,
         private VehicleSystemEvidenceService $evidence,
+        private VehicleSystemPeriodService $period,
     ) {
     }
 
@@ -85,32 +86,73 @@ class VehicleSystemDashboardService
     private const MAJOR_WORK_TOKENS = ['replace', 'replacement', 'overhaul', 'rebuild', 'new engine', 'engine change'];
 
     /**
-     * Build the dashboard for one vehicle and one system.
+     * Build the dashboard for one vehicle and one system, optionally over a selected period.
      *
-     * @param  Vehicle  $vehicle
-     * @param  string   $system  One of self::SYSTEMS
+     * WHAT THE PERIOD DOES AND DELIBERATELY DOES NOT TOUCH.
+     *
+     * Every section that reports the RECORD — incidents, problems, the timeline, the work ledger,
+     * durability, data quality, the counters — is read over the selected range and describes only
+     * that range. The default range is all history, so a reader who sets no filter gets exactly the
+     * report that existed before this parameter did.
+     *
+     * The RISK SCORE does not move with the filter, and this is the one asymmetry on the page. Its
+     * arithmetic is all-history by construction: recency counts days from today, the ceiling states
+     * what this car's whole record could ever reach, and post-repair failures are measured across the
+     * complete sequence. Recomputing it over three summer months would produce a number that looks
+     * like the same 0–100 scale and means something entirely different — a car with one May incident
+     * would read "recent failure, high recency points" for a period that ended in July. So the score
+     * stays historical, is computed from the unfiltered events, and every block that carries it is
+     * tagged `scope: history` so the frontend can never print it as a finding about the period.
+     * See §"Risk score" of the feature brief and [[treat-data-as-source-of-truth]].
+     *
+     * @param  Vehicle           $vehicle
+     * @param  string            $system  One of self::SYSTEMS
+     * @param  ?ReportDateRange  $range   Null and an inactive range are the same thing: all history.
      */
-    public function build(Vehicle $vehicle, string $system): array
+    public function build(Vehicle $vehicle, string $system, ?ReportDateRange $range = null): array
     {
         if (! isset(self::SYSTEMS[$system])) {
             throw new \InvalidArgumentException("Unknown system [{$system}].");
         }
 
-        $events   = $this->events($vehicle, $system);
-        $repairs  = $this->repairs($vehicle, $system, $events);
+        $range = $range ?: ReportDateRange::allHistory();
+
+        // The period dataset. Narrowed in SQL by vehicle, system and date — never loaded whole and
+        // sifted afterwards.
+        $events   = $this->events($vehicle, $system, $range);
+        $repairs  = $this->repairs($vehicle, $system, $events, $range);
         // The evidence layer decides what the records establish; scoring then runs over ITS incidents
         // rather than over the raw rows. See VehicleSystemEvidenceService for why that distinction is
         // the whole point of this report.
         $analysis = $this->evidence->analyse($events, $system);
-        $risk     = $this->risk($events, $system, $analysis);
+
+        // The historical spine, for the risk score only. When no filter is set the two datasets are
+        // the same query, so nothing extra is read for the common case.
+        $historyEvents   = $range->isActive() ? $this->events($vehicle, $system) : $events;
+        $historyAnalysis = $range->isActive() ? $this->evidence->analyse($historyEvents, $system) : $analysis;
+        $risk            = $this->risk($historyEvents, $system, $historyAnalysis);
+
+        $period = $this->period->build($analysis['incidents'], $analysis['durability'], $events);
 
         return [
             'vehicle'    => $this->vehicleHeader($vehicle),
             'brief'      => $this->vehicleBrief($vehicle),
             'system'     => ['key' => $system, 'label' => self::SYSTEMS[$system]],
-            'verdict'    => $this->verdict($risk, $events, $analysis),
+            'verdict'    => $this->verdict($risk, $historyEvents, $historyAnalysis),
             'kpis'       => $this->kpis($events, $risk, $analysis),
-            'risk'       => $risk,
+            'risk'       => $risk + ['scope' => 'history'],
+
+            // ── The selected period ───────────────────────────────────────────────────────────
+            // `period` describes the filter; `period_summary` counts inside it; `problems` is the
+            // grouped answer to "what went wrong, how often, and what was done".
+            'period'        => $range->toArray() + [
+                'covered_from' => $events->first()['date'] ?? null,
+                'covered_to'   => $events->last()['date'] ?? null,
+            ],
+            'period_summary'=> $period['summary'] + ['scope' => 'period'],
+            'problems'      => $period['problems'],
+            'workshop_only' => $period['workshop_only'],
+            'period_repairs'=> $period['repairs'],
 
             // ── The evidence layer, surfaced ──────────────────────────────────────────────────
             'incidents'    => $analysis['incidents'],
@@ -119,14 +161,18 @@ class VehicleSystemDashboardService
             'durability'   => $analysis['durability'],
             'facts'        => $analysis['facts'],
             'confidence'   => $analysis['confidence'],
+            // Data quality describes the records the report was BUILT from, so it moves with the
+            // filter — and says which it is, because a period figure read as an all-history one is a
+            // wrong statement about the fleet's paperwork.
             'data_quality' => $analysis['data_quality'],
+            'data_quality_scope' => $range->isActive() ? 'period' : 'history',
             'takeaway'     => $this->takeaway($analysis, $risk, $system),
 
             'failure_mix'=> $this->failureMix($events),
             'fault_history' => $this->faultHistory($events, $system),
             'timeline'   => $events->values()->all(),
             'repairs'    => $repairs,
-            'provenance' => $this->provenance($vehicle, $system, $events),
+            'provenance' => $this->provenance($vehicle, $system, $events, $range),
         ];
     }
 
@@ -140,28 +186,62 @@ class VehicleSystemDashboardService
      *   • workshop-log rows whose finding keyword resolves to this category — the sheet history,
      *     which predates per-fault tickets and is the only record for older cars.
      * A workshop row that already has tasks is represented by its tasks, so nothing double-counts.
+     *
+     * THE DATE FILTER IS APPLIED HERE, IN SQL, and nowhere later. Both tables are already indexed for
+     * the vehicle lookup (`maintenances(vehicle_id, out_date)`), so a period narrows to an index range
+     * rather than reading a car's whole history and discarding most of it. The imported workshop sheet
+     * is not touched at request time at all — this reads the rows the importer already wrote, which is
+     * the application's single representation of that history.
+     *
+     * The collection pass afterwards re-asserts the range against the date each event will actually
+     * PRINT (a task's date is a COALESCE across three columns), so the SQL narrowing can never let a
+     * row through that the header does not cover. @see ReportDateRange::contains
      */
-    private function events(Vehicle $vehicle, string $system): Collection
+    private function events(Vehicle $vehicle, string $system, ?ReportDateRange $range = null): Collection
     {
+        $range = $range ?: ReportDateRange::allHistory();
+
         $tasks = MaintenanceTask::query()
             ->where('vehicle_id', $vehicle->id)
             ->where('category_key', $system)
+            ->when($range->isActive(), fn ($q) => $q->where(
+                fn ($w) => $w
+                    // The date a task is reported under. A row where both columns are null compares as
+                    // NULL here — not matched — and is picked up by the fallback branch below.
+                    ->where(fn ($x) => $range->applyToExpression(
+                        $x, 'COALESCE(maintenance_tasks.identified_at, maintenance_tasks.created_at)'
+                    ))
+                    ->orWhere(fn ($x) => $x
+                        ->whereNull('maintenance_tasks.identified_at')
+                        ->whereNull('maintenance_tasks.created_at')
+                        ->whereHas('maintenance', fn ($m) => $range->applyToColumn($m, 'maintenances.out_date')))
+            ))
             ->with(['maintenance:id,garage,vendor_id,out_date,actual_in_date,maintenance_notes,event_status', 'maintenance.vendor:id,name'])
             ->get();
 
-        $coveredMaintenanceIds = $tasks->pluck('maintenance_id')->filter()->unique()->all();
+        // Deliberately NOT filtered by the period: a workshop row is represented by its tasks whether
+        // or not those tasks fall inside the selected window. Narrowing this would let a row reappear
+        // as a second, unattributed event the moment a filter is applied.
+        $coveredMaintenanceIds = MaintenanceTask::query()
+            ->where('vehicle_id', $vehicle->id)
+            ->where('category_key', $system)
+            ->whereNotNull('maintenance_id')
+            ->distinct()
+            ->pluck('maintenance_id')
+            ->all();
 
         $sheetRows = Maintenance::query()
             ->where('vehicle_id', $vehicle->id)
             ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
             ->whereNotIn('id', $coveredMaintenanceIds ?: [0])
+            ->when($range->isActive(), fn ($q) => $range->applyToColumn($q, 'maintenances.out_date'))
             ->with('vendor:id,name')
             ->get()
             ->filter(fn (Maintenance $m) => $this->matchesSystem($m, $system));
 
         return $tasks->map(fn (MaintenanceTask $t) => $this->fromTask($t))
             ->concat($sheetRows->map(fn (Maintenance $m) => $this->fromSheetRow($m, $system)))
-            ->filter(fn (array $e) => $e['date'] !== null)
+            ->filter(fn (array $e) => $e['date'] !== null && $range->contains($e['date']))
             ->pipe(fn (Collection $all) => $this->collapseVisits($all))
             ->sortBy('date')
             ->values();
@@ -1274,18 +1354,26 @@ class VehicleSystemDashboardService
 
         $daysSince = $last ? Carbon::parse($last)->diffInDays(Carbon::today()) : null;
 
-        $kpi = fn (string $key, string $label, $value, string $note, ?string $noteKey = null) => [
+        /*
+         * `scope` is not decoration. Five of these tiles count the SELECTED period and one — the risk
+         * score — is all-history by construction (see build()). Six numbers in a row with no marking
+         * would read as six answers to the same question, and the odd one out is the one a manager
+         * would act on. The frontend prints the scope on the tile.
+         */
+        $kpi = fn (string $key, string $label, $value, string $note, ?string $noteKey = null, string $scope = 'period') => [
             'key'        => $key,
             'label'      => $label,
             'value'      => $value,
             'note'       => $note,
+            'scope'      => $scope,
             'label_i18n' => $this->tr('reportSystem.kpi.' . $key . '.label'),
             'note_i18n'  => $this->tr('reportSystem.kpi.' . $key . '.' . ($noteKey ?: 'note')),
         ];
 
         return [
             $kpi('risk', 'Risk', $risk['score'] . ' / 100',
-                'Evidence confidence: ' . strtoupper($analysis['confidence']['level']) . '.'),
+                'Evidence confidence: ' . strtoupper($analysis['confidence']['level']) . '.',
+                null, 'history'),
             $kpi('incidents', 'Real Incidents', $f['incidents'],
                 'Grouped from ' . $f['records'] . ' source records.'),
             $kpi('confirmed', 'Confirmed Faults', $f['confirmed_faults'],
@@ -1460,11 +1548,22 @@ class VehicleSystemDashboardService
      * matters: was there another failure of this system AFTER it? A part followed by a further
      * failure is reported as such — that is a fact about the timeline, not a judgement of the garage.
      */
-    private function repairs(Vehicle $vehicle, string $system, Collection $events): array
+    private function repairs(Vehicle $vehicle, string $system, Collection $events, ?ReportDateRange $range = null): array
     {
+        $range = $range ?: ReportDateRange::allHistory();
+
         $lines = MaintenanceLineItem::query()
             ->where('vehicle_id', $vehicle->id)
             ->where('category_key', $system)
+            // A line is dated by its visit when it has one, and by its own columns when it does not —
+            // so the filter has to ask the same two questions the reader below will.
+            ->when($range->isActive(), fn ($q) => $q->where(fn ($w) => $w
+                ->whereHas('maintenance', fn ($m) => $range->applyToColumn($m, 'maintenances.out_date'))
+                ->orWhere(fn ($x) => $x
+                    ->whereDoesntHave('maintenance', fn ($m) => $m->whereNotNull('maintenances.out_date'))
+                    ->where(fn ($y) => $range->applyToExpression(
+                        $y, 'COALESCE(maintenance_line_items.installed_on, maintenance_line_items.created_at)'
+                    )))))
             ->with('maintenance:id,out_date,garage,vendor_id', 'maintenance.vendor:id,name')
             ->get();
 
@@ -1490,6 +1589,9 @@ class VehicleSystemDashboardService
                     'held_ok'     => $after === 0,
                 ];
             })
+            // The exact inclusive boundary, asserted against the date the row is printed under —
+            // the SQL above narrows, this decides.
+            ->filter(fn (array $r) => $range->contains($r['date']))
             ->sortByDesc('date')
             ->values()
             ->all();
@@ -1569,16 +1671,26 @@ class VehicleSystemDashboardService
         ));
     }
 
-    private function provenance(Vehicle $vehicle, string $system, Collection $events): array
+    private function provenance(Vehicle $vehicle, string $system, Collection $events, ?ReportDateRange $range = null): array
     {
+        $range   = $range ?: ReportDateRange::allHistory();
         $tickets = $events->where('source', 'ticket')->count();
         $sheet   = $events->where('source', 'workshop log')->count();
+
+        /*
+         * The window states the SELECTED period first and the records found inside it second. Those
+         * are different facts — a filter covering May to July whose records run 04 Jul to 28 Jul is
+         * reporting a mostly empty period, and collapsing the two would hide that.
+         */
+        $selected = $range->isActive()
+            ? 'Selected period ' . ($range->from ?: 'the earliest record') . ' to ' . ($range->to ?: 'today') . ' — '
+            : 'All history — ';
 
         return [
             'source'  => 'maintenance_tasks (category_key = ' . $system . ') + workshop-log rows whose finding resolves to that category',
             'window'  => $events->isEmpty()
-                ? 'No events on record'
-                : 'All history — ' . $events->first()['date'] . ' to ' . $events->last()['date'],
+                ? ($range->isActive() ? $selected . 'no events recorded in it' : 'No events on record')
+                : $selected . 'records run ' . $events->first()['date'] . ' to ' . $events->last()['date'],
             'split'   => $tickets . ' from per-fault tickets · ' . $sheet . ' from the workshop log',
             'grouping'=> 'One visit is one event: sheet rows identical on date, garage and finding are the stages of a single trip (OUT / Follow up / IN) and are collapsed into one.',
             'omitted' => 'Retired tickets are excluded. Entries whose finding matches no catalog keyword are not attributed to any system, so they appear on no dashboard.',
@@ -1587,12 +1699,22 @@ class VehicleSystemDashboardService
                 // The table and column names stay in English on purpose: they are identifiers a reader
                 // would grep the schema for, not prose. Everything around them translates.
                 'source'  => $this->tr('reportSystem.provenance.source', ['system' => $system]),
-                'window'  => $events->isEmpty()
-                    ? $this->tr('reportSystem.provenance.windowNone')
-                    : $this->tr('reportSystem.provenance.window', [
+                'window'  => match (true) {
+                    $events->isEmpty() && ! $range->isActive() => $this->tr('reportSystem.provenance.windowNone'),
+                    $events->isEmpty()                         => $this->tr('reportSystem.provenance.windowPeriodNone', [
+                        'from' => $range->from ?: '—', 'to' => $range->to ?: '—',
+                    ]),
+                    $range->isActive()                         => $this->tr('reportSystem.provenance.windowPeriod', [
+                        'from'   => $range->from ?: $events->first()['date'],
+                        'to'     => $range->to ?: $events->last()['date'],
+                        'first'  => $events->first()['date'],
+                        'last'   => $events->last()['date'],
+                    ]),
+                    default => $this->tr('reportSystem.provenance.window', [
                         'from' => $events->first()['date'],
                         'to'   => $events->last()['date'],
                     ]),
+                },
                 'split'   => $this->tr('reportSystem.provenance.split', ['tickets' => $tickets, 'sheet' => $sheet]),
                 'grouping'=> $this->tr('reportSystem.provenance.grouping'),
                 'omitted' => $this->tr('reportSystem.provenance.omitted'),

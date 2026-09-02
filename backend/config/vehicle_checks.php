@@ -276,6 +276,61 @@ return [
          * its own, so it carries the requirement's own label into the findings picker for the
          * inspector to place — the ONE case where the engine cannot pre-fill the vocabulary for him.
          */
+        /**
+         * THE PRE-EXPIRY WARRANTY INSPECTION — look at the car while somebody else is still paying.
+         *
+         * The single most valuable check in this catalog, and the only one whose deadline is set by a
+         * contract rather than by wear. A defect found the week before cover ends is somebody else's
+         * bill; the same defect found the week after is ours, and nothing about the car changed in
+         * between. That asymmetry is the entire justification for asking.
+         *
+         * WHY IT LIVES HERE rather than as a bespoke reminder: it is an OBLIGATION — the system asked
+         * a specific question about a specific car and a named human must answer it — which is
+         * precisely what a check requirement is ([[check-requirement-three-way-contract]]). It
+         * therefore inherits the whole lifecycle for free: it attaches to the next inspection that
+         * looks at the car, it cannot be raised twice for the same warranty (the cycle key is the
+         * warranty id), and an answer of "looked, nothing found" RESOLVES it and creates no fault.
+         *
+         * That last part is load-bearing. The temptation with a warranty inspection is to treat a
+         * clean result as a wasted trip; it is the opposite. "We looked before cover ended and there
+         * was nothing" is the answer that makes the next expiry defensible, and it must not
+         * manufacture work to justify itself.
+         *
+         * `finding_keyword` is null on purpose — like `general`. A warranty inspection can turn up
+         * anything at all, from a gearbox to a door seal, so the inspector names the fault from the
+         * findings picker and the ordinary classification runs on their pick. Hard-coding a keyword
+         * here would force every warranty discovery into one category and destroy the one report this
+         * feature exists to produce: what manufacturers actually turn out to owe us.
+         */
+        'warranty_expiry' => [
+            'label'    => 'Warranty expiry inspection',
+            'label_ar' => 'فحص قبل انتهاء الضمان',
+            // Moderate, not routine: the window closes on a date and does not reopen.
+            'severity' => 'moderate',
+            'results'  => [
+                'ok' => [
+                    'label'           => 'Inspected — nothing to claim',
+                    'label_ar'        => 'تم الفحص — لا يوجد ما يُطالب به',
+                    // Creates NOTHING. See the note above: a clean pre-expiry inspection is a
+                    // successful one, and must never invent a fault to look useful.
+                    'creates_action'  => false,
+                    'resolution_code' => 'confirmed_ok',
+                ],
+                'claimable_found' => [
+                    'label'          => 'Found something that should be claimed',
+                    'label_ar'       => 'تم العثور على عطل يستحق مطالبة الضمان',
+                    'creates_action' => true,
+                    // Null on purpose — the inspector names the fault. See the note above.
+                    'finding_keyword' => null,
+                    'decisions'      => [
+                        'approved'     => ['label' => 'Claim it',            'label_ar' => 'قدّم المطالبة', 'action' => 'open_task'],
+                        'deferred'     => ['label' => 'Deferred',            'label_ar' => 'مؤجل',           'action' => 'defer'],
+                        'not_required' => ['label' => 'Not required',        'label_ar' => 'غير مطلوب',      'action' => 'none'],
+                    ],
+                ],
+            ],
+        ],
+
         'general' => [
             'label'    => 'Scheduled check',
             'label_ar' => 'فحص مجدول',

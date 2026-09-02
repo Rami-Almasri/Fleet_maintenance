@@ -20,6 +20,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class ComponentCatalog extends Model
 {
+    // The part's side of the Odoo product mapping (§18). A part is recognised by an explicit mapping,
+    // never by its name — "Brake Pad Front" and "Front Brake Pads" are the same part and no string
+    // comparison may decide that on a ledger's behalf.
+    use \App\Models\Concerns\HasOdooMapping;
+
     /** Explicit: Laravel would guess 'component_catalogs'. */
     protected $table = 'component_catalog';
 
@@ -57,7 +62,7 @@ class ComponentCatalog extends Model
     ];
 
     protected $fillable = [
-        'slug', 'name', 'name_ar', 'aliases', 'identity_aliases', 'category_key', 'action_target', 'tracking_mode',
+        'slug', 'name', 'name_ar', 'aliases', 'identity_aliases', 'spec_fields', 'category_key', 'action_target', 'tracking_mode',
         'default_part_number', 'default_warranty_months', 'default_warranty_km',
         'expected_life_km', 'expected_life_months',
         'position_scheme', 'is_active', 'notes',
@@ -67,6 +72,7 @@ class ComponentCatalog extends Model
     protected $casts = [
         'aliases'                 => 'array',
         'identity_aliases'        => 'array',
+        'spec_fields'             => 'array',
         'default_warranty_months' => 'integer',
         'default_warranty_km'     => 'integer',
         'expected_life_km'        => 'integer',
@@ -188,6 +194,24 @@ class ComponentCatalog extends Model
     public function displayName(string $locale = 'en'): string
     {
         return $locale === 'ar' && $this->name_ar ? $this->name_ar : $this->name;
+    }
+
+    /**
+     * The spec fields this part type carries, resolved against the dictionary.
+     *
+     * Goes through {@see \App\Support\PartSpecs} rather than reading the column, so a field key
+     * that was renamed or retired drops out here instead of reaching a form as a broken input.
+     *
+     * @return array<string,array>
+     */
+    public function specFields(): array
+    {
+        return \App\Support\PartSpecs::fieldsFor($this);
+    }
+
+    public function hasSpecs(): bool
+    {
+        return $this->specFields() !== [];
     }
 
     public function isConsumable(): bool

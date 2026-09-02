@@ -40,6 +40,7 @@ import GarageProfile from './pages/intelligence/GarageProfile';
 import GarageCompare from './pages/intelligence/GarageCompare';
 import Executive from './pages/intelligence/Executive';
 import PartsHub from './pages/PartsHub';
+import WarrantyCases from './pages/WarrantyCases';
 import SuppliersHub from './pages/SuppliersHub';
 import GaragesHub from './pages/GaragesHub';
 import FieldReportsHub from './pages/FieldReportsHub';
@@ -54,6 +55,7 @@ import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
+import OdooMappings from './pages/OdooMappings';
 import SimulationPanel from './pages/SimulationPanel';
 import Users from './pages/Users';
 import NotFound from './pages/NotFound';
@@ -148,6 +150,14 @@ export default function App() {
                   <Route path="/classification-review" element={<EventClassificationReview />} />
                   {/* Concept Bridge benchmark — the human ground truth that gates legacy concept enrichment. */}
                   <Route path="/concept-bridge-review" element={<ConceptBridgeReview />} />
+                </Route>
+
+                {/* Odoo mappings — what each FleetView record IS in the accounting system. Gated on
+                    financial.view to READ (a person fixing a blocked cost needs to see that a supplier
+                    is unmapped); the page itself hides every edit control without
+                    financial.manage_mappings, and the routes refuse it regardless. */}
+                <Route element={<RequirePermission permission="financial.view" />}>
+                  <Route path="/odoo-mappings" element={<OdooMappings />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="users.manage" />}>
@@ -355,6 +365,19 @@ export default function App() {
                       parts.view like the board; keying an invoice is a money action and is gated on the
                       API with parts.purchase, so a viewer sees the ledger without the write buttons. */}
                   <Route path="/part-invoices" element={<RedirectToTab to="/parts" tab="invoices" />} />
+                </Route>
+                {/* Warranty CASES — "could somebody else be paying for this?".
+                    A separate route from the /parts warranty REGISTER on purpose: the register is a
+                    record of what we were promised, this is the WORK of deciding whether a promise
+                    applies and chasing the counterparty until it does or doesn't. Different people,
+                    different lifecycle, different permission — `warranty.view` rather than
+                    parts.view, so a finance or workshop role can work the desk without being given
+                    the whole parts board. The deep-link route carries the case id because every
+                    warranty notification lands on one. */}
+                <Route element={<RequirePermission permission="warranty.view" />}>
+                  <Route path="/warranty" element={<WarrantyCases />} />
+                  <Route path="/warranty/cases" element={<WarrantyCases />} />
+                  <Route path="/warranty/cases/:caseId" element={<WarrantyCases />} />
                 </Route>
                 {/* Recurring Fault Reviews — management inbox for confirmed faults that came back after a fix. */}
                 <Route element={<RequirePermission permission="maintenance.recurring.view" />}>

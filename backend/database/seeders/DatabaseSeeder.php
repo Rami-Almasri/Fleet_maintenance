@@ -70,6 +70,13 @@ class DatabaseSeeder extends Seeder
         // knowledge base, it is a retriever with nothing to cite.
         $this->call(KnowledgeSourceSeeder::class);
 
+        // Odoo financial integration — one row per canonical expense type, carrying the DEFAULT
+        // document type from config/odoo.php. Deliberately seeds NO Odoo account id: that is a real
+        // id in another database and inventing one would post money to the wrong account. Finance
+        // resolves it on the mappings screen against pulled master data. Idempotent, and it never
+        // overwrites a mapping somebody has already decided.
+        $this->call(ExpenseTypeMappingSeeder::class);
+
         // A bootstrap super-admin so there's always one account that can do
         // everything (and promote others). Credentials come from the environment,
         // NOT a hardcoded default, and re-seeding NEVER resets the password of an

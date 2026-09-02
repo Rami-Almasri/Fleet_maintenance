@@ -15,6 +15,7 @@ use App\Models\PartInvestigation;
 use App\Models\PartPurchase;
 use App\Models\PartRequest;
 use App\Models\User;
+use App\Models\Vehicle;
 use App\Models\VehicleLogEvent;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -43,6 +44,14 @@ class PartWorkflowService
          * It is the projection, not the service, precisely so this stays a one-way dependency.
          */
         private SpareKeyProjection $spareKeys,
+        /**
+         * The warranty gate — "could the manufacturer, dealer or supplier be paying for this?".
+         *
+         * Injected rather than resolved inline so it is visible in this class's dependency list:
+         * procurement now has an opinion about who ought to be paying, and that is a fact about this
+         * service, not an implementation detail hidden inside one method.
+         */
+        private \App\Services\Warranty\WarrantyProcurementGuard $warrantyGuard,
     ) {}
 
     // ───────────────────────────── request lifecycle ─────────────────────────────
@@ -56,6 +65,32 @@ class PartWorkflowService
         $this->incorrect->assertNotIncorrect(
             ! empty($data['maintenance_task_id']) ? MaintenanceTask::find($data['maintenance_task_id']) : null,
             'the reason for a part request',
+        );
+
+        /**
+         * ── THE WARRANTY GATE ───────────────────────────────────────────────────────────────────
+         *
+         * Before we commit to spending our own money: could the manufacturer, the dealer or a
+         * supplier be responsible for this instead?
+         *
+         * HERE, and not in the controller, because this method is the ONE door every purchase
+         * request comes through — the form, the inspector's required parts, the garage's diagnosis
+         * and the spare-key flow all arrive at this line. Guarding the door guards all four without
+         * any of them knowing the gate exists.
+         *
+         * For the overwhelming majority of requests (a car with no live warranty) this is one
+         * indexed query that returns NOT_COVERED and changes nothing: the request is created exactly
+         * as it was before this feature existed, merely stamped with the answer so that six months
+         * from now "did anybody check?" is answerable. When cover IS live and the answer is COVERED
+         * or UNKNOWN the guard throws, having first opened a coverage review and notified the
+         * warranty desk — so the refusal always leaves a work item behind rather than a dead end.
+         *
+         * @see \App\Services\Warranty\WarrantyProcurementGuard
+         */
+        $warrantyStamp = $this->warrantyGuard->check(
+            Vehicle::findOrFail($data['vehicle_id']),
+            $data,
+            $actor,
         );
 
         $req = new PartRequest();
@@ -73,6 +108,10 @@ class PartWorkflowService
             // WHICH part this is. See stampIdentity(): the catalog id when the requester picked from the
             // list, else whatever the wording strictly resolves to, plus this row's own normalised name.
             ...$this->stampIdentity($data['component_catalog_id'] ?? null, $data['part_name']),
+            // WHICH SIZE is wanted. Validated against the part type the requester picked — which is
+            // why it is stamped after stampIdentity, not before: without a catalog row there is no
+            // vocabulary to check a spec against, and a free-text part carries none.
+            'specs'               => $this->requestSpecs($data),
             // Garage-source requests inherit the ticket's location (in_shop→garage / on_site→onsite);
             // otherwise take what the caller supplied.
             'repair_location'     => $data['repair_location'] ?? $this->locationFromTicket($ticket),
@@ -86,6 +125,10 @@ class PartWorkflowService
             'requested_at'        => Carbon::now(),
         ]);
         $req->save();
+
+        // Freeze the gate's answer onto the row. Written AFTER save because the request does not
+        // exist while the gate is running — and must not, since the gate may refuse it outright.
+        $this->warrantyGuard->stamp($req, $warrantyStamp, $actor);
 
         $this->logVehicle($req->vehicle_id, VehicleLogEvent::EVENT_PART_REQUESTED, $actor, $req->maintenance_id, [
             'description' => "Part requested: {$req->part_name} ({$req->source})"
@@ -302,6 +345,15 @@ class PartWorkflowService
     {
         $this->guardStatus($req, [PartRequest::STATUS_APPROVED, PartRequest::STATUS_PURCHASED], 'purchase');
 
+        // A store-sourced purchase is the RECORD of a unit leaving our own shelf, and it is only
+        // honest if the shelf went down in the same transaction. StoreService::issueToRequest is the
+        // one caller that can promise that, and it says so with `_from_store`. Anything else asking
+        // for this source is trying to book stock it never took, which would leave the storehouse
+        // permanently over-counted with nothing to point at.
+        if (($data['purchase_source'] ?? null) === PartPurchase::SOURCE_STORE && empty($data['_from_store'])) {
+            abort(422, 'A part from the storehouse must be issued from it (which takes it off the shelf), not recorded as a purchase.');
+        }
+
         return DB::transaction(function () use ($req, $data, $actor) {
             $partClass = $req->part_class ?: $this->intel->classify($req->part_name, $req->part_number, $req->category_key);
 
@@ -342,6 +394,11 @@ class PartWorkflowService
                 'source_name'         => $data['source_name'] ?? null,
                 'repair_location'     => $data['repair_location'] ?? $req->repair_location,
                 'purchase_price'      => $data['purchase_price'],
+                // The specification of the thing actually bought, normalised against the part type
+                // the request names. Falls back to what was ASKED for when the buyer did not restate
+                // it — a request for a 60Ah battery that comes back with nothing typed is far more
+                // likely to be a 60Ah battery than to be unknown.
+                'specs'               => $this->purchaseSpecs($req, $data),
                 'currency'            => $data['currency'] ?? $req->currency ?? 'AED',
                 'quantity'            => $data['quantity'] ?? $req->quantity ?? 1,
                 'purchased_by'        => $actor->id,
@@ -404,8 +461,93 @@ class PartWorkflowService
      * then the ticket's own garage for a garage buy that named nobody — and only if all three are empty
      * does it fall back to the bare channel word.
      */
+    /**
+     * The size being ASKED for, normalised against the part type the requester picked.
+     *
+     * Silent on failure for the same reason as the purchase side: a request is someone telling us a
+     * car needs a part, and that message must get through even when the spec box was filled in
+     * wrongly. @see purchaseSpecs()
+     *
+     * @return array<string,mixed>|null
+     */
+    private function requestSpecs(array $data): ?array
+    {
+        $catalogId = $data['component_catalog_id'] ?? null;
+
+        if (! $catalogId || empty($data['specs'])) {
+            return null;
+        }
+
+        $catalog = \App\Models\ComponentCatalog::find($catalogId);
+
+        if (! $catalog || ! \App\Support\PartSpecs::hasSpecs($catalog)) {
+            return null;
+        }
+
+        try {
+            return \App\Support\PartSpecs::validate($catalog, (array) $data['specs']) ?: null;
+        } catch (\Throwable $e) {
+            logger()->info('part_specs.request_value_rejected', [
+                'catalog' => $catalog->slug,
+                'reason'  => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * WHAT WAS BOUGHT, normalised — "12V 60Ah" as a stored spec map rather than as words in a note.
+     *
+     * The buyer's entry wins over the requester's, because the buyer saw the part. When the buyer
+     * typed nothing, the request's own spec carries over: a request for a 60Ah battery fulfilled
+     * without comment is overwhelmingly a 60Ah battery, and treating it as unknown would empty the
+     * variant report of most of its rows for no gain in truth.
+     *
+     * A value that will not validate is DROPPED rather than thrown on. A purchase is money that has
+     * already moved and paperwork that already exists; refusing to record it over a malformed
+     * voltage would be the tail wagging the dog. The honest outcome is a purchase with no spec,
+     * which the report already knows how to show.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function purchaseSpecs(PartRequest $req, array $data): ?array
+    {
+        $catalog = $req->component_catalog_id
+            ? \App\Models\ComponentCatalog::find($req->component_catalog_id)
+            : null;
+
+        if (! $catalog || ! \App\Support\PartSpecs::hasSpecs($catalog)) {
+            return null; // free-text part, or a type that carries no specs — nothing to record
+        }
+
+        $raw = $data['specs'] ?? $req->specs ?? null;
+
+        if (empty($raw)) {
+            return null;
+        }
+
+        try {
+            return \App\Support\PartSpecs::validate($catalog, (array) $raw) ?: null;
+        } catch (\Throwable $e) {
+            logger()->info('part_specs.purchase_value_rejected', [
+                'part_request_id' => $req->id,
+                'catalog'         => $catalog->slug,
+                'reason'          => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
     private function sellerName(PartPurchase $purchase): string
     {
+        // Our own shelf is not a seller and must not be dressed up as one — no vendor, no invoice,
+        // no "bought from" to chase. It is named plainly so the timeline reads as what happened.
+        if ($purchase->purchase_source === PartPurchase::SOURCE_STORE) {
+            return 'the storehouse';
+        }
+
         $vendor = $purchase->source_vendor_id
             ? optional($purchase->sourceVendor()->first())->name
             : null;

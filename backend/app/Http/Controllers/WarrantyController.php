@@ -169,17 +169,37 @@ class WarrantyController extends Controller
         return ResponseHelper::SuccessResponse(new WarrantyResource($warranty), 'Warranty reinstated');
     }
 
-    /** Everything covering one car, each judged against that car's current odometer. */
-    public function forVehicle(Vehicle $vehicle)
+    /**
+     * Everything covering one car, each judged against that car's current odometer — PLUS the
+     * roll-up the vehicle page's badge renders.
+     *
+     * `state` is deliberately computed from the WHOLE-CAR promises only (see
+     * WarrantyStatusService::vehicleState), while `warranties` lists every kind. A car whose only
+     * live cover is the 12-month warranty on a tyre fitted last week is not "under warranty" in any
+     * sense an operator means by the phrase — but that tyre's cover is still real, still claimable,
+     * and belongs on the page. One answer for the badge, the full picture underneath it.
+     *
+     * `open_cases` rides along so the page can show what is already in flight without a second
+     * request — the vehicle page is the surface where somebody notices a car is in a dealer's hands.
+     */
+    public function forVehicle(Vehicle $vehicle, \App\Services\Warranty\WarrantyStatusService $status)
     {
         $rows = $this->service->forVehicle($vehicle);
 
         return ResponseHelper::SuccessResponse([
             'vehicle' => ['id' => $vehicle->id, 'plate_no' => $vehicle->plate_no, 'odometer' => $vehicle->odometer],
+            'state'   => $status->vehicleState($vehicle),
             'warranties' => array_map(fn ($r) => [
                 ...(new WarrantyResource($r['warranty']))->toArray(request()),
                 'verdict' => $r['verdict'],
             ], $rows),
+            'open_cases' => \App\Http\Resources\WarrantyClaimResource::collection(
+                \App\Models\WarrantyClaim::forVehicle($vehicle->id)
+                    ->openCases()
+                    ->with(['warranty', 'catalog:id,name,name_ar'])
+                    ->orderByDesc('id')
+                    ->get()
+            ),
         ], 'Vehicle warranties retrieved');
     }
 

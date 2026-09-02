@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Carbon;
 
 /**
  * A row in `maintenances` plays one of two roles, told apart by `origin`:
@@ -20,7 +21,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  *    in the dashboard. The two event sources are interchangeable everywhere the board reads
  *    the live garage log — manual events are the dashboard becoming the source of truth.
  */
-class Maintenance extends Model
+class Maintenance extends Model implements \App\Contracts\FinancialEventSource
 {
     use HasFactory;
 
@@ -1062,6 +1063,11 @@ class Maintenance extends Model
         // Recovery (towing) — the winch/tow unit that recovered a broken-down car to the garage, captured
         // in place of an assigned driver on the recovery leg. See dispatchRecovery().
         'recovery_unit_name', 'recovery_unit_phone',
+        // The money side of that same leg — what the towing company charged and the paper behind it.
+        // The tow's supplier is its OWN vendor: `vendor_id` on this ticket is the garage that repairs
+        // the car, which is a different business sending a different bill.
+        'recovery_cost', 'recovery_currency', 'recovery_vendor_id', 'recovery_invoice_required',
+        'recovery_invoice_no', 'recovery_invoice_date', 'recovery_invoice_disk', 'recovery_invoice_key',
         // Which intake tab produced this ticket (routine_check | scheduled_dormancy) — traceability only.
         'test_kind',
         // Supervisor Notification & Delegation — priority tag + delegation overlay.
@@ -1106,6 +1112,9 @@ class Maintenance extends Model
         'actual_in_date'       => 'date',
         'approved_amount'      => 'decimal:2',
         'cost'                 => 'decimal:2',
+        'recovery_cost'             => 'decimal:2',
+        'recovery_invoice_date'     => 'date',
+        'recovery_invoice_required' => 'boolean',
         'parts_total'          => 'decimal:2',
         'labor_total'          => 'decimal:2',
         'cost_is_itemized'     => 'boolean',
@@ -2014,5 +2023,109 @@ class Maintenance extends Model
     public function reason(): BelongsTo
     {
         return $this->belongsTo(MaintenanceReason::class, 'maintenance_reason_id');
+    }
+
+    /** The towing company that recovered this car — NOT the garage that repairs it. */
+    public function recoveryVendor(): BelongsTo
+    {
+        return $this->belongsTo(Vendor::class, 'recovery_vendor_id');
+    }
+
+    // ── Financial event source: THE RECOVERY LEG, AND ONLY THE RECOVERY LEG ────────────────────────
+    //
+    // READ THIS BEFORE USING IT. A Maintenance ticket as a FinancialEventSource means exactly one
+    // thing: the TOW. It never means the repair.
+    //
+    // The repair's cost belongs to the ticket's garage invoices, and each of those is its own source
+    // raising its own event ([[one Ticket → many Invoices]]). If this class reported the repair cost as
+    // well, a ticket with one invoice would raise TWO obligations for the same money — one from the
+    // invoice and one from the ticket — and both would post.
+    //
+    // A tow, by contrast, has no document of its own in FleetView: it is a leg of this ticket, recorded
+    // in this ticket's recovery_* columns by dispatchRecovery() and recordRecoveryCost(). So the ticket
+    // is genuinely the operational record for that cost, and this is where the financial layer reads it
+    // from. See the add_recovery_financials_to_maintenances migration for why the columns live here.
+
+    /**
+     * RECOVERY when a tow was actually paid for; null otherwise.
+     *
+     * Null covers both "this ticket never involved a tow" and "the tow cost nothing we were billed for",
+     * which are the same answer to the only question being asked: is there an obligation here?
+     */
+    public function financialExpenseType(): ?string
+    {
+        return round((float) $this->recovery_cost, 2) > 0
+            ? \App\Support\ExpenseType::RECOVERY
+            : null;
+    }
+
+    public function financialAmount(): float
+    {
+        return round((float) $this->recovery_cost, 2);
+    }
+
+    public function financialCurrency(): string
+    {
+        return $this->recovery_currency ?: 'AED';
+    }
+
+    public function financialVehicleId(): ?int
+    {
+        return $this->vehicle_id;
+    }
+
+    public function financialMaintenanceId(): ?int
+    {
+        return $this->id;
+    }
+
+    public function financialVendorId(): ?int
+    {
+        return $this->recovery_vendor_id;
+    }
+
+    public function financialInvoiceNumber(): ?string
+    {
+        $no = trim((string) $this->recovery_invoice_no);
+
+        return $no === '' ? null : $no;
+    }
+
+    public function financialInvoiceDate(): ?string
+    {
+        return $this->recovery_invoice_date
+            ? Carbon::parse($this->recovery_invoice_date)->toDateString()
+            : null;
+    }
+
+    /** @return array{disk:?string, key:?string}|null */
+    public function financialAttachment(): ?array
+    {
+        return $this->recovery_invoice_key
+            ? ['disk' => $this->recovery_invoice_disk, 'key' => $this->recovery_invoice_key]
+            : null;
+    }
+
+    public function financialDescription(): string
+    {
+        $plate = $this->vehicle?->plate_no ?: $this->plate;
+        $unit  = trim((string) $this->recovery_unit_name);
+
+        return trim(implode(' — ', array_filter([
+            'Recovery / towing',
+            $plate ? 'Vehicle ' . $plate : null,
+            $unit !== '' ? $unit : null,
+            'Ticket #' . $this->id,
+        ])));
+    }
+
+    /**
+     * A tow is one service, not an itemised bill — so it offers no lines, and the builder writes a
+     * single service line from the amount and description above. That is how a cost with no catalogued
+     * part becomes a vendor bill without anybody fabricating an Odoo product for "towing".
+     */
+    public function financialLines(): array
+    {
+        return [];
     }
 }

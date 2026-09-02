@@ -11,9 +11,11 @@ import { Input, Select, Textarea } from '../ui/Field';
 import { SHOW_FINANCIALS } from '../../config/features';
 import { fmtAgo, aed, num } from '../../lib/format';
 import { canOrderParts } from './meta';
+import { usePermissions } from '../../hooks/usePermissions';
 import PartPurchaseHistory from '../parts/PartPurchaseHistory';
 import PartRecordModal from '../parts/PartRecordModal';
 import CatalogPartPicker from '../parts/CatalogPartPicker';
+import WarrantyGateNotice from '../warranties/WarrantyGateNotice';
 import { useI18n } from '../../i18n/I18nContext';
 
 // Envelope-aware unwrap: the API wraps most payloads in { data: … }.
@@ -67,6 +69,12 @@ function ContextFact({ label, value }) {
 function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   const toast = useToast();
   const { t } = useI18n();
+  // Taking a unit off the shelf is a stock movement, gated like one. Someone who may only ASK for a
+  // part still sees what the storehouse holds — that is worth knowing, and it is what they will tell
+  // the coordinator — but the button that would move it is not offered to them, rather than offered
+  // and then refused by the server.
+  const { can } = usePermissions();
+  const canIssue = can('parts.purchase') || can('maintenance.logistics');
 
   // Only OPEN faults are worth requesting a part against (a cancelled/mis-diagnosed one isn't repaired).
   const faultOptions = useMemo(
@@ -77,8 +85,16 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   const [form, setForm] = useState(null);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  // The warranty gate's refusal, when the server declines to create the request because somebody
+  // else might be paying for it. Null on the ordinary car. @see WarrantyGateNotice
+  const [warrantyGate, setWarrantyGate] = useState(null);
   const [dup, setDup] = useState(null);       // live duplicate verdict for the current part name
   const [checking, setChecking] = useState(false);
+  // What the STOREHOUSE holds of the chosen part, and which door the technician picked. The whole
+  // point of asking here is that "we already have one" is only useful while the decision is still
+  // open — once the request is raised as a buy, the shelf has been ignored.
+  const [stock, setStock] = useState(null);
+  const [fulfilment, setFulfilment] = useState('buy'); // 'store' | 'buy'
   // The vocabulary to pick from, fetched once when the modal first opens.
   const [catalog, setCatalog] = useState([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -138,6 +154,8 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
     });
     setErrors({});
     setDup(null);
+    setStock(null);
+    setFulfilment('buy');
     setFreeText(false);
   }, [open]);
 
@@ -182,11 +200,61 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
     return () => { alive = false; clearTimeout(timer); };
   }, [open, ticket?.vehicle_id, catalogId, partName, partNumber, faultCategory, faultSymptom]);
 
-  const submit = async () => {
+  // ─── Do we already have one? ──────────────────────────────────────────────
+  // Asked of the STOREHOUSE the moment a part is chosen, on the same identity the duplicate check
+  // uses: a catalog id when one was picked, the wording otherwise. The answer decides which of two
+  // doors this request goes through, so it has to arrive before the technician commits.
+  //
+  // The default is deliberately BUY. A shelf answer that pre-selects itself would take a part out of
+  // stock because a form defaulted that way, not because anyone decided to; the store door is
+  // offered, never assumed.
+  useEffect(() => {
+    if (!open || (!catalogId && partName.trim().length < 2)) { setStock(null); setFulfilment('buy'); return undefined; }
+    let alive = true;
+    const timer = setTimeout(() => {
+      api.get('/store/availability', {
+        params: {
+          component_catalog_id: catalogId || undefined,
+          part_name: partName.trim() || undefined,
+          part_number: partNumber.trim() || undefined,
+        },
+      })
+        .then((r) => { if (alive) setStock(payload(r)); })
+        // The storehouse being unreachable must never block a request — the buy door still works.
+        .catch(() => { if (alive) setStock(null); });
+    }, catalogId ? 0 : 500);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [open, catalogId, partName, partNumber]);
+
+  // How many the shelf can actually cover. A request for four when we hold two is not a store
+  // request — taking the two and buying two more is a decision a person makes, not a form.
+  const wanted = Number(form?.quantity) || 1;
+  const onHand = Number(stock?.qty_on_hand) || 0;
+  const storeCanCover = onHand >= wanted && wanted > 0;
+
+  // Never leave the store door selected once the shelf can no longer cover the quantity — raising
+  // the quantity after choosing "take from stock" would otherwise submit an issue that must fail.
+  useEffect(() => {
+    if (fulfilment === 'store' && !storeCanCover) setFulfilment('buy');
+  }, [fulfilment, storeCanCover]);
+
+  /**
+   * Raise the request — unless somebody else might be paying for it.
+   *
+   * `override` is the ONLY way this function differs from what it did before the warranty layer
+   * existed: on the ordinary car (no live cover) the server answers exactly as it always did and
+   * nothing below runs. When the gate refuses, the 422 carries the whole assessment — which
+   * warranties are live, who to ring, whether THIS user may proceed — and the card renders it. The
+   * retry is the same submit with the typed reason attached, so there is one request builder and no
+   * chance of the override path drifting from the normal one.
+   */
+  const submit = async (override = null) => {
     setSaving(true);
     setErrors({});
+    if (!override) setWarrantyGate(null);
     try {
       const body = {
+        ...(override || {}),
         vehicle_id: ticket?.vehicle_id || null,
         maintenance_id: ticket?.id ? Number(ticket.id) : null,
         maintenance_task_id: form.maintenance_task_id ? Number(form.maintenance_task_id) : null,
@@ -200,12 +268,36 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
         currency: form.currency || 'AED',
         notes: form.notes.trim() || null,
       };
-      await api.post('/part-requests', body);
-      toast.success(dup?.duplicate ? t('Request created — admins notified of a possible duplicate') : t('Part request created'));
+      const created = payload(await api.post('/part-requests', body));
+
+      // THE STORE DOOR. The request is raised exactly as before — same fault, same reason, same
+      // duplicate checks — and is then fulfilled from the shelf instead of a supplier. The issue
+      // takes the unit off the shelf and books the purchase in one transaction on the server, so a
+      // failure here leaves the request open to be bought normally rather than half-fulfilled.
+      if (fulfilment === 'store' && stock?.item?.id && created?.id) {
+        await api.post(`/store/issue/${created.id}`, {
+          store_item_id: stock.item.id,
+          quantity: Number(form.quantity) || 1,
+        });
+        toast.success(t('Taken from the storehouse — ready to fit'));
+      } else {
+        toast.success(dup?.duplicate ? t('Request created — admins notified of a possible duplicate') : t('Part request created'));
+      }
+
       onCreated?.();
       onClose();
     } catch (err) {
       const res = err.response?.data;
+
+      // THE WARRANTY GATE. Recognised by the shape of its payload rather than by a status code:
+      // a 422 whose `data` carries a coverage verdict is a business decision the user can act on,
+      // not a field they typed wrong. Rendered as a card (who to ring, may I override?) instead of
+      // a toast — a refusal nobody can act on is a refusal people learn to route around.
+      if (err.response?.status === 422 && res?.data?.verdict && res.data.blocks_procurement) {
+        setWarrantyGate({ ...res.data, message: res.message });
+        return;
+      }
+
       if (res?.errors) { setErrors(res.errors); toast.error(t('Please fix the highlighted fields')); }
       else toast.error(res?.message || res?.msg || t('Could not submit the request'));
     } finally {
@@ -240,11 +332,30 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={saving}>{t('Cancel')}</Button>
-          <Button onClick={submit} loading={saving}>{t('Create request')}</Button>
+          {/* The button says which door was chosen, because the two do very different things: one
+              asks someone to buy a part, the other takes one off the shelf here and now. */}
+          {/* Wrapped, not passed by reference: submit() now takes an optional override payload, and
+              handing it straight to onClick would spread the click EVENT into the request body. */}
+          <Button onClick={() => submit()} loading={saving}>
+            {fulfilment === 'store' ? t('Take from the storehouse') : t('Create request')}
+          </Button>
         </>
       }
     >
       <div className="space-y-4">
+        {/* THE WARRANTY GATE'S ANSWER, at the top of the form because it is the only thing on screen
+            that matters once it appears: the request was not created, and the next action is a phone
+            call to a dealer rather than another field. The form stays underneath, filled in, so
+            proceeding after a decision (or an override) is one click and not a re-type. */}
+        {warrantyGate && (
+          <WarrantyGateNotice
+            gate={warrantyGate}
+            busy={saving}
+            onCancel={() => setWarrantyGate(null)}
+            onRetry={(override) => submit(override)}
+          />
+        )}
+
         {/* Context — everything here is pulled straight from the ticket and cannot be edited. */}
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl bg-slate-50 px-4 py-3.5 ring-1 ring-inset ring-slate-100 sm:grid-cols-4">
           <ContextFact label={t('Vehicle')} value={ticket?.car} />
@@ -421,6 +532,73 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
             <Input label={t('Cur.')} className="w-20" value={form.currency} onChange={(e) => set('currency', e.target.value)} />
           </div>
         </div>
+
+        {/* ── THE TWO DOORS ─────────────────────────────────────────────────────────────────────
+            Shown only when the shelf actually holds the part. "We have one" is the answer that has
+            to arrive BEFORE the buy is decided — afterwards it is just a note about money already
+            committed. Taking it from stock costs the ticket what the fleet paid for it, which is
+            why the price is stated here rather than discovered later on the invoice. */}
+        {onHand > 0 && (
+          <div className="rounded-xl bg-emerald-50 px-4 py-3 ring-1 ring-inset ring-emerald-600/20">
+            <p className="flex items-center gap-1.5 font-bold text-emerald-900">
+              {t('The storehouse has this part')}
+            </p>
+            <p className="mt-1 text-sm text-emerald-800">
+              {stock?.unit_cost != null
+                ? t('{n} on the shelf{where} — about {price} each, at what we paid for them.', {
+                    n: num(onHand),
+                    where: stock?.item?.location ? t(' (shelf {location})', { location: stock.item.location }) : '',
+                    price: aed(stock.unit_cost),
+                  })
+                : t('{n} on the shelf{where}. No priced receipt stands behind them, so no cost will be charged to this ticket.', {
+                    n: num(onHand),
+                    where: stock?.item?.location ? t(' (shelf {location})', { location: stock.item.location }) : '',
+                  })}
+            </p>
+
+            {!storeCanCover && (
+              // The honest half: we have some, not enough. Saying "take {wanted}" here would offer
+              // something the shelf cannot do, and the request would fail at the last click.
+              <p className="mt-1.5 rounded-lg bg-white/70 px-2.5 py-1.5 text-xs font-medium text-emerald-900">
+                {t('You asked for {wanted}, and the shelf holds {n}. Buy this one, or lower the quantity to take what we have.', { wanted: num(wanted), n: num(onHand) })}
+              </p>
+            )}
+
+            {!canIssue && (
+              <p className="mt-1.5 rounded-lg bg-white/70 px-2.5 py-1.5 text-xs font-medium text-emerald-900">
+                {t('Say so in the reason — whoever handles this request can take it from the shelf instead of buying one.')}
+              </p>
+            )}
+
+            <div className={`mt-2.5 flex-wrap gap-2 ${canIssue ? 'flex' : 'hidden'}`}>
+              <button
+                type="button"
+                disabled={!storeCanCover}
+                onClick={() => setFulfilment('store')}
+                className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  fulfilment === 'store' ? 'bg-emerald-600 text-white shadow-sm' : 'bg-white text-emerald-800 ring-1 ring-inset ring-emerald-600/30 hover:bg-emerald-100'
+                }`}
+              >
+                {t('Take it from the storehouse')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setFulfilment('buy')}
+                className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
+                  fulfilment === 'buy' ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                {t('Buy a new one')}
+              </button>
+            </div>
+
+            {fulfilment === 'store' && (
+              <p className="mt-2 text-xs font-medium text-emerald-800">
+                {t('The part comes off the shelf as soon as this is submitted, and is ready to fit — nothing to order and nothing to wait for.')}
+              </p>
+            )}
+          </div>
+        )}
 
         <Textarea
           label={t('Reason')}

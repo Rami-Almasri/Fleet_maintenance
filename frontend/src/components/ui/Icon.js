@@ -46,6 +46,9 @@ const Icon = {
   // A tow/recovery unit — the truck chassis plus the boom + hook that distinguishes it from a plain
   // delivery Truck. Used wherever a car MOVES WITHOUT BEING DRIVEN (breakdown tow, recovery transfer).
   Tow: base(<><path d="M3 15V9a1 1 0 0 1 1-1h5v7z" /><path d="M9 15v-4h4l3 4z" /><circle cx="6.5" cy="17.5" r="1.5" /><circle cx="16" cy="17.5" r="1.5" /><path d="M12.5 11L20 4.5" /><path d="M20 4.5V9M18.5 9h3" /></>),
+  // A boxed part on a shelf — the storehouse. Distinct from Truck (a part in transit) because the
+  // whole point of the store is that the part is already HERE.
+  Box: base(<><path d="M3 7.5L12 3l9 4.5v9L12 21l-9-4.5z" /><path d="M3 7.5l9 4.5 9-4.5" /><path d="M12 12v9" /></>),
   Gauge: base(<><path d="M12 14l4-4" /><path d="M3.5 18a9 9 0 1 1 17 0" /><circle cx="12" cy="14" r="1.5" /></>),
   Activity: base(<><path d="M3 12h4l3 8 4-16 3 8h4" /></>),
   Shield: base(<><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" /><path d="M9 12l2 2 4-4" /></>),

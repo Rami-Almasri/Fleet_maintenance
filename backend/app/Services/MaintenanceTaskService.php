@@ -39,6 +39,7 @@ class MaintenanceTaskService
     public function __construct(
         private VehicleLogService $log,
         private RecurringFaultService $recurring,
+        private FaultWorkSessionService $workSessions,
     ) {
     }
 
@@ -65,6 +66,15 @@ class MaintenanceTaskService
         foreach ($findings as $f) {
             $text = trim((string) ($f['text'] ?? ''));
             if ($text === '') {
+                continue;
+            }
+
+            // HELD OR REFUSED — this finding is not work yet, and may never be. A finding the car's own
+            // data disagrees with (an oil change on a car with most of its interval left, or the same
+            // fault raised twice) waits on an approver; one that was rejected never becomes work at all.
+            // Skipped rather than filtered upstream so EVERY promotion path is covered by one line, and
+            // approving it later simply calls this method again. See [[FindingApprovalService]].
+            if (FindingApprovalService::blocksPromotion($f)) {
                 continue;
             }
 
@@ -289,6 +299,11 @@ class MaintenanceTaskService
 
             $fromVendorId = $open?->vendor_id;
             if ($open) {
+                // The car is leaving this garage — nobody is working the fault during the move, so the
+                // running interval closes here. Garage B's work opens a fresh session against its own
+                // stint, which is what keeps per-garage active hours separable after a transfer.
+                $this->workSessions->closeOpen($task, $actor, 'transferred');
+
                 $open->update([
                     'released_at' => Carbon::now(),
                     'outcome'     => MaintenanceTaskAssignment::OUTCOME_TRANSFERRED_OUT,
@@ -540,6 +555,11 @@ class MaintenanceTaskService
             }
 
             if ($resolving) {
+                // The fault is leaving the bench: close whatever work/blocked interval is still running
+                // BEFORE the stint closes, so the ledger ends with the repair instead of accruing
+                // forever. Doing it first also means the labor ceiling below sees the final total.
+                $this->workSessions->closeOpen($task, $actor, $status);
+
                 $open = $task->openAssignment()->first();
                 $open?->update([
                     'released_at' => Carbon::now(),
@@ -547,20 +567,21 @@ class MaintenanceTaskService
                         ? MaintenanceTaskAssignment::OUTCOME_CANCELLED
                         : MaintenanceTaskAssignment::OUTCOME_RESOLVED,
                     'released_by' => $actor->id,
-                    // The CURRENT attempt's manual labor time (mechanic's actual hours, not wall-clock),
-                    // stamped on the stint this resolve closes — the attempt-ending stint IS the
-                    // per-attempt record, so a later failed re-inspection can never overwrite it.
-                ] + ($laborHours !== null ? [
-                    'labor_hours'       => round($laborHours, 2),
-                    'labor_recorded_by' => $actor->id,
-                    'labor_recorded_at' => Carbon::now(),
-                ] : []));
+                ]);
+
+                // The CURRENT attempt's manual labor time. It goes through FaultRepairTimeService — the
+                // ONE writer — so it is validated against this attempt's recorded active work and can
+                // never be booked above it. Writing it inline here (as this method used to) was how a
+                // 3-hour entry landed on an 11-second work window: there was nothing to check it.
                 if ($laborHours !== null) {
-                    // repair_hours is a DERIVED CACHE of Σ(stint labor) — except for a stint-less
-                    // on-site fault, where the single manual value lives here directly (write-once).
-                    $task->repair_hours = $open
-                        ? (float) $task->assignments()->whereNotNull('labor_hours')->sum('labor_hours')
-                        : ($task->repair_hours ?? round($laborHours, 2));
+                    // A FRESH copy, not $task->refresh() — $task already carries unsaved changes
+                    // (resolution_note, and the status/resolved stamps set below) and refreshing here
+                    // would silently discard them.
+                    app(\App\Services\FaultRepairTimeService::class)
+                        ->recordAttemptLabor($task->fresh(), (float) $laborHours, $actor);
+                    // recordAttemptLabor owns the repair_hours cache; re-read what it wrote rather than
+                    // recomputing a second, divergent version of the same number here.
+                    $task->repair_hours = MaintenanceTask::whereKey($task->id)->value('repair_hours');
                 }
                 $task->resolved_at = Carbon::now();
                 $task->resolved_by = $actor->id;
@@ -638,6 +659,10 @@ class MaintenanceTaskService
             $open           = $task->openAssignment()->first();
             $failedVendorId = $open?->vendor_id ?? $task->current_vendor_id;
 
+            // Attempt #1 is over. Close its running interval so attempt #1's active work total is
+            // final and immutable — attempt #2 will clock against its own new stint.
+            $this->workSessions->closeOpen($task, $actor, 'failed_reinspection');
+
             $open?->update([
                 'released_at' => Carbon::now(),
                 'outcome'     => MaintenanceTaskAssignment::OUTCOME_FAILED_REINSPECTION,
@@ -710,6 +735,11 @@ class MaintenanceTaskService
         }
 
         return DB::transaction(function () use ($task, $reason, $actor) {
+            // The fault was never real, so nothing more is being worked on it — close the running
+            // interval. Whatever time WAS clocked stays on record: someone did spend it establishing
+            // that the reported fault does not exist, and that is a real diagnostic cost.
+            $this->workSessions->closeOpen($task, $actor, 'marked_incorrect');
+
             // Close ONLY THIS fault's own garage stint (per-task assignment) — the garage stops working
             // this one item; its sibling faults' stints are separate rows and stay open Under Repair.
             $task->openAssignment()->first()?->update([

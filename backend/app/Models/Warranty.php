@@ -38,7 +38,27 @@ class Warranty extends Model
     public const KIND_PART = 'part';
     /** @var string Anchored to a fault: the GARAGE owes us the repair again. */
     public const KIND_REPAIR = 'repair';
-    public const KINDS = [self::KIND_PART, self::KIND_REPAIR];
+    /**
+     * @var string Anchored to nothing but the car: the MANUFACTURER or DEALER owes us, on the promise
+     * the vehicle arrived with. The only kind that exists before anything has gone wrong, and
+     * therefore the only one that can stop us spending money in the first place.
+     */
+    public const KIND_VEHICLE = 'vehicle';
+    public const KINDS = [self::KIND_PART, self::KIND_REPAIR, self::KIND_VEHICLE];
+
+    /**
+     * WHO honours it, as a category. Not derivable from `kind`: a part warranty can be honoured by
+     * the manufacturer rather than by the shop that sold it, and the phone call is a different one.
+     */
+    public const PROVIDER_MANUFACTURER = 'manufacturer';
+    public const PROVIDER_DEALER       = 'dealer';
+    public const PROVIDER_SUPPLIER     = 'supplier';
+    public const PROVIDER_GARAGE       = 'garage';
+    public const PROVIDER_OTHER        = 'other';
+    public const PROVIDER_KINDS = [
+        self::PROVIDER_MANUFACTURER, self::PROVIDER_DEALER,
+        self::PROVIDER_SUPPLIER, self::PROVIDER_GARAGE, self::PROVIDER_OTHER,
+    ];
 
     /** Live or expired by the clock/odometer — never written as 'expired'; that is computed. */
     public const STATUS_ACTIVE = 'active';
@@ -60,9 +80,11 @@ class Warranty extends Model
         'part_purchase_id', 'vehicle_component_id', 'maintenance_task_id', 'maintenance_id',
         'subject', 'component_catalog_id',
         'provider_vendor_id', 'provider_name', 'reference_no',
+        'provider_kind', 'contact_name', 'contact_phone', 'contact_email',
         'starts_on', 'start_odometer', 'duration_months', 'duration_km',
         'expires_on', 'expires_at_km',
         'status', 'void_reason', 'notes',
+        'covered_catalog_ids', 'excluded_catalog_ids', 'coverage_notes',
         'created_by', 'created_by_name', 'updated_by', 'updated_by_name',
     ];
 
@@ -73,7 +95,29 @@ class Warranty extends Model
         'duration_months' => 'integer',
         'duration_km'     => 'integer',
         'expires_at_km'   => 'integer',
+        // The itemised cover, as component_catalog ids. NULL ⇒ "not itemised", which is NOT the same
+        // as [] ("itemised, and this list is empty") — see coversCatalog().
+        'covered_catalog_ids'  => 'array',
+        'excluded_catalog_ids' => 'array',
     ];
+
+    /**
+     * How close to the end counts as "expiring soon", on each leg independently.
+     *
+     * Configurable because the right answer is operational, not technical: a fleet that can get a car
+     * to a dealer in a week wants a shorter horizon than one that needs a month's notice. Both legs
+     * are checked because either can be the binding one — a car with 8 months left and 900 km of
+     * cover is expiring soon, and a date-only threshold would call it healthy.
+     */
+    public static function expiringSoonDays(): int
+    {
+        return (int) config('warranty.expiring_soon_days', 60);
+    }
+
+    public static function expiringSoonKm(): int
+    {
+        return (int) config('warranty.expiring_soon_km', 5000);
+    }
 
     protected static function booted(): void
     {
@@ -134,11 +178,27 @@ class Warranty extends Model
         return $this->hasMany(WarrantyClaim::class);
     }
 
+    /**
+     * The paperwork — certificate, dealer contract, purchase invoice. Reuses the vehicle document
+     * trail rather than a warranty-only store; see the add_warranty_refs migration for why, and why
+     * these are never stamped `superseded_at` the way a Mulkiya is.
+     */
+    public function documents(): HasMany
+    {
+        return $this->hasMany(VehicleDocument::class, 'warranty_id');
+    }
+
     // ── scopes ───────────────────────────────────────────────────────────────────────────────────
 
     public function scopeOfKind(Builder $q, string $kind): Builder
     {
         return $q->where('kind', $kind);
+    }
+
+    /** The whole-car promises: what "is this vehicle under warranty?" actually means. */
+    public function scopeVehicleCover(Builder $q): Builder
+    {
+        return $q->where('kind', self::KIND_VEHICLE);
     }
 
     public function scopeForVehicle(Builder $q, int $vehicleId): Builder
@@ -219,6 +279,50 @@ class Warranty extends Model
     }
 
     /**
+     * Does this promise say anything, either way, about a given part type?
+     *
+     * Returns exactly one of three answers and never guesses the third:
+     *
+     *   true   the part type is named in `covered_catalog_ids`.
+     *   false  it is named in `excluded_catalog_ids` — their document, their exclusion.
+     *   null   NEITHER LIST NAMES IT. Not "probably covered", not "probably not". Null is what a
+     *          warranty booklet nobody has itemised actually tells you about a wheel bearing, and
+     *          it is the answer that sends the question to a human instead of to a default.
+     *
+     * EXCLUSION WINS over inclusion when a part type somehow appears in both, because a document that
+     * contradicts itself is a document we lose the argument on, and the cheap failure is to check
+     * with the dealer rather than to buy on an assumption.
+     *
+     * A NULL list means "not itemised"; an EMPTY list means "itemised, and nothing is on it". The
+     * cast keeps them distinct and this method honours the distinction — an empty covered list with a
+     * populated exclusion list is a perfectly ordinary "everything except these" warranty.
+     */
+    public function coversCatalog(?int $catalogId): ?bool
+    {
+        if ($catalogId === null) {
+            return null;   // nobody said which part this is — nothing can be decided about it
+        }
+
+        $excluded = $this->excluded_catalog_ids;
+        if (is_array($excluded) && in_array((int) $catalogId, array_map('intval', $excluded), true)) {
+            return false;
+        }
+
+        $covered = $this->covered_catalog_ids;
+        if (is_array($covered) && in_array((int) $catalogId, array_map('intval', $covered), true)) {
+            return true;
+        }
+
+        return null;
+    }
+
+    /** Has anybody written down what this warranty does and does not cover? */
+    public function isItemised(): bool
+    {
+        return is_array($this->covered_catalog_ids) || is_array($this->excluded_catalog_ids);
+    }
+
+    /**
      * The human sentence a claim freezes: "8 of 12 months, 14,200 of 20,000 km".
      * Built here so the claim, the API and any page all quote the same wording.
      */
@@ -251,6 +355,37 @@ class Warranty extends Model
             $bits[] = 'no time or distance limit recorded';
         }
 
+        // ── What is LEFT, which is the number anyone acting on this actually needs ──────────────
+        //
+        // "Expires 2029-01-01" is a fact nobody can plan around; "4 months and 21,500 km left" is.
+        // Both legs are reported independently and either may be null: a time-only promise has no
+        // distance left to report, and a distance leg judged with no odometer has an unknowable one.
+        // Null here means UNKNOWABLE and is never rendered as zero — a car whose remaining cover
+        // reads "0 km" because nobody submitted a reading is exactly the car that gets written off
+        // as expired while it is still under warranty.
+        $daysRemaining = ($state === self::STATE_ACTIVE && $this->expires_on)
+            ? max(0, (int) $at->diffInDays(Carbon::parse($this->expires_on)->endOfDay(), false))
+            : null;
+
+        $kmRemaining = ($state === self::STATE_ACTIVE && $this->expires_at_km !== null && $odometer !== null)
+            ? max(0, (int) $this->expires_at_km - $odometer)
+            : null;
+
+        // Close enough to the end, on EITHER leg, that "we'll look at it later" means "we won't".
+        // Only ever true while the warranty is still live — an expired warranty is not expiring.
+        $expiringSoon = $state === self::STATE_ACTIVE && (
+            ($daysRemaining !== null && $daysRemaining <= self::expiringSoonDays())
+            || ($kmRemaining !== null && $kmRemaining <= self::expiringSoonKm())
+        );
+
+        $left = [];
+        if ($daysRemaining !== null) {
+            $left[] = $daysRemaining . ' days';
+        }
+        if ($kmRemaining !== null) {
+            $left[] = number_format($kmRemaining) . ' km';
+        }
+
         return [
             'state'            => $state,
             'ended_by'         => $endedBy,
@@ -259,6 +394,12 @@ class Warranty extends Model
             'km_used'          => $kmUsed,
             'distance_unknown' => $distanceUnknown,
             'evidence'         => implode(', ', $bits),
+
+            // The forward-looking half. Null on either leg = unknowable, never zero.
+            'days_remaining'     => $daysRemaining,
+            'km_remaining'       => $kmRemaining,
+            'expiring_soon'      => $expiringSoon,
+            'remaining_evidence' => $left ? implode(' / ', $left) : null,
         ];
     }
 }

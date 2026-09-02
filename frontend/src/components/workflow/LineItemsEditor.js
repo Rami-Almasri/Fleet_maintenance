@@ -53,6 +53,16 @@ const lineAmount = (row) => Math.max(0, Number(row.quantity) || 0) * Math.max(0,
 // A receipt total is treated as "matching" the itemised sum when they agree to within a cent.
 const VARIANCE_TOLERANCE = 0.01;
 
+// The signed contribution of the document-level bands. Both are ENTERED positive (that is how they are
+// printed on the paper); VAT adds to the bill and a discount comes off it. Exported alongside the gates
+// below so the panel, the totals box and the submit check all compute the same number the server will.
+export function bandsAmount({ vatAmount = '', discountAmount = '' } = {}) {
+  const vat = Math.max(0, Number(vatAmount) || 0);
+  const discount = Math.max(0, Number(discountAmount) || 0);
+
+  return Math.round((vat - discount) * 100) / 100;
+}
+
 export default function LineItemsEditor({
   value = [],
   onChange,
@@ -78,6 +88,15 @@ export default function LineItemsEditor({
   onReceiptTotalChange,
   variance = '',
   onVarianceChange,
+  // The two DOCUMENT-level bands, keyed as the paper prints them (both positive). They belong to the
+  // bill rather than to any one fault, so they are never work lines — the service writes them as their
+  // own ledger rows. They live here because they are part of the total the receipt is checked against:
+  // reconciling parts+labor alone against a receipt that includes VAT reports a variance that isn't one.
+  // Shown only in invoice mode; the plain "mark ready" step keeps the light editor.
+  vatAmount = '',
+  onVatAmountChange,
+  discountAmount = '',
+  onDiscountAmountChange,
 }) {
   const { t } = useI18n();
 
@@ -88,7 +107,10 @@ export default function LineItemsEditor({
 
   const partsTotal = parts.reduce((a, r) => a + lineAmount(r), 0);
   const laborTotal = labor.reduce((a, r) => a + lineAmount(r), 0);
-  const grandTotal = partsTotal + laborTotal;
+  // The bands, signed the way the ledger stores them: VAT adds, a discount subtracts. Mirrors
+  // MaintenanceInvoice::recalcTotals, so what this box shows is what the invoice's `amount` becomes.
+  const bandsTotal = bandsAmount({ vatAmount, discountAmount });
+  const grandTotal = partsTotal + laborTotal + bandsTotal;
 
   // Receipt reconciliation (invoice-form mode): the signed variance = itemised − receipt, rounded to the
   // cent and treated as zero within tolerance. `receiptEntered` gates the whole verdict/variance UI.
@@ -604,11 +626,57 @@ export default function LineItemsEditor({
         </div>
       </div>
 
+      {/* ── VAT + DISCOUNT ─────────────────────────────────────────────────
+          Keyed as the paper prints them, both positive. They apply to the DOCUMENT, not to one fault,
+          so they carry no symptom link and never distort a fault's parts/labour cost — the service
+          writes each as its own ledger row so the total still traces to a line. */}
+      {/* Only where the host actually holds this state. The other receipt-mode surfaces (the ticket
+          drawer's deferred edit, the public garage portal) don't key bands yet, and an input with no
+          handler behind it is worse than no input — it looks live and swallows what you type. */}
+      {requireReceipt && onVatAmountChange && (
+        <div className="rounded-xl border border-slate-200 bg-white p-3">
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+            <Icon.Coins className="h-4 w-4 text-slate-400" />{t('workflow.lineItem.bandsHeading')}
+          </div>
+          <div className="grid grid-cols-12 gap-3">
+            <div className="col-span-6">
+              <Input
+                label={t('workflow.lineItem.vatAmount')}
+                type="number"
+                min="0"
+                step="0.01"
+                value={vatAmount}
+                onChange={(e) => onVatAmountChange?.(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="col-span-6">
+              <Input
+                label={t('workflow.lineItem.discountAmount')}
+                type="number"
+                min="0"
+                step="0.01"
+                value={discountAmount}
+                onChange={(e) => onDiscountAmountChange?.(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+          </div>
+          <p className="mt-1.5 text-[11px] text-slate-400">{t('workflow.lineItem.bandsHint')}</p>
+        </div>
+      )}
+
       {/* ── TOTALS (the requested auto-sum) ───────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-xl bg-slate-900 px-5 py-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-400">
           <span>{t('workflow.lineItem.partsTotal')}: <span className="font-semibold tabular-nums text-slate-200">{money(partsTotal)}</span></span>
           <span>{t('workflow.lineItem.laborTotal')}: <span className="font-semibold tabular-nums text-slate-200">{money(laborTotal)}</span></span>
+          {/* Only printed once there is one — an untouched bill shows the two bands it actually has. */}
+          {bandsTotal !== 0 && (
+            <span>
+              {t('workflow.lineItem.bandsTotal')}: <span className={`font-semibold tabular-nums ${bandsTotal < 0 ? 'text-emerald-300' : 'text-slate-200'}`}>{money(bandsTotal)}</span>
+            </span>
+          )}
         </div>
         <div className="flex items-baseline gap-2 border-s border-white/10 ps-5">
           <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('workflow.lineItem.grandTotal')}</span>
@@ -733,13 +801,18 @@ export function lineItemsHaveZeroCost(rows = []) {
 
 // Invoice-validation submit gate (mirrors the server): once there's an itemised line, a positive receipt
 // total is REQUIRED, and any mismatch beyond a cent REQUIRES a variance explanation. Returns true = block.
-export function invoiceVarianceBlocked({ rows = [], receiptTotal = '', variance = '' } = {}) {
+//
+// The receipt is the bill's PRINTED total, so it is checked against the invoice's `amount` — which the
+// server derives as parts + labor + VAT − discount. Checking parts+labor alone reported a variance on
+// every VAT-bearing bill and demanded an explanation for a total that was in fact correct.
+export function invoiceVarianceBlocked({ rows = [], receiptTotal = '', variance = '', vatAmount = '', discountAmount = '' } = {}) {
+  const bands = bandsAmount({ vatAmount, discountAmount });
   const hasLines = rows.some((r) => (r.description || '').trim());
-  if (!hasLines) return false; // nothing itemised yet — nothing to reconcile
+  if (!hasLines && bands === 0) return false; // nothing itemised yet — nothing to reconcile
 
   const receipt = Number(receiptTotal);
   if (receiptTotal === '' || receiptTotal == null || !Number.isFinite(receipt) || receipt <= 0) return true;
 
-  const mismatch = Math.abs(lineItemsGrandTotal(rows) - receipt) > 0.01;
+  const mismatch = Math.abs(lineItemsGrandTotal(rows) + bands - receipt) > 0.01;
   return mismatch && !(variance || '').trim();
 }

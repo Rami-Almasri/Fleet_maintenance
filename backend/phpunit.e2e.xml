@@ -22,7 +22,9 @@
         <testsuite name="E2E">
             <file>tests/Feature/ComponentLimitSnapshotTest.php</file>
             <file>tests/Feature/SpareKeyLifecycleTest.php</file>
+            <file>tests/Feature/GarageSuppliedPartLifecycleTest.php</file>
             <file>tests/Feature/SpareKeyInventoryImportTest.php</file>
+            <file>tests/Feature/OdooFinancialIntegrationTest.php</file>
         </testsuite>
     </testsuites>
     <source>

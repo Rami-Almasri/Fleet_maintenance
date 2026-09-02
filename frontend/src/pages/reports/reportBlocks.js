@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useI18n } from '../../i18n/I18nContext';
-import { numberLocale } from '../../i18n/translate';
+import { dateLocale, numberLocale } from '../../i18n/translate';
 import './intelReport.css';
 
 /**
@@ -680,6 +680,384 @@ export function DataOrigin({ provenance }) {
         ) : null}
       </dl>
     </Panel>
+  );
+}
+
+/**
+ * THE VERTICAL SEQUENCE — one rail, one dot per case, newest reading downward.
+ *
+ * This is the shape the printed PRO reports have always used, and the reason is that a rail reads as
+ * a *sequence* where a stack of cards reads as a *set*. On the daily report it is the queue a manager
+ * works down; on a car's system report it is the failure history in order. Both are the same object:
+ * a dot coloured by severity, a meta line (who/where/when), one bold line naming the thing, and the
+ * recorded text underneath.
+ *
+ * `meta` is an array so the caller decides what identifies a row — garage and days on the daily
+ * report, date and garage on a car's history — without this block knowing either domain.
+ *
+ * NOTHING HERE IS GENERATED. `title` and `desc` are fields a person entered; this block only lays
+ * them out.
+ */
+export function CaseTimeline({ items = [], empty = null }) {
+  if (!items.length) return <div className="ir-empty">{empty}</div>;
+
+  return (
+    <div className="ir-timeline">
+      {items.map((it, i) => (
+        <div className={`ir-titem sev-${it.severity || 'unrated'}`} key={it.key ?? i}>
+          <div className="ir-tdate">
+            {(it.meta || []).filter(Boolean).map((m, j) => (
+              <span key={j}>
+                {j > 0 ? <span aria-hidden="true">· </span> : null}
+                {m}
+              </span>
+            ))}
+            {it.chip}
+          </div>
+          <div className="ir-tphase">{it.title}</div>
+          {it.desc ? <div className="ir-tdesc">{it.desc}</div> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── THE SELECTED PERIOD ───────────────────────────────────────────────────────────────────────
+ *
+ * Everything below answers one question: *between these two dates, what went wrong with this car,
+ * how often, when, what did the workshop write, and what was done?*
+ *
+ * Three rules hold across all of it:
+ *   • THE DEFAULT IS ALL HISTORY. A reader who sets nothing sees the report they saw yesterday.
+ *   • A VISIT IS NOT A FAULT and a fault seen twice is not two faults. The counters keep those apart
+ *     by name, because a report that blurs them tells a fleet to replace a part that never failed.
+ *   • THE GARAGE'S OWN WORDS ARE ALWAYS SHOWN next to the normalised fault name, never instead of it.
+ */
+
+/** A recorded day, written the way the reader's language writes days. Never re-interpreted. */
+export function useDay() {
+  return (iso) => {
+    if (!iso) return null;
+    const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleDateString(dateLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+}
+
+/**
+ * THE PERIOD, STATED — and stated on the printed page too.
+ *
+ * This deliberately does NOT carry `ir-no-print`. A PDF of a filtered report that does not say which
+ * period it covers is worse than no PDF: it looks like the whole history and reads as one.
+ */
+export function PeriodBanner({ period }) {
+  const { t } = useI18n();
+  const day = useDay();
+
+  if (!period) return null;
+
+  const label = {
+    all_history: () => t('reportSystem.period.allHistory'),
+    between: () => t('reportSystem.period.between', { from: day(period.from), to: day(period.to) }),
+    single_day: () => t('reportSystem.period.singleDay', { date: day(period.from) }),
+    since: () => t('reportSystem.period.since', { from: day(period.from) }),
+    until: () => t('reportSystem.period.until', { to: day(period.to) }),
+  }[period.shape];
+
+  return (
+    <div className={`ir-period-banner ${period.active ? 'is-filtered' : ''}`}>
+      <span className="ir-period-term">{t('reportSystem.period.label')}</span>
+      <strong className="ir-period-value">{label ? label() : t('reportSystem.period.allHistory')}</strong>
+      {period.active && period.covered_from ? (
+        <span className="ir-muted">
+          {t('reportSystem.period.covered', { from: day(period.covered_from), to: day(period.covered_to) })}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * THE DATE-RANGE CONTROL.
+ *
+ * Typed into local state and committed on Apply, not on every keystroke: a half-typed year is a
+ * different period, and re-querying the report on "2" then "20" then "202" would flicker through
+ * three wrong answers on the way to the right one.
+ *
+ * The inverted range is caught here as well as on the server — but caught, not corrected. Silently
+ * swapping the two dates answers a question the reader did not ask.
+ */
+export function DateRangeFilter({ from, to, onApply, onClear, busy = false }) {
+  const { t } = useI18n();
+  const [draftFrom, setDraftFrom] = useState(from || '');
+  const [draftTo, setDraftTo] = useState(to || '');
+
+  // The URL is the source of truth for the applied range — a shared link, a refresh or the browser's
+  // back button all arrive here as new props, and the inputs must follow them.
+  useEffect(() => { setDraftFrom(from || ''); }, [from]);
+  useEffect(() => { setDraftTo(to || ''); }, [to]);
+
+  const inverted = draftFrom && draftTo && draftFrom > draftTo;
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (inverted) return;
+    onApply(draftFrom || null, draftTo || null);
+  };
+
+  /** Quick ranges are conveniences, not different features: each just fills the same two fields. */
+  const quick = (days) => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - days);
+    onApply(start.toISOString().slice(0, 10), end.toISOString().slice(0, 10));
+  };
+
+  const thisYear = () => {
+    const y = new Date().getFullYear();
+    onApply(`${y}-01-01`, `${y}-12-31`);
+  };
+
+  return (
+    <form className="ir-daterange ir-no-print" onSubmit={submit}>
+      <span className="ir-small ir-daterange-title">{t('reportSystem.period.filterLabel')}</span>
+
+      <label className="ir-daterange-field" htmlFor="ir-from">
+        <span>{t('reportSystem.period.from')}</span>
+        <input
+          id="ir-from"
+          className="ir-control"
+          type="date"
+          value={draftFrom}
+          max={draftTo || undefined}
+          onChange={(e) => setDraftFrom(e.target.value)}
+        />
+      </label>
+
+      <span className="ir-daterange-dash" aria-hidden="true">—</span>
+
+      <label className="ir-daterange-field" htmlFor="ir-to">
+        <span>{t('reportSystem.period.to')}</span>
+        <input
+          id="ir-to"
+          className="ir-control"
+          type="date"
+          value={draftTo}
+          min={draftFrom || undefined}
+          onChange={(e) => setDraftTo(e.target.value)}
+        />
+      </label>
+
+      <button type="submit" className="ir-button" disabled={!!inverted || busy}>
+        {t('reportSystem.period.apply')}
+      </button>
+      <button type="button" className="ir-button" onClick={onClear} disabled={busy}>
+        {t('reportSystem.period.clear')}
+      </button>
+
+      <span className="ir-daterange-quick">
+        <button type="button" className="ir-button ir-button-quiet" onClick={() => quick(30)}>
+          {t('reportSystem.period.last30')}
+        </button>
+        <button type="button" className="ir-button ir-button-quiet" onClick={() => quick(90)}>
+          {t('reportSystem.period.last90')}
+        </button>
+        <button type="button" className="ir-button ir-button-quiet" onClick={thisYear}>
+          {t('reportSystem.period.thisYear')}
+        </button>
+        <button type="button" className="ir-button ir-button-quiet" onClick={onClear}>
+          {t('reportSystem.period.allHistoryShort')}
+        </button>
+      </span>
+
+      {inverted ? (
+        <span className="ir-daterange-error" role="alert">{t('reportSystem.period.inverted')}</span>
+      ) : null}
+    </form>
+  );
+}
+
+/**
+ * THE COUNTERS — and the reason there are five of them rather than one.
+ *
+ * "3 engine events" was the number this report used to lead with, and it answered none of the three
+ * questions a reader actually has. Visits, distinct problems and repeats are separate facts, so they
+ * are separate tiles, and the workshop-only count is shown because it is the difference between the
+ * first two. A reader who sees 3 visits and 2 problems and no explanation assumes an error.
+ */
+export function PeriodSummary({ summary, period }) {
+  const { t, tp } = useI18n();
+
+  if (!summary) return null;
+
+  const tiles = [
+    ['systemVisits', summary.system_visits, tp('reportSystem.period.sum.visitsNote', summary.source_records)],
+    ['namedFaults', summary.named_faults, tp('reportSystem.period.sum.namedNote', summary.named_fault_visits)],
+    ['repeatedFaults', summary.repeated_faults, t('reportSystem.period.sum.repeatedNote')],
+    ['repairs', summary.repairs, t('reportSystem.period.sum.repairsNote')],
+    ['workshopOnly', summary.workshop_only_visits, t('reportSystem.period.sum.workshopOnlyNote')],
+  ];
+
+  return (
+    <div className="ir-period-summary">
+      <div className="ir-period-sentence">
+        {period?.active
+          ? t('reportSystem.period.sum.sentence', {
+              visits: summary.system_visits,
+              faults: summary.named_faults,
+              repeated: summary.repeated_faults,
+              repairs: summary.repairs,
+            })
+          : t('reportSystem.period.sum.sentenceAll', {
+              visits: summary.system_visits,
+              faults: summary.named_faults,
+              repeated: summary.repeated_faults,
+              repairs: summary.repairs,
+            })}
+      </div>
+      <div className="ir-kpis">
+        {tiles.map(([key, value, note]) => (
+          <Kpi key={key} label={t(`reportSystem.period.sum.${key}`)} value={value} note={note} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** How firmly the record supports the action claimed for an occurrence. Never green for "none". */
+const ACTION_EVIDENCE_TONE = { strong: 'ok', mentioned: 'warn', none: 'neutral' };
+
+/**
+ * "PROBLEMS DURING THIS PERIOD" — grouped by fault, not listed by date.
+ *
+ * A chronological list makes the reader do the grouping in their head, which is exactly the work this
+ * page exists to remove: the two occurrences of one fault sit apart, with other faults between them,
+ * and nobody notices they are the same thing. So each problem is one section carrying every time it
+ * happened, and the "did it come back?" sentence is stated rather than left to be inferred.
+ *
+ * Every occurrence prints THE ORIGINAL WORKSHOP NOTE beneath the normalised fault name. The two are
+ * different claims — one is the record, one is this report's reading of it — and showing only the
+ * second would make the report unauditable.
+ */
+export function PeriodProblems({ problems = [], workshopOnly = [], period }) {
+  const { t, tp } = useI18n();
+  const day = useDay();
+
+  if (!problems.length && !workshopOnly.length) {
+    return (
+      <div className="ir-empty">
+        {period?.active
+          ? t('reportSystem.period.emptyFiltered')
+          : t('reportSystem.ui.noEvents')}
+      </div>
+    );
+  }
+
+  /** The one-sentence answer to "did it come back?", built only from this fault's own dates. */
+  const returnLine = (p) => {
+    if (p.returned.status !== 'yes') {
+      return p.followed_by
+        ? t('reportSystem.period.returnedNoButOther', {
+            date: day(p.followed_by.date), fault: p.followed_by.fault,
+          })
+        : t('reportSystem.period.returnedNo');
+    }
+
+    const base = p.returned.days == null
+      ? t('reportSystem.period.returnedYesUndated', { times: p.returned.times })
+      : tp('reportSystem.period.returnedYes', p.returned.days, { times: p.returned.times });
+
+    return p.returned.after_repair
+      ? `${base} ${t('reportSystem.period.returnedAfterRepair')}`
+      : base;
+  };
+
+  const occurrence = (o, i) => (
+    <li key={`${o.date}-${i}`} className="ir-occurrence">
+      <div className="ir-occ-head">
+        <span className="ir-occ-date">{day(o.date) || t('reportSystem.notRecorded')}</span>
+        <span className="ir-occ-garage">{o.garage || t('reportSystem.notRecorded')}</span>
+        {o.severity ? (
+          <Chip tone={toneFor(o.severity)}>{t(`reportSystem.severity.${o.severity}`)}</Chip>
+        ) : null}
+        <Chip tone={ACTION_EVIDENCE_TONE[o.action_evidence] || 'neutral'}>
+          {t(`reportSystem.period.action.${o.action}`)}
+        </Chip>
+        {o.gap_days != null ? (
+          <Chip tone="danger">{tp('reportSystem.fault.after', o.gap_days)}</Chip>
+        ) : null}
+      </div>
+
+      {/* THE RECORD, quoted. These are the garage's words, not the report's. */}
+      {o.note_lines?.length ? (
+        <blockquote className="ir-record">
+          {o.note_lines.map((line, j) => <p key={j}>{line}</p>)}
+        </blockquote>
+      ) : (
+        <div className="ir-record is-empty">{t('reportSystem.fault.noNote')}</div>
+      )}
+
+      <div className="ir-occ-foot">
+        <span>
+          {t('reportSystem.period.actionLabel')}: {t(`reportSystem.period.action.${o.action}`)}
+          {o.action_text ? <span className="ir-work-text"> — “{o.action_text}”</span> : null}
+        </span>
+        <span className="ir-muted">
+          {t(`reportSystem.period.evidence.${o.action_evidence}`)}
+          {o.row_count > 1 ? ` · ${tp('reportSystem.incident.rowCount', o.row_count)}` : ''}
+        </span>
+      </div>
+    </li>
+  );
+
+  return (
+    <div className="ir-problems">
+      {problems.map((p, n) => (
+        <section className={`ir-problem ${p.repeated ? 'is-repeat' : ''}`} key={p.fault_key || p.fault}>
+          <header className="ir-problem-head">
+            <h3>
+              <span className="ir-problem-no">{n + 1}.</span> {p.fault}
+            </h3>
+            <div className="ir-problem-meta">
+              <Chip tone={p.repeated ? 'danger' : 'neutral'}>
+                {tp('reportSystem.period.occurrences', p.occurrences)}
+              </Chip>
+              {p.repeated ? <Chip tone="danger">{t('reportSystem.period.repeated')}</Chip> : null}
+              {p.worst_severity ? (
+                <Chip tone={toneFor(p.worst_severity)}>{t(`reportSystem.severity.${p.worst_severity}`)}</Chip>
+              ) : null}
+            </div>
+            <div className="ir-problem-line">
+              {p.first_seen === p.last_seen
+                ? t('reportSystem.period.seenOnce', { date: day(p.first_seen) })
+                : t('reportSystem.period.seenBetween', {
+                    from: day(p.first_seen), to: day(p.last_seen), days: p.span_days,
+                  })}
+              {p.garages?.length ? ` · ${p.garages.join(', ')}` : ''}
+            </div>
+          </header>
+
+          <ol className="ir-occurrences">{p.events.map(occurrence)}</ol>
+
+          <p className="ir-problem-return">
+            <strong>{t('reportSystem.period.returnedLabel')}:</strong> {returnLine(p)}
+          </p>
+        </section>
+      ))}
+
+      {workshopOnly.length ? (
+        <section className="ir-problem is-workshop-only">
+          <header className="ir-problem-head">
+            <h3>{t('reportSystem.period.workshopOnlyTitle')}</h3>
+            <div className="ir-problem-meta">
+              <Chip tone="neutral">{tp('reportSystem.period.occurrences', workshopOnly.length)}</Chip>
+            </div>
+            <div className="ir-problem-line">{t('reportSystem.period.workshopOnlyHint')}</div>
+          </header>
+          <ol className="ir-occurrences">{workshopOnly.map(occurrence)}</ol>
+        </section>
+      ) : null}
+    </div>
   );
 }
 

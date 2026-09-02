@@ -61,6 +61,10 @@ class SnapshotMaintenanceTicket extends Command
 
     public function handle(): int
     {
+        // Staging a ticket into a chosen stage is a rehearsal, not a real garage movement — don't let
+        // the reconcile it performs re-grade the car or alert anybody.
+        \App\Services\Garage\GarageIntelligenceService::$muted = true;
+
         $ticketId = $this->resolveTicketId($this->argument('ticket'));
         if (! $ticketId) {
             return self::FAILURE;

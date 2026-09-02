@@ -55,7 +55,10 @@ class ComponentReadModel
         'supplier:id,name',
         'installer:id,name',
         'vehicle:id,plate_no,odometer',
-        'sourcePurchase:id,maintenance_id',
+        // purchase_source is loaded with it because WHERE the part came from is part of how the row
+        // is read: a part off our own shelf has no supplier to show, and a blank supplier column
+        // would otherwise read as a missing record rather than as "the storehouse".
+        'sourcePurchase:id,maintenance_id,purchase_source',
     ];
 
     private const CONSUMABLE_SERVICE_TYPE = [
@@ -125,7 +128,7 @@ class ComponentReadModel
     {
         $component->loadMissing([
             'catalog', 'vehicle', 'supplier', 'installer', 'installedBy', 'removedBy',
-            'sourcePurchase.request', 'sourceLineItem', 'removalTicket',
+            'sourcePurchase.request', 'sourcePurchase.storeIssue', 'sourceLineItem', 'removalTicket',
             'replacedBy.catalog', 'replaces.catalog',
             'events.actor', 'media', 'serviceRecords.workshop',
         ]);
@@ -364,6 +367,9 @@ class ComponentReadModel
                 'category'       => $c->catalog?->category_key,
                 'type'           => $c->catalog?->name,
                 'label'          => $c->label,
+                // The replacement chain is where a size change is most visible — "60Ah, then 70Ah,
+                // then 60Ah again" is the shape of a fleet nobody is specifying parts for.
+                'spec_summary'   => \App\Support\PartSpecs::summary($c->catalog, $c->specs),
                 'removed_at'     => optional($c->removed_at)->toIso8601String(),
                 'removal_reason' => $c->removal_reason,
                 'disposition'    => $c->disposition,
@@ -503,6 +509,13 @@ class ComponentReadModel
             'model'         => $c->model,
             'part_number'   => $c->part_number,
             'serial_no'     => $c->serial_no,
+            // WHAT this part is — the raw map for a form, the one line for a row, and the full
+            // label/value list (including what was NOT recorded) for the dossier. Rendered by
+            // PartSpecs so every surface shows the same words. Empty summary = nothing specced,
+            // which the UI renders as nothing rather than as an empty separator.
+            'specs'         => $c->specs,
+            'spec_summary'  => \App\Support\PartSpecs::summary($c->catalog, $c->specs),
+            'spec_detail'   => \App\Support\PartSpecs::describe($c->catalog, $c->specs),
             'position'      => $c->position,
             'quantity'      => $c->quantity === null ? null : (float) $c->quantity,
 
@@ -516,6 +529,10 @@ class ComponentReadModel
             'evidence_channel' => $c->evidence_channel,
             'acquisition'      => $c->acquisition,
             'cost_known'       => $c->purchase_cost !== null,
+            // Came off the fleet's own shelf rather than being bought for this job. A FACT read
+            // straight off the purchase — the cost it carries is what the storehouse paid for it,
+            // which is why the figure is real even though no supplier is named.
+            'from_store'       => $c->sourcePurchase?->purchase_source === \App\Models\PartPurchase::SOURCE_STORE,
 
             // Commercial FACTS (copied from the purchase, never recomputed)
             'supplier'      => $c->supplier ? ['id' => $c->supplier->id, 'name' => $c->supplier->name] : null,
@@ -632,6 +649,12 @@ class ComponentReadModel
             'supplier_vendor_id'     => $c->supplier_vendor_id,
             'installer_vendor_id'    => $c->installer_vendor_id,
             'removal_maintenance_id' => $c->removal_maintenance_id,
+            // Where the part came FROM, when the answer is our own shelf: the storehouse issue that
+            // released it, and the shelf it left. Without these the dossier's provenance section
+            // dead-ends at a purchase with no supplier and no invoice, which reads as missing paper
+            // rather than as stock we already owned.
+            'store_issue_id'         => $purchase?->isFromStore() ? $purchase->storeIssue?->id : null,
+            'store_item_id'          => $purchase?->isFromStore() ? $purchase->storeIssue?->store_item_id : null,
         ];
     }
 
@@ -682,6 +705,9 @@ class ComponentReadModel
                 'serial_no'          => null,
                 'position'           => null,
                 'supplier'           => null,
+                // A consumable row is a SERVICE, not a part off a shelf — the storehouse never
+                // issued it. Stated rather than omitted so both row kinds have the same shape.
+                'from_store'         => false,
                 'installer'          => $record->workshop_vendor_id ? ['id' => $record->workshop_vendor_id, 'name' => $record->workshop?->name] : null,
                 'purchase_cost'      => $record->materials_cost === null ? null : (float) $record->materials_cost,
                 'currency'           => 'AED',

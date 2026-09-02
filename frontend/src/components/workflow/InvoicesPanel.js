@@ -22,6 +22,7 @@ import LineItemsEditor, {
   lineItemsUnlinked,
   lineItemsHaveZeroCost,
   invoiceVarianceBlocked,
+  bandsAmount,
 } from './LineItemsEditor';
 
 const money = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -36,10 +37,25 @@ const KIND_LABEL_KEY = {
   inspection: 'workflow.invoices.kindInspection',
   damage: 'workflow.invoices.kindDamage',
 };
+// Singular, for naming ONE work item on a bill — the plural headings above are group labels.
+const KIND_ONE_KEY = {
+  fault: 'workflow.invoices.oneFault',
+  service: 'workflow.invoices.oneService',
+  inspection: 'workflow.invoices.oneInspection',
+  damage: 'workflow.invoices.oneDamage',
+};
 const kindOf = (task) => (KIND_ORDER.includes(task?.kind) ? task.kind : 'fault');
 
 // The garage that did a given piece of work — the fault's own current garage, else the ticket's.
 const workGarageId = (task, ticket) => task.current_vendor_id || ticket?.vendor_id || null;
+
+// The kinds the line editor owns. A bill also carries VAT, a discount and the odd adjustment, but those
+// belong to the DOCUMENT rather than to a fault: they are written by the service from their own fields,
+// never as work lines. Feeding one into the editor turned it into an unlinkable "part" called VAT, which
+// tripped the Diagnosis-First gate and left Save disabled with nothing on screen saying why — i.e. any
+// invoice carrying VAT or a discount could not be edited at all.
+const WORK_KINDS = ['part', 'labor'];
+const isWorkLine = (li) => WORK_KINDS.includes(li?.kind);
 
 // Map a stored line-item (API shape) back to the editor's row shape.
 const toEditorRow = (li) => ({
@@ -50,6 +66,12 @@ const toEditorRow = (li) => ({
   // Which part it is. A null one is a line billed before the picker existed — the editor shows its
   // wording and asks for a part to be chosen rather than dropping it.
   component_catalog_id: li.component_catalog_id || null,
+  // WHERE the part came from — the purchase / request / required line this charge is billed from.
+  // Dropping it on the way into the editor meant every edit re-submitted the line as an unbacked
+  // price: the origin was wiped on save, the ledger lost its link to the purchase, and the row
+  // re-rendered as a blank part picker instead of the settled fact it is.
+  part_source: li.part_source || null,
+  part_source_id: li.part_source_id || null,
   category_key: li.category_key || '',
   quantity: li.quantity != null ? String(li.quantity) : '1',
   unit_price: li.unit_price != null ? String(li.unit_price) : '',
@@ -59,6 +81,133 @@ const toEditorRow = (li) => ({
   tire_dot: li.tire_dot || '',
   tire_tread_mm: li.tire_tread_mm != null ? String(li.tire_tread_mm) : '',
 });
+
+// ── What this bill actually charged, work item by work item ───────────────────────────────────────
+//
+// A bill is not a total with some chips under it. Every line on it was charged FOR something — a fault
+// that was repaired or a service that was carried out — and the whole point of keying it here is that the
+// two can be read against each other. So the card groups the invoice's lines under the work they were
+// attributed to (`maintenance_task_id`, set by the service from the line's Diagnosis-First symptom link),
+// names the part each part-line fitted, and prints what that one piece of work came to.
+//
+// Three things are stated rather than hidden:
+//   - work this bill covers with NO line against it — billed for nothing, which is a real finding;
+//   - lines attributed to no work item — money on the bill that no repair explains;
+//   - the VAT / discount bands, which belong to the document and to no fault.
+function BilledWork({ invoice }) {
+  const { t } = useI18n();
+  const lines = useMemo(() => invoice.line_items || [], [invoice.line_items]);
+  const work = useMemo(() => invoice.faults || [], [invoice.faults]);
+
+  const groups = useMemo(() => {
+    const workLines = lines.filter((li) => WORK_KINDS.includes(li.kind));
+    const byTask = new Map();
+    const orphans = [];
+
+    workLines.forEach((li) => {
+      // The task link is the strong claim (the server resolved it). Falling back to the finding text
+      // catches a line whose symptom no longer matches a covered work item word-for-word.
+      const match = li.maintenance_task_id
+        ? work.find((f) => String(f.id) === String(li.maintenance_task_id))
+        : work.find((f) => (f.symptom || '').trim().toLowerCase() === (li.finding_text || '').trim().toLowerCase());
+      if (!match) { orphans.push(li); return; }
+      if (!byTask.has(match.id)) byTask.set(match.id, { work: match, lines: [] });
+      byTask.get(match.id).lines.push(li);
+    });
+
+    // Every covered work item gets a row, in the order the invoice lists them — including the ones with
+    // no line, because "we were billed nothing for this" is exactly what the desk is here to catch.
+    const rows = work.map((f) => byTask.get(f.id) || { work: f, lines: [] });
+
+    return { rows, orphans };
+  }, [lines, work]);
+
+  const bands = [
+    { key: 'vat', label: t('workflow.invoices.vat'), amount: Number(invoice.vat_total || 0) },
+    { key: 'discount', label: t('workflow.invoices.discount'), amount: Number(invoice.discount_total || 0) },
+  ].filter((b) => Math.abs(b.amount) > 0.005);
+
+  if (groups.rows.length === 0 && groups.orphans.length === 0 && bands.length === 0) {
+    return (
+      <p className="mt-2.5 rounded-lg border border-dashed border-amber-300 bg-amber-50/60 px-2.5 py-2 text-[11px] text-amber-800">
+        {t('workflow.invoices.nothingKeyed')}
+      </p>
+    );
+  }
+
+  const LineRow = ({ li }) => (
+    <li className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 py-1">
+      <span className={`rounded px-1 py-0.5 text-[9px] font-bold uppercase ${li.kind === 'labor' ? 'bg-cyan-100 text-cyan-700' : 'bg-blue-100 text-blue-700'}`}>
+        {li.kind === 'labor' ? t('workflow.invoices.labor') : t('workflow.invoices.part')}
+      </span>
+      {/* WHICH PART. The catalog name is the identity; the billed wording is printed after it only when
+          the garage wrote something different, so the two can be compared instead of guessed at. */}
+      <span className="min-w-0 text-[11px] text-slate-700" dir="auto">{li.catalog_part_name || li.description}</span>
+      {li.catalog_part_name && li.description && li.catalog_part_name !== li.description && (
+        <span className="text-[10.5px] text-slate-400" dir="auto">“{li.description}”</span>
+      )}
+      {li.part_number && <span className="font-mono text-[10px] text-slate-400">{li.part_number}</span>}
+      {/* A part with no catalog reference is money against a part nobody can identify — say so. */}
+      {li.kind === 'part' && !li.component_catalog_id && (
+        <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">{t('workflow.invoices.partUnidentified')}</span>
+      )}
+      <span className="ms-auto whitespace-nowrap text-[10.5px] tabular-nums text-slate-400">
+        {li.kind === 'labor'
+          ? t('workflow.invoices.laborHours', { n: Number(li.quantity || 0) })
+          : `${Number(li.quantity || 0)} × ${money(li.unit_price)}`}
+      </span>
+      <span className="w-20 whitespace-nowrap text-end text-[11px] font-semibold tabular-nums text-slate-700">{money(li.line_total)}</span>
+    </li>
+  );
+
+  return (
+    <div className="mt-2.5 space-y-1.5 border-t border-slate-100 pt-2.5">
+      {groups.rows.map(({ work: f, lines: own }) => {
+        const subtotal = own.reduce((a, li) => a + Number(li.line_total || 0), 0);
+        return (
+          <div key={f.id} className="rounded-lg bg-slate-50/70 px-2.5 py-2">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="text-[11px] font-semibold text-slate-700" dir="auto">
+                {f.kind_meta?.emoji ? <span className="me-1 text-[9px]">{f.kind_meta.emoji}</span> : <Icon.Wrench className="me-1 inline h-2.5 w-2.5 text-slate-400" />}
+                {f.symptom}
+              </span>
+              {/* Its own kind, always — a planned service billed on a garage's paper is not a fault. */}
+              <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
+                {t(KIND_ONE_KEY[kindOf(f)])}
+              </span>
+              <span className="ms-auto text-[11px] font-bold tabular-nums text-slate-800">{money(subtotal)}</span>
+            </div>
+            {own.length === 0 ? (
+              <p className="mt-1 text-[10.5px] text-amber-700">{t('workflow.invoices.workNoLines')}</p>
+            ) : (
+              <ul className="mt-1 divide-y divide-slate-200/70">{own.map((li) => <LineRow key={li.id} li={li} />)}</ul>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Charged, but against no work this bill covers. */}
+      {groups.orphans.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/50 px-2.5 py-2">
+          <p className="text-[11px] font-semibold text-amber-800">{t('workflow.invoices.linesUnattributed')}</p>
+          <ul className="mt-1 divide-y divide-amber-200/60">{groups.orphans.map((li) => <LineRow key={li.id} li={li} />)}</ul>
+        </div>
+      )}
+
+      {/* The document's own bands — they belong to the bill, not to any one repair. */}
+      {bands.length > 0 && (
+        <ul className="px-2.5">
+          {bands.map((b) => (
+            <li key={b.key} className="flex items-baseline justify-between py-0.5 text-[11px]">
+              <span className="text-slate-500">{b.label}</span>
+              <span className={`font-semibold tabular-nums ${b.amount < 0 ? 'text-emerald-600' : 'text-slate-700'}`}>{money(b.amount)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 // ── Read-only invoice card ────────────────────────────────────────────────────────────────────────
 function InvoiceCard({ invoice, canManage, onEdit, onDelete, onReconcile, busy, active = false, onHover }) {
@@ -91,20 +240,6 @@ function InvoiceCard({ invoice, canManage, onEdit, onDelete, onReconcile, busy, 
               {reconciled ? t('workflow.invoices.reconciled') : t('workflow.invoices.pending')}
             </Badge>
           </div>
-          {/* The work this invoice covers — each chip carries its OWN kind, so a service never reads
-              as a fault. `faults` is the API's (historical) key for the covered work items. */}
-          {invoice.faults?.length > 0 && (
-            <div className="mt-1.5 flex flex-wrap gap-1">
-              {invoice.faults.map((f) => (
-                <span key={f.id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/10">
-                  {f.kind_meta?.emoji
-                    ? <span className="text-[9px]">{f.kind_meta.emoji}</span>
-                    : <Icon.Wrench className="h-2.5 w-2.5" />}
-                  {f.symptom}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
         <div className="shrink-0 text-end">
           <div className="text-base font-bold tabular-nums text-slate-900">{money(invoice.amount)}</div>
@@ -113,6 +248,11 @@ function InvoiceCard({ invoice, canManage, onEdit, onDelete, onReconcile, busy, 
           </div>
         </div>
       </div>
+
+      {/* The bill, read against the work — what each fault or service was charged for, and by which
+          part. Replaces the row of bare symptom chips, which named the work but never said what any of
+          it cost, so a bill could cover five items and charge for one and the card looked identical. */}
+      <BilledWork invoice={invoice} />
 
       {/* Receipt reconciliation line */}
       {invoice.receipt_total != null && (
@@ -183,7 +323,12 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, presetTaskId
   // A new invoice can be opened with a set of faults already ticked — the matching desk does this when
   // the user says "bill the faults nothing covers yet".
   const [taskIds, setTaskIds] = useState(() => new Set((invoice?.task_ids || presetTaskIds || []).map(String)));
-  const [lineItems, setLineItems] = useState(() => (invoice?.line_items || []).map(toEditorRow));
+  const [lineItems, setLineItems] = useState(() => (invoice?.line_items || []).filter(isWorkLine).map(toEditorRow));
+  // VAT and the discount are keyed as the paper prints them — both positive. The discount is STORED
+  // negative, so it is shown back as its absolute value. Until now there was no field for either: the
+  // API accepted them, the service wrote them as ledger lines, and no surface could enter or re-key one.
+  const [vatAmount, setVatAmount] = useState(invoice?.vat_total ? String(Math.abs(invoice.vat_total)) : '');
+  const [discountAmount, setDiscountAmount] = useState(invoice?.discount_total ? String(Math.abs(invoice.discount_total)) : '');
   const [receiptTotal, setReceiptTotal] = useState(invoice?.receipt_total != null ? String(invoice.receipt_total) : '');
   const [variance, setVariance] = useState(invoice?.variance_explanation || '');
   const [notes, setNotes] = useState(invoice?.notes || '');
@@ -282,9 +427,15 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, presetTaskId
     || lineItemsUnlinked(lineItems)
     || lineItemsHaveZeroCost(lineItems)
     // A receipt is optional on an invoice, but once entered a mismatch needs an explanation.
-    || (receiptTotal !== '' && invoiceVarianceBlocked({ rows, receiptTotal, variance }))
+    || (receiptTotal !== '' && invoiceVarianceBlocked({ rows, receiptTotal, variance, vatAmount, discountAmount }))
     || mixedGarages
     || (rows.length === 0 && taskIds.size === 0); // nothing to record
+
+  // A BILL WITH NO MONEY ON IT IS NOT A BILL. Ticking the work without keying a single line saved an
+  // invoice for AED 0.00, and because a work item counts as billed the moment it points at an invoice,
+  // the desk then reported the ticket fully Matched with nothing keyed against it. Not blocked — a
+  // genuine zero (goodwill, warranty) is a real document — but never silent again.
+  const noCharge = rows.length === 0 && bandsAmount({ vatAmount, discountAmount }) === 0;
 
   const save = async () => {
     setSaving(true);
@@ -297,6 +448,11 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, presetTaskId
       if (notes.trim()) fd.append('notes', notes.trim());
       fd.append('task_ids', JSON.stringify([...taskIds].map(Number)));
       fd.append('line_items', JSON.stringify(rows));
+      // Always sent — the service replaces each band wholesale and treats an ABSENT key as "not touching
+      // it". Sending only non-empty values would make clearing a VAT impossible: blanking the field would
+      // simply leave the old ledger row in place, and the total would not move.
+      fd.append('vat_amount', String(Math.max(0, Number(vatAmount) || 0)));
+      fd.append('discount_amount', String(Math.max(0, Number(discountAmount) || 0)));
       if (receiptTotal !== '') fd.append('receipt_total', String(Number(receiptTotal)));
       if (variance.trim()) fd.append('variance_explanation', variance.trim());
       if (photo) fd.append('receipt_photo', photo);
@@ -434,7 +590,19 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, presetTaskId
           onReceiptTotalChange={setReceiptTotal}
           variance={variance}
           onVarianceChange={setVariance}
+          vatAmount={vatAmount}
+          onVatAmountChange={setVatAmount}
+          discountAmount={discountAmount}
+          onDiscountAmountChange={setDiscountAmount}
         />
+
+        {/* A bill with nothing on it. Said here, before the save, because afterwards the work reads as
+            billed and only the AED 0.00 gives it away. */}
+        {noCharge && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800 ring-1 ring-inset ring-amber-600/20">
+            {t('workflow.invoices.noChargeWarning')}
+          </p>
+        )}
 
         {/* Receipt photo + notes */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

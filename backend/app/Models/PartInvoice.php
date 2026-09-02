@@ -36,6 +36,17 @@ class PartInvoice extends Model
     /** Receipt vs attached parts agree within a cent (mirrors MaintenanceInvoiceService). */
     public const VARIANCE_TOLERANCE = 0.01;
 
+    /**
+     * The two outcomes of the second-eyes check.
+     *
+     * DISPUTED exists because a check that can only ever pass is not a check. A bill whose photo
+     * does not say what was keyed has to be able to end in disagreement and stay visible, rather
+     * than force the checker to either lie or leave it forever unchecked.
+     */
+    public const MATCH_MATCHES  = 'matches';
+    public const MATCH_DISPUTED = 'disputed';
+    public const MATCH_RESULTS  = [self::MATCH_MATCHES, self::MATCH_DISPUTED];
+
     protected $fillable = [
         'vendor_id', 'supplier_name',
         'invoice_no', 'invoice_date', 'currency',
@@ -44,6 +55,8 @@ class PartInvoice extends Model
         'photo_disk', 'photo_key',
         'notes',
         'recorded_by', 'recorded_by_name', 'recorded_at',
+        // The second pair of eyes — see the matching migration for why this is not a boolean.
+        'matched_at', 'matched_by', 'matched_by_name', 'match_result', 'match_note',
         // Lifecycle — see IsFinancialDocument + FinancialDocumentStatus.
         'status', 'due_date', 'terms_days',
         'approved_by', 'approved_by_name', 'approved_at',
@@ -59,6 +72,7 @@ class PartInvoice extends Model
         'total_amount' => 'decimal:2',
         'stated_total' => 'decimal:2',
         'recorded_at'  => 'datetime',
+        'matched_at'   => 'datetime',
         'paid_amount'  => 'decimal:2',
         'due_date'     => 'date',
         'approved_at'  => 'datetime',
@@ -74,10 +88,24 @@ class PartInvoice extends Model
         return $this->belongsTo(Vendor::class, 'vendor_id');
     }
 
-    /** The parts billed on this document — the invoice's line detail. */
+    /** The parts billed on this document that were bought FOR A CAR — half the invoice's line detail. */
     public function purchases(): HasMany
     {
         return $this->hasMany(PartPurchase::class, 'part_invoice_id');
+    }
+
+    /**
+     * The parts on this document that went ON THE SHELF — the other half of the line detail.
+     *
+     * One supplier trip routinely buys some parts for a car in the workshop and some for the
+     * storehouse, on ONE invoice. Both are money this supplier billed us, so both count towards the
+     * total; what differs is only where the part went. Restricted to receipts because those are the
+     * only in-movements that represent a purchase (an opening count and a return carry no new spend).
+     */
+    public function storeReceipts(): HasMany
+    {
+        return $this->hasMany(StoreMovement::class, 'part_invoice_id')
+            ->where('reason', StoreMovement::REASON_RECEIPT);
     }
 
     public function recorder(): BelongsTo
@@ -100,10 +128,17 @@ class PartInvoice extends Model
     public function recalcTotals(): void
     {
         $purchases = $this->relationLoaded('purchases') ? $this->purchases : $this->purchases()->get();
+        $receipts  = $this->relationLoaded('storeReceipts') ? $this->storeReceipts : $this->storeReceipts()->get();
 
-        $subtotal = round((float) $purchases->sum(
-            fn (PartPurchase $p) => (float) $p->purchase_price * (float) ($p->quantity ?: 1)
-        ), 2);
+        // Both halves of the bill: parts bought for a car, and parts bought for the shelf. Leaving the
+        // shelf lines out would make the invoice's own total disagree with its printed one for every
+        // mixed supplier trip, and the variance gate would then demand an explanation for money that
+        // was recorded perfectly.
+        $subtotal = round(
+            (float) $purchases->sum(fn (PartPurchase $p) => (float) $p->purchase_price * (float) ($p->quantity ?: 1))
+            + (float) $receipts->sum(fn (StoreMovement $m) => $m->lineTotal()),
+            2
+        );
 
         // Discount is held POSITIVE here (it is printed as a deduction on the supplier's paper, and the
         // form mirrors the paper) and subtracted once, right here, so no caller can forget the sign.
@@ -131,6 +166,12 @@ class PartInvoice extends Model
         return round((float) $purchases->sum(fn (PartPurchase $p) => $p->refundedTotal()), 2);
     }
 
+    /** Keying a supplier's bill is part of buying parts — the same gate its own routes carry. */
+    public function paperPermission(): string
+    {
+        return 'parts.purchase';
+    }
+
     /** The supplier's own invoice date when we have it, else when we recorded the bill. */
     public function documentDate(): ?string
     {
@@ -140,6 +181,54 @@ class PartInvoice extends Model
     }
 
     /** The signed gap between the attached parts (+ tax) and the printed total; null when none was keyed. */
+    /** Has a second person looked at the photo against the figures yet? */
+    public function isMatched(): bool
+    {
+        return $this->matched_at !== null;
+    }
+
+    /** Bills still waiting for their second pair of eyes, longest-waiting first. */
+    public function scopeAwaitingMatch($q)
+    {
+        return $q->whereNull('matched_at');
+    }
+
+    /** Bills a checker looked at and disagreed with — the ones that need somebody to act. */
+    public function scopeDisputed($q)
+    {
+        return $q->where('match_result', self::MATCH_DISPUTED);
+    }
+
+    /**
+     * Why this person may not be the one to check this bill — or null when they may.
+     *
+     * The rule lives on the model rather than inline in the controller because it IS the stage: two
+     * conditions decide whether a check means anything, and a rule worth enforcing is worth being
+     * able to test without standing up an HTTP request and a database.
+     *
+     *   NO PHOTO      There is nothing to read the figures against. Calling that "checked" would
+     *                 mean "read the same numbers back", which is the exact failure this stage was
+     *                 built to stop.
+     *   SELF-CHECK    The whole value is that a SECOND person looked. Letting the person who keyed
+     *                 the figures confirm them records something false — that two people agreed,
+     *                 when only one ever did.
+     *
+     * A bill with no recorder (imported by a job, not keyed by a human) has nobody to be different
+     * from, so only the photo rule applies to it.
+     */
+    public function whyCannotBeCheckedBy(?int $userId): ?string
+    {
+        if (! $this->photoUrl()) {
+            return 'This bill has no photo, so there is nothing to check the figures against. Attach the paper first.';
+        }
+
+        if ($this->recorded_by !== null && $userId !== null && (int) $this->recorded_by === $userId) {
+            return 'You keyed this bill, so you cannot be the one who checks it. It needs a second pair of eyes.';
+        }
+
+        return null;
+    }
+
     public function variance(): ?float
     {
         return $this->stated_total === null

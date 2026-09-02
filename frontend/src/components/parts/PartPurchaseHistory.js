@@ -21,7 +21,7 @@ const RESULT_TONE = { success: 'green', failed: 'red', pending: 'slate' };
 // `t` is threaded in because these labels live outside a component body.
 const resultLabel = (t, r) =>
   ({ success: t('Worked'), failed: t('Failed'), pending: t('Pending') })[r] || null;
-const sourceLabel = (t, s) => (s === 'garage' ? t('Garage') : s === 'supplier' ? t('Supplier') : null);
+const sourceLabel = (t, s) => (s === 'garage' ? t('Garage') : s === 'supplier' ? t('Supplier') : s === 'store' ? t('Storehouse') : null);
 
 const DEFAULT_VISIBLE = 3;
 

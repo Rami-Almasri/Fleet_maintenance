@@ -62,6 +62,19 @@ class FinancialDocumentController extends Controller
         return $this->act($type, $id, fn (Model $d) => $this->documents->approve($d, request()->user()), 'Approved');
     }
 
+    /** Refuse a submitted document and hand it back to be corrected. The reason is what makes it actionable. */
+    public function returnForCorrection(Request $request, string $type, int $id)
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+
+        return $this->act(
+            $type,
+            $id,
+            fn (Model $d) => $this->documents->returnToDraft($d, $request->user(), $data['reason']),
+            'Returned for correction',
+        );
+    }
+
     public function unapprove(string $type, int $id)
     {
         return $this->act($type, $id, fn (Model $d) => $this->documents->unapprove($d, request()->user()), 'Approval withdrawn');

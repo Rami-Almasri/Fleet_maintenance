@@ -45,12 +45,15 @@ class MaintenanceRequiredPart extends Model
         // wording, kept as evidence. Both are fillable — omitting the reference here silently
         // dropped it on every create while the service believed it had been written.
         'component_catalog_id', 'catalog_matched_by',
-        'part_name', 'notes', 'quantity', 'priority', 'status',
+        // The size the inspector asked for, so the buyer is not left guessing at the counter.
+        // @see \App\Support\PartSpecs
+        'part_name', 'specs', 'notes', 'quantity', 'priority', 'status',
         'recorded_by', 'recorded_by_name', 'recorded_at',
         'actioned_by', 'actioned_by_name', 'actioned_at', 'dismissal_reason',
     ];
 
     protected $casts = [
+        'specs'       => 'array',
         'quantity'    => 'decimal:2',
         'recorded_at' => 'datetime',
         'actioned_at' => 'datetime',

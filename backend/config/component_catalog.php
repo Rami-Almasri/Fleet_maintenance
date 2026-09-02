@@ -88,6 +88,7 @@ return [
         'category_key' => 'transmission', 'tracking_mode' => 'serialized', 'expected_life_km' => 250000, 'position_scheme' => null],
 
     ['slug' => 'battery-12v', 'name' => 'Battery 12V', 'name_ar' => 'بطارية',
+        'spec_fields' => ['voltage', 'capacity_ah', 'battery_chemistry', 'terminal_layout', 'cca'],
         'identity_aliases' => ['battery', 'بطاريه'],
         'aliases' => ['car not starting', 'battery dead', 'البطارية فاضية', 'ما تشتغل'],
         'category_key' => 'electrical', 'action_target' => 'battery', 'tracking_mode' => 'serialized',
@@ -230,6 +231,7 @@ return [
 
     // ── Tyres & wheels ──────────────────────────────────────────────────────────────────────────
     ['slug' => 'tyre', 'name' => 'Tyre', 'name_ar' => 'إطار',
+        'spec_fields' => ['tyre_size', 'load_speed_rating', 'tyre_construction'],
         'identity_aliases' => ['tire', 'تاير', 'كفر', 'الكفرات'],
         'aliases' => ['puncture', 'worn tyre', 'بنشر'],
         'category_key' => 'tyres', 'action_target' => 'tyre', 'tracking_mode' => 'batch',
@@ -248,6 +250,7 @@ return [
         'category_key' => 'tyres', 'tracking_mode' => 'batch', 'position_scheme' => 'axle_corner'],
 
     ['slug' => 'spare-tyre', 'name' => 'Spare Tyre', 'name_ar' => 'إطار احتياطي',
+        'spec_fields' => ['tyre_size', 'load_speed_rating', 'tyre_construction'],
         'identity_aliases' => ['spare wheel', 'استبن', 'الاستبنة'],
         'aliases' => ['spare missing'],
         'category_key' => 'tyres', 'tracking_mode' => 'batch', 'position_scheme' => null],
@@ -255,6 +258,7 @@ return [
     // ── Brakes ──────────────────────────────────────────────────────────────────────────────────
     // 'بريك' means the braking system, not the pads — search-only.
     ['slug' => 'brake-pads', 'name' => 'Brake Pads (set)', 'name_ar' => 'فحمات فرامل',
+        'spec_fields' => ['pad_material'],
         'identity_aliases' => ['pads', 'الفحمات', 'فحمات'],
         'aliases' => ['بريك', 'brake noise', 'squealing brakes', 'صوت فرامل'],
         'category_key' => 'brakes', 'action_target' => 'brake_pads', 'tracking_mode' => 'batch',
@@ -262,6 +266,7 @@ return [
         'notes' => 'CONVENTION: one set per axle, qty=1 (never per-pad).'],
 
     ['slug' => 'brake-discs', 'name' => 'Brake Discs (set)', 'name_ar' => 'هوبات فرامل',
+        'spec_fields' => ['disc_diameter_mm'],
         'identity_aliases' => ['rotors', 'discs', 'الديسكات', 'الهوب'],
         'aliases' => ['brake vibration', 'رجة عند الفرملة'],
         'category_key' => 'brakes', 'action_target' => 'brake_discs', 'tracking_mode' => 'batch',
@@ -396,6 +401,7 @@ return [
 
     // 'الكاتينة' is said of the belt AND the chain — search-only on both rows.
     ['slug' => 'timing-belt', 'name' => 'Timing Belt', 'name_ar' => 'سير كاتينة',
+        'spec_fields' => ['belt_profile'],
         'identity_aliases' => ['cam belt', 'سير التايمن'],
         'aliases' => ['الكاتينة'],
         'category_key' => 'engine', 'tracking_mode' => 'batch', 'expected_life_km' => 100000, 'position_scheme' => null,
@@ -408,6 +414,7 @@ return [
         'expected_life_km' => 200000, 'position_scheme' => null],
 
     ['slug' => 'drive-belt', 'name' => 'Drive / Serpentine Belt', 'name_ar' => 'سير مكاين',
+        'spec_fields' => ['belt_profile'],
         'identity_aliases' => ['fan belt', 'alternator belt', 'serpentine belt', 'السير'],
         'aliases' => ['squealing on start', 'صرير سير'],
         'category_key' => 'engine', 'action_target' => 'accessory_belt', 'tracking_mode' => 'batch',
@@ -567,6 +574,7 @@ return [
 
     // ── Climate / A/C ───────────────────────────────────────────────────────────────────────────
     ['slug' => 'cabin-filter', 'name' => 'Cabin Filter', 'name_ar' => 'فلتر مكيف',
+        'spec_fields' => ['filter_media'],
         'identity_aliases' => ['pollen filter', 'ac filter', 'فلتر المكيف'],
         'aliases' => ['bad smell from ac', 'ريحة من المكيف'],
         'category_key' => 'ac', 'action_target' => 'cabin_filter', 'tracking_mode' => 'batch',
@@ -595,6 +603,7 @@ return [
     // ── Lights & visibility ─────────────────────────────────────────────────────────────────────
     // 'الشمعة' is said of a headlight AND of a bulb — search-only on both rows.
     ['slug' => 'headlight', 'name' => 'Headlight Assembly', 'name_ar' => 'كشاف أمامي',
+        'spec_fields' => ['bulb_fitting', 'bulb_technology'],
         'identity_aliases' => ['head lamp', 'headlight', 'الكشاف'],
         'aliases' => ['الشمعة', 'headlight broken', 'الكشاف مكسور'],
         'category_key' => 'lights', 'tracking_mode' => 'batch', 'position_scheme' => null],
@@ -605,6 +614,7 @@ return [
         'category_key' => 'lights', 'tracking_mode' => 'batch', 'position_scheme' => null],
 
     ['slug' => 'fog-light', 'name' => 'Fog Light', 'name_ar' => 'كشاف ضباب',
+        'spec_fields' => ['bulb_fitting', 'bulb_technology'],
         'identity_aliases' => ['fog lamp', 'كشافات الضباب'],
         'aliases' => ['fog light not working'],
         'category_key' => 'lights', 'tracking_mode' => 'batch', 'position_scheme' => null],
@@ -773,6 +783,7 @@ return [
     // Components read — one table, two write paths, one invariant preserved.
 
     ['slug' => 'engine-oil', 'name' => 'Engine Oil', 'name_ar' => 'زيت محرك',
+        'spec_fields' => ['viscosity', 'oil_base', 'capacity_l', 'oil_standard'],
         'identity_aliases' => ['motor oil', 'engine oil', 'الزيت'],
         'aliases' => ['oil change', 'تغيير زيت'],
         'category_key' => 'fluids', 'action_target' => 'engine_oil', 'tracking_mode' => 'consumable'],
@@ -784,26 +795,31 @@ return [
         'notes' => 'Changed with the oil — recorded on the oil-change service record.'],
 
     ['slug' => 'coolant', 'name' => 'Coolant', 'name_ar' => 'ماء تبريد',
+        'spec_fields' => ['coolant_type', 'capacity_l'],
         'identity_aliases' => ['antifreeze', 'radiator water', 'ماء الردياتير', 'الكولنت'],
         'aliases' => ['low coolant'],
         'category_key' => 'fluids', 'action_target' => 'coolant', 'tracking_mode' => 'consumable'],
 
     ['slug' => 'brake-fluid', 'name' => 'Brake Fluid', 'name_ar' => 'زيت فرامل',
+        'spec_fields' => ['brake_fluid_grade', 'capacity_l'],
         'identity_aliases' => ['زيت البريك'],
         'aliases' => ['brake fluid low', 'الفرامل ضعيفة'],
         'category_key' => 'fluids', 'action_target' => 'brake_fluid', 'tracking_mode' => 'consumable'],
 
     ['slug' => 'transmission-oil', 'name' => 'Transmission Oil', 'name_ar' => 'زيت جير',
+        'spec_fields' => ['atf_spec', 'capacity_l'],
         'identity_aliases' => ['gearbox oil', 'atf', 'زيت القير'],
         'aliases' => ['gear oil change'],
         'category_key' => 'fluids', 'tracking_mode' => 'consumable'],
 
     ['slug' => 'power-steering-fluid', 'name' => 'Power Steering Fluid', 'name_ar' => 'زيت باور',
+        'spec_fields' => ['capacity_l'],
         'identity_aliases' => ['steering oil', 'زيت الدركسون'],
         'aliases' => ['steering noise'],
         'category_key' => 'fluids', 'tracking_mode' => 'consumable'],
 
     ['slug' => 'ac-refrigerant', 'name' => 'A/C Refrigerant Gas', 'name_ar' => 'غاز مكيف',
+        'spec_fields' => ['refrigerant_type', 'charge_g'],
         'identity_aliases' => ['freon', 'ac gas', 'الفريون', 'غاز الفريون'],
         'aliases' => ['ac gas refill', 'تعبئة غاز'],
         'category_key' => 'fluids', 'tracking_mode' => 'consumable'],
@@ -814,11 +830,13 @@ return [
         'category_key' => 'fluids', 'tracking_mode' => 'consumable'],
 
     ['slug' => 'wiper-blades', 'name' => 'Wiper Blades', 'name_ar' => 'مساحات',
+        'spec_fields' => ['blade_length_in'],
         'identity_aliases' => ['wipers', 'wiper blades', 'المساحات'],
         'aliases' => ['wipers smearing', 'المساحات تخربش'],
         'category_key' => 'electrical', 'action_target' => 'wiper_blades', 'tracking_mode' => 'consumable'],
 
     ['slug' => 'bulbs', 'name' => 'Bulbs / Lights', 'name_ar' => 'لمبات',
+        'spec_fields' => ['bulb_fitting', 'bulb_technology'],
         'identity_aliases' => ['bulb', 'bulbs', 'lamp', 'اللمبات'],
         'aliases' => ['الشمعات', 'light not working', 'اللمبة محروقة'],
         'category_key' => 'electrical', 'tracking_mode' => 'consumable'],

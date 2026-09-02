@@ -37,6 +37,16 @@ const CONFIRM_BADGE = {
   confirmed:            { label: '✓ Confirmed',            cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
 };
 
+// A finding the car's own data disagreed with, and what happened to it. Shown ON the finding rather than
+// only in the approval panel because the chip is what every other screen reads — a fault that a manager
+// refused must never look, at a glance, like one that was simply never worked on.
+// See [[FindingApprovalService]].
+const APPROVAL_BADGE = {
+  pending:  { label: '⏸ Awaiting approval', cls: 'bg-amber-100 text-amber-800 ring-amber-300' },
+  approved: { label: '✓ Approved',          cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  rejected: { label: '⛔ Rejected',          cls: 'bg-rose-50 text-rose-700 ring-rose-200' },
+};
+
 // Normalise a symptom/finding label so "Rough idle / misfire" matches across whitespace/case quirks.
 const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -205,6 +215,20 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
                       <span className={`ms-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
                         {badge.label}
                         {badge.garage && <span className="ms-1 font-semibold opacity-80">· {badge.garage}</span>}
+                      </span>
+                    )}
+                    {/* The approval gate's verdict on this finding. Carries WHO decided, because that is
+                        the whole point of the gate: "approved" with nobody's name on it is not an
+                        approval. A finding nobody had to question carries no badge at all. */}
+                    {APPROVAL_BADGE[f.approval?.state] && (
+                      <span
+                        title={f.approval.state === 'pending'
+                          ? `Logged by ${f.approval.requested_by || 'someone'} — waiting for approval`
+                          : `${f.approval.decided_by || 'An approver'} ${f.approval.state} this — logged by ${f.approval.requested_by || 'someone'}${f.approval.note ? ` · ${f.approval.note}` : ''}`}
+                        className={`ms-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${APPROVAL_BADGE[f.approval.state].cls}`}
+                      >
+                        {APPROVAL_BADGE[f.approval.state].label}
+                        {f.approval.decided_by && <span className="ms-1 font-semibold opacity-80">· {f.approval.decided_by}</span>}
                       </span>
                     )}
                     {/* Vehicle-sync state for a performed routine service — Pending Confirmation until close. */}

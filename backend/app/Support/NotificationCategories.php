@@ -69,6 +69,29 @@ class NotificationCategories
             'maint_ready_reinspect',      // repair finished → single-shot re-inspection (a test drive)
             'maint_reinspection_failed',  // a re-inspection failed → back for another look
         ],
+
+        // Warranty — "could somebody else be paying for this?". Its own tab rather than folded into
+        // `progress` because the audience is different (the warranty desk, not the workshop) and the
+        // action is different: everything here is either a decision somebody owes us or a
+        // counterparty who owes us an answer. Buried among repair updates, a coverage review sits
+        // unanswered — and an unanswered review is what teaches people to override the gate.
+        'warranty' => [
+            'warranty_coverage_review',   // "we don't know yet" → the desk must decide, a purchase is held
+            'warranty_case_opened',       // confirmed covered → the dealer route starts
+            'warranty_not_covered',       // reviewed and confirmed ours → procurement is released
+            'warranty_expiring',          // cover ending on months OR kilometres — inspect before it goes
+            'warranty_review_overdue',    // a review nobody has answered; something is blocked on it
+            'warranty_provider_overdue',  // the dealer has gone quiet past the date they promised
+            'warranty_case_stale',        // an open case nobody has touched
+            'warranty_recovery_recorded', // what we got back / never had to spend
+            // The stage transitions WarrantyCaseService emits are typed `warranty_case_{stage}`.
+            'warranty_case_authorization_requested',
+            'warranty_case_authorized',
+            'warranty_case_sent_to_provider',
+            'warranty_case_repair_in_progress',
+            'warranty_case_repair_completed',
+            'warranty_case_claim_submitted',
+        ],
     ];
 
     /** The catch-all bucket for any type not claimed by a category above. */

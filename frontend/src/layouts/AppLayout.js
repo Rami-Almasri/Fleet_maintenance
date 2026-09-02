@@ -203,6 +203,7 @@ const NAV_SECTIONS = [
     title: 'Administration',
     items: [
       { name: 'Users', to: '/users', icon: 'M16 5.5a3 3 0 0 1 0 5.8M3 20a6 6 0 0 1 12 0M9 8.2a3.2 3.2 0 1 1 0-6.4 3.2 3.2 0 0 1 0 6.4zM21 20a6 6 0 0 0-4-5.6', desc: 'Every account, its status and Spatie role(s) — admin-only.' },
+      { name: 'Odoo Mappings', to: '/odoo-mappings', icon: 'M4 7h16M4 12h16M4 17h16M8 4v16', desc: 'What each vehicle, part, supplier and expense type IS in Odoo. Nothing reaches the accounting system until these are answered.' },
       { name: 'Settings', to: '/settings', icon: 'M10.3 4.3a1 1 0 0 1 .95-.7h1.5a1 1 0 0 1 .95.7l.35 1.1a7 7 0 0 1 1.5.87l1.1-.4a1 1 0 0 1 1.2.45l.75 1.3a1 1 0 0 1-.25 1.25l-.9.74a7 7 0 0 1 0 1.74l.9.74a1 1 0 0 1 .25 1.25l-.75 1.3a1 1 0 0 1-1.2.45l-1.1-.4a7 7 0 0 1-1.5.87l-.35 1.1a1 1 0 0 1-.95.7h-1.5a1 1 0 0 1-.95-.7l-.35-1.1a7 7 0 0 1-1.5-.87l-1.1.4a1 1 0 0 1-1.2-.45l-.75-1.3a1 1 0 0 1 .25-1.25l.9-.74a7 7 0 0 1 0-1.74l-.9-.74a1 1 0 0 1-.25-1.25l.75-1.3a1 1 0 0 1 1.2-.45l1.1.4a7 7 0 0 1 1.5-.87zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'Your account & preferences in one place: appearance (theme / language), the roles and permissions granted to you, keyboard shortcuts, and sign-out.' },
     ],
   },
@@ -278,6 +279,9 @@ const NAV_PERMISSIONS = {
   '/sync-audit': 'sync.run',
   '/simulation': 'users.manage',
   '/users': 'users.manage',
+  // READ is financial.view on purpose — somebody fixing a blocked cost needs to see that a supplier is
+  // unmapped. Editing is financial.manage_mappings, enforced by the routes and by the page's controls.
+  '/odoo-mappings': 'financial.view',
 };
 
 // Quick actions surfaced at the top of the command palette. `run` receives a

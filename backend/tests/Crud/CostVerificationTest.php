@@ -257,10 +257,10 @@ class CostVerificationTest extends CrudTestCase
         $this->postJson("/api/maintenance-tickets/{$ticket->id}/invoices", [
             'is_internal' => true,
             'task_ids'    => [$task->id],
-            'line_items'  => [[
+            'line_items'  => [array_merge([
                 'kind' => 'part', 'description' => 'Brake Pad Set', 'finding_text' => 'Brake noise',
                 'category_key' => 'brakes', 'quantity' => 1, 'unit_price' => 400,
-            ]],
+            ], $this->billablePart($ticket))],
         ])->assertSuccessful();
 
         // A second part on the same category with NO document behind it.

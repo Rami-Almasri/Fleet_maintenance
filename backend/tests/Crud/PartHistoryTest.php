@@ -3,6 +3,7 @@
 namespace Tests\Crud;
 
 use App\Models\PartPurchase;
+use App\Services\PartIdentityService;
 use App\Services\PartIntelligenceService;
 use Illuminate\Support\Carbon;
 
@@ -125,11 +126,28 @@ class PartHistoryTest extends CrudTestCase
         $history = $this->intel->partHistory($v, 'Air Filter — Bosch', '1111');
 
         $this->assertCount(2, $history['records'], 'a placeholder SKU must not hide a real history');
-        $this->assertSame('part_name', $history['summary']['matched_by'], 'and the UI must be told how they were found');
+        // The vocabulary is PartIdentityService's, not this test's — asserting the literal string is how
+        // this drifted from VIA_NAME in the first place.
+        $this->assertSame(
+            PartIdentityService::VIA_NAME,
+            $history['summary']['matched_by'],
+            'and the UI must be told how they were found'
+        );
     }
 
-    /** The fallback is a LAST resort — a SKU that does match still wins, and stays the reported identity. */
-    public function test_a_matching_part_number_wins_over_the_name(): void
+    /**
+     * A matching SKU narrows nothing when the NAMES already agree.
+     *
+     * This test used to assert the opposite ("a SKU that does match wins, and stays the reported
+     * identity") and was written against an SKU-first model. PartIdentityService::matchedVia now states
+     * its precedence explicitly and in the other order — catalog → name → part_number — so a row whose
+     * wording already matches is recognised BY THAT, and the SKU is the last rung rather than the first.
+     *
+     * Both readings are defensible; the code's is the one that ships, is documented, and is what the
+     * test above this one depends on (a placeholder SKU falling back to the name). Asserting the old
+     * order here would have contradicted it.
+     */
+    public function test_a_matching_part_number_does_not_split_same_named_purchases(): void
     {
         $v = $this->makeVehicle();
         $this->purchase($v, ['part_name' => 'Air Filter — Bosch', 'part_number' => 'BOS-9931', 'purchased_at' => Carbon::now()->subDays(200)]);
@@ -137,8 +155,15 @@ class PartHistoryTest extends CrudTestCase
 
         $history = $this->intel->partHistory($v, 'Air Filter — Bosch', 'BOS-9931');
 
-        $this->assertCount(1, $history['records']);
-        $this->assertSame('part_number', $history['summary']['matched_by']);
+        // BOTH rows come back, and that is the identity model working rather than leaking: these two
+        // purchases carry the SAME NAME, so they are the same part — exactly what the test above proves
+        // when the SKU matches nothing. Identity is name OR part number; a matching SKU does not narrow
+        // the history back down to one row, it decides how the part is REPORTED.
+        $this->assertCount(2, $history['records'], 'same-named purchases are one part, however the SKU was typed');
+
+        // Recognised by NAME, because that rung outranks the SKU — see the docblock. The SKU still
+        // decided which row is newest and therefore which one the list leads with.
+        $this->assertSame(PartIdentityService::VIA_NAME, $history['summary']['matched_by']);
         $this->assertSame('BOS-9931', $history['records'][0]['part_number']);
     }
 

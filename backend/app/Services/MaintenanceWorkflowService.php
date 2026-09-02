@@ -185,7 +185,101 @@ class MaintenanceWorkflowService
         private LogisticsDispatchService $logistics,
         private DiagnosticGateService $gate,
         private ReviewReminderService $reviewReminders,
+        // The second pair of eyes on a finding the car's own data disagrees with — an oil change on a
+        // car with 5,415 km of its interval left, or the same fault raised twice. It stamps the hold onto
+        // the finding here, and assertTransition() below is what makes the hold actually hold.
+        private FindingApprovalService $approvals,
+        // The accounting bridge for the RECOVERY leg. A tow is a cost this workflow creates, so the
+        // obligation is raised from here — not from a separate finance screen somebody has to remember
+        // to visit afterwards (§6).
+        private \App\Services\Odoo\FinancialEventBuilder $financial,
     ) {}
+
+    /**
+     * Record what the tow cost and the paper behind it — the money side of an existing recovery leg.
+     *
+     * WHY THIS IS SEPARATE FROM dispatchRecovery(). A recovery is dispatched in an emergency: the car is
+     * disabled, somebody calls a tow truck, and the price is very often not known until the towing
+     * company invoices days later. Forcing a cost at dispatch time would either block an urgent
+     * operational action on a number nobody has, or invite a guess that then becomes the figure we post
+     * to the ledger. So dispatch stays free, and the money is recorded when the money is known.
+     *
+     * OPERATIONAL COMPLETION AND FINANCIAL READINESS STAY SEPARATE (§8). This method never touches
+     * `workflow_status` and can be called at any stage, including after the ticket has closed — the car
+     * came back, the repair finished, and the tow invoice arrived a week later. What it changes is the
+     * financial event, which then blocks or turns READY on its own terms.
+     *
+     * @param array{recovery_cost:float, recovery_vendor_id?:?int, recovery_currency?:?string,
+     *              recovery_invoice_required?:?bool, recovery_invoice_no?:?string,
+     *              recovery_invoice_date?:?string} $data
+     */
+    public function recordRecoveryCost(Maintenance $ticket, array $data, User $actor, ?\Illuminate\Http\UploadedFile $invoice = null): Maintenance
+    {
+        if (! $ticket->isRecovery()) {
+            throw new WorkflowTransitionException(
+                'This ticket has no recovery leg — a towing cost can only be recorded against a car that was actually recovered.',
+                ['field' => 'recovery_cost']
+            );
+        }
+
+        $cost = round((float) ($data['recovery_cost'] ?? 0), 2);
+
+        if ($cost <= 0) {
+            throw new WorkflowTransitionException(
+                'Enter what the recovery cost. A tow with no charge is recorded by leaving the cost blank, not by entering zero.',
+                ['field' => 'recovery_cost']
+            );
+        }
+
+        return DB::transaction(function () use ($ticket, $data, $actor, $invoice, $cost) {
+            $ticket->recovery_cost     = $cost;
+            $ticket->recovery_currency = $this->clean($data['recovery_currency'] ?? null) ?: 'AED';
+
+            if (array_key_exists('recovery_vendor_id', $data)) {
+                $ticket->recovery_vendor_id = $data['recovery_vendor_id'] ?: null;
+            }
+            if (array_key_exists('recovery_invoice_required', $data)) {
+                $ticket->recovery_invoice_required = (bool) $data['recovery_invoice_required'];
+            }
+            if (array_key_exists('recovery_invoice_no', $data)) {
+                $ticket->recovery_invoice_no = $this->clean($data['recovery_invoice_no'] ?? null);
+            }
+            if (array_key_exists('recovery_invoice_date', $data)) {
+                $ticket->recovery_invoice_date = $data['recovery_invoice_date'] ?: null;
+            }
+
+            if ($invoice) {
+                // The application's existing storage, on the same disk the workflow already writes
+                // maintenance evidence to — never a second file system (§29).
+                $key  = $invoice->store('maintenance/recovery-invoices', 'public');
+                $ticket->recovery_invoice_disk = 'public';
+                $ticket->recovery_invoice_key  = $key;
+            }
+
+            $ticket->save();
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_FINANCIAL_EVENT_RAISED, $actor, [
+                'description' => 'Recovery cost recorded — ' . number_format($cost, 2) . ' '
+                    . $ticket->recovery_currency
+                    . ($ticket->recovery_invoice_no ? ' (invoice ' . $ticket->recovery_invoice_no . ')' : ''),
+                'meta' => [
+                    'recovery_cost'       => $cost,
+                    'recovery_vendor_id'  => $ticket->recovery_vendor_id,
+                    'recovery_invoice_no' => $ticket->recovery_invoice_no,
+                ],
+            ]);
+
+            // Best-effort, for the same reason the invoice service's hook is: a bridge problem must
+            // never lose a cost somebody just recorded. The event is derived and can be rebuilt.
+            try {
+                $this->financial->syncFor($ticket->fresh(['vehicle', 'recoveryVendor']), $actor);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+
+            return $ticket->load($this->eager());
+        });
+    }
 
     /**
      * Run one odometer reading through the Continuity Rules and stamp the verdict onto the ticket's
@@ -4667,13 +4761,19 @@ class MaintenanceWorkflowService
             // Each carries its resolved root cause (label + canonical fault_causes id) for analytics
             // + the eventual Odoo sync; a custom cause is recorded for admin review inside resolve().
             $vehicleForCheck = $ticket->loadMissing('vehicle')->vehicle;
+            // The findings ALREADY on the ticket, read before they are overwritten — a re-filed report
+            // must not re-open an approval a manager already decided, nor let a rejected finding back in
+            // through the same form. See FindingApprovalService::challenge().
+            $priorFindings = is_array($ticket->findings) ? $ticket->findings : [];
             $ticket->findings = collect($payload['symptoms'])
-                ->map(function ($text) use ($actor, $payload, $causeChoices, $detailChoices, $vehicleForCheck) {
+                ->map(function ($text) use ($actor, $payload, $causeChoices, $detailChoices, $vehicleForCheck, $ticket, $priorFindings) {
                     $choice = $causeChoices[FaultCause::normalizeKey($text)] ?? null;
                     $detail = $detailChoices[FaultCause::normalizeKey($text)] ?? null;
                     [$cause, $causeId] = $choice
                         ? $this->resolveFaultCause($text, $choice['label'], $choice['id'], $actor)
                         : [null, null];
+
+                    $statusCheck = $this->statusConflictFor($text, $vehicleForCheck);
 
                     return [
                         'text'          => $text,
@@ -4700,7 +4800,11 @@ class MaintenanceWorkflowService
                         // Reality-check against the live diagnostic status — non-null only when this text
                         // is a monitored routine (oil/battery/tyres) AND the car's actual status says it
                         // is NOT due. Surfaces as an inline warning now, and a Data Health audit row later.
-                        'status_check'  => $this->statusConflictFor($text, $vehicleForCheck),
+                        'status_check'  => $statusCheck,
+                        // …and when the data disagrees, the warning is no longer only advisory. The
+                        // finding is HELD: not promoted to a fault, and the ticket cannot leave this
+                        // stage until an approver decides. Null (the common case) = nothing to question.
+                        'approval'      => $this->approvals->challenge($text, $vehicleForCheck, $ticket, $statusCheck, $actor, $priorFindings),
                     ];
                 })->values()->all();
 
@@ -4731,8 +4835,21 @@ class MaintenanceWorkflowService
                 $ticket->report_odometer = $reportOdo;
                 $this->recordOdometerFlag($ticket, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, OdometerContinuityService::STAGE_TEST_END, $reportNote, $actor, $reportConfirmed);
             }
+            // A CLEARED diagnostic creates no work, so there is nothing for anyone to approve — the
+            // hold would park a terminal row forever waiting on a decision about a job that will never
+            // happen. The findings stay (they are the record of what was looked at); the hold drops.
+            if (! $requiresMaintenance) {
+                $ticket->findings = collect($ticket->findings)
+                    ->map(fn ($f) => is_array($f) ? ['approval' => null] + $f : $f)
+                    ->values()->all();
+            }
+
             $ticket->workflow_status = $target;
             $ticket->save();
+
+            // Held findings are announced only once the ticket carries them — a notification pointing at
+            // a card that does not show the finding yet is worse than a late one.
+            $this->approvals->announce($ticket, $this->approvals->pending($ticket), $actor);
 
             $vehicle = $ticket->loadMissing('vehicle')->vehicle;
 
@@ -5827,8 +5944,10 @@ class MaintenanceWorkflowService
         return DB::transaction(function () use ($ticket, $clean, $actor) {
             $vehicle = $ticket->loadMissing('vehicle')->vehicle;
             $garage  = $ticket->garage; // the workshop that DISCOVERED the fault — stamped per finding
-            $added = $clean->map(function ($f) use ($actor, $vehicle, $garage) {
+            $priorFindings = is_array($ticket->findings) ? $ticket->findings : [];
+            $added = $clean->map(function ($f) use ($actor, $vehicle, $garage, $ticket, $priorFindings) {
                 [$cause, $causeId] = $this->resolveFaultCause($f['text'], $f['root_cause'], $f['root_cause_id'], $actor);
+                $statusCheck = $this->statusConflictFor($f['text'], $vehicle);
 
                 return [
                     'text'          => $f['text'],
@@ -5845,11 +5964,17 @@ class MaintenanceWorkflowService
                     // from a garage. Immutable on the finding even if the car later transfers garages.
                     'garage'        => $garage,
                     'at'            => Carbon::now()->toIso8601String(),
-                    'status_check'  => $this->statusConflictFor($f['text'], $vehicle),
+                    'status_check'  => $statusCheck,
+                    // The garage door gets the same gate as the inspector's. A mechanic reporting a job
+                    // the car's data says it does not need — or one this car already had inside the
+                    // window — is exactly the case worth a second signature, and the money is closer here.
+                    'approval'      => $this->approvals->challenge($f['text'], $vehicle, $ticket, $statusCheck, $actor, $priorFindings),
                 ];
             });
             $ticket->findings = collect($ticket->findings ?? [])->concat($added)->values()->all();
             $ticket->save();
+
+            $this->approvals->announce($ticket, $this->approvals->pending($ticket), $actor);
 
             $this->notifier->notifyByPermission(self::NOTIFY_CONTROLLERS, [
                 'type'     => 'maint_garage_finding',
@@ -8601,6 +8726,12 @@ class MaintenanceWorkflowService
         }
 
         $this->assertNotTemporarilyReleased($ticket, $to);
+
+        // A finding the car's own data disagrees with parks the whole ticket where it stands until an
+        // approver signs it off or throws it out. Checked here — the choke point every staged transition
+        // routes through — so there is exactly one place the hold can be forgotten, and it is this one.
+        // Rejecting the finding is always the way out, so a ticket can never be stranded.
+        $this->approvals->assertNothingPending($ticket, $to);
 
         $allowed = self::TRANSITIONS[$from] ?? [];
         if (! in_array($to, $allowed, true)) {

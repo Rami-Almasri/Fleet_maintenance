@@ -36,7 +36,7 @@ class ServiceRecord extends Model
 
     protected $fillable = [
         'vehicle_id', 'maintenance_id', 'maintenance_task_id',
-        'service_type', 'description', 'performed_at', 'odometer',
+        'service_type', 'description', 'specs', 'performed_at', 'odometer',
         'workshop_vendor_id', 'technician_name',
         'labor_cost', 'materials_cost', 'duration_hours',
         'result', 'related_component_id',
@@ -45,6 +45,10 @@ class ServiceRecord extends Model
     ];
 
     protected $casts = [
+        // WHAT went in — the viscosity and the litres on an oil change, the refrigerant on a
+        // regas. The consumable's specs live here because a consumable never becomes a component,
+        // so this record is the only place the fact could be kept. @see \App\Support\PartSpecs
+        'specs'          => 'array',
         'performed_at'   => 'date',
         'odometer'       => 'integer',
         'labor_cost'     => 'decimal:2',

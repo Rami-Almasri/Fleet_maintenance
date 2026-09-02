@@ -114,6 +114,17 @@ Route::middleware('auth:sanctum')->prefix('Vehicle')->controller(VehicleControll
     Route::delete('/{vehicle}', 'destroy')->middleware('permission:vehicles.manage');
 });
 
+// VEHICLE DOCUMENTS — the car's paperwork scan, today the Mulkiya (UAE Vehicle Licence).
+// Reads follow vehicles.view (anyone who can open the car card can see its licence); writes need
+// vehicles.manage. A replacement supersedes the outgoing card rather than overwriting it, so the
+// renewal trail survives — see VehicleDocumentController.
+Route::middleware('auth:sanctum')->prefix('Vehicle')
+    ->controller(\App\Http\Controllers\VehicleDocumentController::class)->group(function () {
+        Route::get('/{vehicle}/documents', 'index')->middleware('permission:vehicles.view');
+        Route::post('/{vehicle}/documents', 'store')->middleware('permission:vehicles.manage');           // add OR change the current card
+        Route::delete('/{vehicle}/documents/{document}', 'destroy')->middleware('permission:vehicles.manage'); // remove a wrong upload
+    });
+
 // SYSTEM CHECK REQUIREMENTS — the obligation layer ([[VehicleCheckRequirement]]).
 // A check is RESOLVED only on the inspection report (Decide step), never here: there is exactly one
 // place a check can be answered, and it is the same transaction that files the report answering it.
@@ -176,11 +187,47 @@ Route::middleware('auth:sanctum')->prefix('parts-catalog')->controller(\App\Http
     Route::delete('/{part}', 'destroy')->middleware('permission:components.manage');       // retires when in use
 });
 
+// Part Specifications — WHAT a part is (12V 60Ah, 5W-30, 225/65R17), as opposed to which part it is.
+//
+// The dictionary is reference data and is open to any signed-in user: every spec input in the app is
+// built from it, and gating it would empty those inputs for the technicians they exist for. A car's
+// fitment sheet — what THIS vehicle takes — is a claim about the vehicle, so it reads at
+// vehicles.view and writes at vehicles.manage.
+//
+// `check` deliberately answers 200 with a conflict list rather than refusing a save. It reports a
+// disagreement; the person holding the part decides. See PartSpecController.
+Route::middleware('auth:sanctum')->controller(\App\Http\Controllers\PartSpecController::class)->group(function () {
+    Route::get('part-specs/dictionary', 'dictionary');
+
+    Route::get('Vehicle/{vehicle}/part-specs', 'forVehicle')->middleware('permission:vehicles.view');
+    Route::post('Vehicle/{vehicle}/part-specs/{part}/check', 'check')->middleware('permission:vehicles.view');
+    Route::post('Vehicle/{vehicle}/part-specs/{part}', 'setForVehicle')->middleware('permission:vehicles.manage');
+    Route::delete('Vehicle/{vehicle}/part-specs/{part}', 'forgetForVehicle')->middleware('permission:vehicles.manage');
+});
+
+// Part Variants — "which battery is actually worth buying?"
+//
+// The payoff for typing a spec in at the counter: every part the fleet ever fitted, bucketed by
+// WHAT IT WAS (12V 60Ah vs 12V 100Ah), and compared on cost per month of service rather than on
+// sticker price. A cheaper part that dies twice as fast is the dearer part, and that is invisible
+// in a purchase ledger sorted by price.
+//
+// Read-only and gated on parts.view — this is a buying question, answered by the people who raise
+// the purchase. See PartVariantPerformanceService for what is measured and what it refuses to say.
+Route::middleware(['auth:sanctum', 'permission:parts.view'])
+    ->controller(\App\Http\Controllers\PartVariantController::class)
+    ->group(function () {
+        Route::get('part-variants', 'index');
+        Route::get('part-variants/{part}', 'show');
+    });
+
 // Warranties — the promises suppliers and garages made us, and every claim made against them.
 //
-// TWO KINDS, ONE TABLE: kind=part is owed by the SUPPLIER (anchored to the purchase or the fitted
+// THREE KINDS, ONE TABLE: kind=part is owed by the SUPPLIER (anchored to the purchase or the fitted
 // component); kind=repair is owed by the GARAGE (anchored to the FAULT, which is what makes a
-// comeback provable). Both carry BOTH expiry legs — months and kilometres, whichever runs out
+// comeback provable); kind=vehicle is owed by the MANUFACTURER or DEALER and is anchored to nothing
+// but the car — the promise it arrived with, and the only kind that exists before anything has gone
+// wrong, which is why it is the one that can stop a purchase. All three carry BOTH expiry legs — months and kilometres, whichever runs out
 // first — and whether one is still live is COMPUTED per read against the car's current odometer,
 // never stored. See the create_warranties_table migration and WarrantyService.
 //
@@ -209,6 +256,46 @@ Route::middleware('auth:sanctum')->prefix('warranties')->controller(\App\Http\Co
 // the claim id is enough to find it and the permission bar is different.
 Route::middleware(['auth:sanctum', 'permission:parts.investigate|maintenance.manage'])
     ->post('warranty-claims/{claim}/resolve', [\App\Http\Controllers\WarrantyController::class, 'resolveClaim']);
+
+// ── Warranty CASES — "could somebody else be paying for this?" ──────────────────────────────────
+//
+// A separate tree from /warranties because these are different things asked by different people. A
+// warranty is a RECORD (what we were promised); a case is WORK (deciding whether the promise applies,
+// then chasing the counterparty until it does or doesn't). They have different lifecycles, different
+// audiences and — importantly — different permission bars.
+//
+// THE PERMISSIONS ARE THE FEATURE'S TEETH, so they are split four ways rather than the usual
+// view/manage pair (@see \App\Support\WarrantyResponsibility):
+//
+//   warranty.view      read the board, the case, the dashboard.
+//   warranty.review    DECIDE coverage. The money decision, and the permission that DEFINES the
+//                      warranty desk for every notification this feature sends.
+//   warranty.claim     open a case and walk it down the provider path.
+//   warranty.close     close it and record what was recovered or avoided — finance holds this.
+//
+// `warranty.override` appears on NO route here on purpose: it is not an endpoint, it is a field on
+// the purchase-request body, checked inside WarrantyProcurementGuard. Buying past a live warranty is
+// something you do to a PURCHASE, not to a case, and giving it its own endpoint would have created a
+// way to pre-authorise an override with no purchase attached to it.
+Route::middleware('auth:sanctum')->prefix('warranty')->controller(\App\Http\Controllers\WarrantyCaseController::class)->group(function () {
+    // Static segments BEFORE /cases/{case} so none of them is swallowed as a model binding.
+    Route::get('/dashboard', 'dashboard')->middleware('permission:warranty.view');
+    // Read-only "would this be covered?" — used by the purchase form to warn BEFORE submit, which is
+    // the difference between a gate people work with and one they resent.
+    Route::get('/coverage/preview', 'preview')->middleware('permission:warranty.view|parts.request');
+
+    Route::get('/cases', 'index')->middleware('permission:warranty.view');
+    Route::post('/cases', 'store')->middleware('permission:warranty.claim');
+    Route::get('/cases/{case}', 'show')->middleware('permission:warranty.view');
+
+    // The decision. Its own bar, above merely working the case: the person raising a purchase must
+    // not be the person who decides the purchase was allowed.
+    Route::post('/cases/{case}/decide', 'decide')->middleware('permission:warranty.review');
+
+    Route::post('/cases/{case}/advance', 'advance')->middleware('permission:warranty.claim');
+    Route::post('/cases/{case}/recovery', 'recovery')->middleware('permission:warranty.close');
+    Route::post('/cases/{case}/close', 'close')->middleware('permission:warranty.close');
+});
 
 // Vehicle Status Dashboard — the team's all-day follow-up board (one derived row per car: status,
 // current owner, last/next action, days-in-status, blocked). Read-only aggregation (insights.view);
@@ -450,12 +537,20 @@ Route::middleware('auth:sanctum')->prefix('logistics')->controller(LogisticsDisp
 // twice (PartInvoiceService refuses it). Reads parts.view; keying paper is a money action → parts.purchase.
 Route::middleware('auth:sanctum')->prefix('part-invoices')->controller(\App\Http\Controllers\PartInvoiceController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:parts.view');
-    // Static path BEFORE /{partInvoice} so "unbilled" is never swallowed as an id.
+    // Static paths BEFORE /{partInvoice} so these are never swallowed as an id.
     Route::get('/unbilled', 'unbilled')->middleware('permission:parts.view|parts.purchase');
+    // The same parts, billed the other way — on a garage's invoice beside the labour. Read-only:
+    // those bills are written on their ticket, and one write path per entity is what keeps a
+    // garage-fitted part from being counted twice.
+    Route::get('/garage-billed', 'garageBilled')->middleware('permission:parts.view');
     Route::get('/{partInvoice}', 'show')->middleware('permission:parts.view');
     Route::post('/', 'store')->middleware('permission:parts.purchase');
     Route::post('/{partInvoice}', 'update')->middleware('permission:parts.purchase');   // POST: multipart photo
     Route::delete('/{partInvoice}', 'destroy')->middleware('permission:parts.purchase');
+    // Checking a bill is deliberately NOT parts.purchase: that is the permission the person who
+    // keyed it already holds, and a check the buyer can perform on their own work is not a check.
+    // parts.investigate is the adjudicating bar — the same one that decides a warranty claim.
+    Route::post('/{partInvoice}/match', 'match')->middleware('permission:parts.investigate|maintenance.manage');
 });
 
 // Part returns — a part sent back is an EVENT beside the purchase, never a deletion. Only the refund step
@@ -475,6 +570,10 @@ Route::middleware('auth:sanctum')->prefix('financial-documents')->controller(\Ap
     Route::middleware('permission:maintenance.manage')->group(function () {
         Route::post('/{type}/{id}/submit', 'submit');
         Route::post('/{type}/{id}/approve', 'approve');
+        // Refusing a submitted bill without destroying it — the answer a reviewer had no way to give
+        // before, when the only alternative to approving was to cancel. PENDING → DRAFT was already
+        // legal in the machine; this is the door onto it.
+        Route::post('/{type}/{id}/return', 'returnForCorrection');
         Route::post('/{type}/{id}/unapprove', 'unapprove');
         Route::post('/{type}/{id}/pay', 'pay');
         Route::post('/{type}/{id}/cancel', 'cancel');
@@ -546,6 +645,38 @@ Route::middleware('auth:sanctum')->prefix('spare-keys')->controller(\App\Http\Co
     Route::post('/{spareKeyRequirement}/cancel', 'cancel')->middleware('permission:parts.request|maintenance.manage');
 });
 
+// THE STOREHOUSE — the fleet's own shelf. Parts can be bought with no car in mind (stock requests),
+// held, and later issued to whichever job needs one. An issue is the ONLY way stock reaches a car and
+// it goes through StoreService, which decrements the shelf and books the resulting purchase in one
+// transaction — so the ledger and the cost chain can never disagree. Permissions ride the parts
+// vocabulary: looking is parts.view, asking is parts.request, moving or pricing a unit is
+// parts.purchase, adjudicating a stock request is parts.investigate.
+Route::middleware('auth:sanctum')->prefix('store')->controller(\App\Http\Controllers\StoreController::class)->group(function () {
+    // Static paths BEFORE /{storeItem} so none of them is swallowed as an id.
+    Route::get('/availability', 'availability')->middleware('permission:parts.view|parts.request|maintenance.view');
+    Route::get('/movements', 'movements')->middleware('permission:parts.view');
+
+    Route::get('/stock-requests', 'stockRequests')->middleware('permission:parts.view');
+    Route::post('/stock-requests', 'storeStockRequest')->middleware('permission:parts.request');
+    Route::post('/stock-requests/{storeStockRequest}/approve', 'approveStockRequest')->middleware('permission:parts.investigate|maintenance.manage');
+    Route::post('/stock-requests/{storeStockRequest}/reject', 'rejectStockRequest')->middleware('permission:parts.investigate|maintenance.manage');
+    Route::post('/stock-requests/{storeStockRequest}/ordered', 'orderStockRequest')->middleware('permission:parts.purchase');
+    // The shelf goes UP here.
+    Route::post('/stock-requests/{storeStockRequest}/receive', 'receiveStockRequest')->middleware('permission:parts.purchase');
+
+    Route::get('/items', 'index')->middleware('permission:parts.view');
+    Route::post('/items/receive', 'receive')->middleware('permission:parts.purchase');
+    Route::get('/items/{storeItem}', 'show')->middleware('permission:parts.view');
+    Route::post('/items/{storeItem}', 'update')->middleware('permission:parts.purchase');
+    Route::post('/items/{storeItem}/adjust', 'adjust')->middleware('permission:parts.purchase');
+    // Correcting a shelf's COST, not its count. Deliberately a higher bar than parts.purchase: the
+    // authority that keyed the wrong price must not also be the one that erases it.
+    Route::post('/items/{storeItem}/correct-price', 'correctPrice')->middleware('permission:parts.investigate|maintenance.manage');
+
+    // The shelf goes DOWN here — a job takes a unit, and the part joins the ordinary install chain.
+    Route::post('/issue/{partRequest}', 'issue')->middleware('permission:parts.purchase|maintenance.logistics');
+    Route::post('/return/{partPurchase}', 'returnToStore')->middleware('permission:parts.purchase');
+});
 
 Route::middleware('auth:sanctum')->prefix('part-purchases')->controller(PartPurchaseController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:parts.view');
@@ -738,8 +869,18 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // Recovery (towing) variant of dispatch — a broken-down car is towed in by a Recovery Truck (winch),
     // not driven by a driver. Same odometer/photo gate; captures the towing unit. Driver or supervisor.
     Route::post('/{ticket}/recovery-dispatch', 'recoveryDispatch')->middleware('permission:maintenance.logistics|maintenance.delegate');
+    // The money side of that same leg. Gated to whoever owns the money (maintenance.manage), NOT to the
+    // logistics permission that dispatches the tow — driving a truck and accepting a bill are different
+    // acts by different people.
+    Route::post('/{ticket}/recovery-cost', 'recoveryCost')->middleware('permission:maintenance.manage');
     Route::post('/{ticket}/under-repair', 'underRepair')->middleware('permission:maintenance.logistics');
     Route::post('/{ticket}/findings', 'addFindings')->middleware('permission:maintenance.logistics'); // garage-identified, during repair
+    // A finding the car's OWN data disagrees with (a routine the car says is not due, or the same fault
+    // raised again inside the window) is held: not promoted to work, and the ticket cannot leave its
+    // stage until this is called. Gated on maintenance.manage — the same authority that adjudicates a
+    // severity review, and deliberately NOT the maintenance.logistics crowd who log the findings, so the
+    // second signature is genuinely a second person. See [[FindingApprovalService]].
+    Route::post('/{ticket}/finding-approvals', 'decideFindingApproval')->middleware('permission:maintenance.manage');
     // Follow-up status is MANAGEMENT authority (Waleed/Abdullah) — they chase the garage, not the driver.
     Route::post('/{ticket}/follow-up', 'followUp')->middleware('permission:maintenance.delegate');    // Supervisor's follow-up log
     Route::post('/{ticket}/ready', 'ready')->middleware('permission:maintenance.logistics');          // garage finished → ready for pickup (or supervisor's video review first)
@@ -901,6 +1042,31 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.delegate'])->prefix('
     Route::post('/{task}/capture/start', 'captureStart');       // opens a friction session
     Route::post('/{task}/capture/abandon', 'captureAbandon');   // closes it unfinished
     Route::post('/{task}/capture', 'captureRepair');
+});
+
+// ── THE PER-FAULT WORK CLOCK ─────────────────────────────────────────────────────────────────────
+// Three tiers of authority over repair time, deliberately separated. Before this, one blunt permission
+// (maintenance.delegate) covered dispatching a car, closing a fault AND booking its hours — so anyone
+// who could move a ticket could also write the number the garage gets judged on.
+//
+//   maintenance.labor.record   — clock work start/pause/resume and enter this attempt's own hours.
+//                                The technician's and supervisor's everyday authority.
+//   maintenance.labor.correct  — change a value someone already recorded. Workshop manager / admin.
+//                                Always audited (old → new + reason); still bound by the work ceiling.
+//   maintenance.labor.override — book hours ABOVE the recorded work time. Admin only, needs a
+//                                substantive reason, flags the row `override` so analytics can drop it.
+//
+// The override is NOT a bypass: it does not disable the check, it records that a human overruled it.
+Route::middleware(['auth:sanctum'])->prefix('maintenance-tasks')->controller(MaintenanceWorkflowController::class)->group(function () {
+    Route::post('/{task}/work/start', 'startFaultWork')->middleware('permission:maintenance.labor.record');
+    Route::post('/{task}/work/pause', 'pauseFaultWork')->middleware('permission:maintenance.labor.record');
+});
+
+// Labor corrections act on the STINT that carries the attempt's entry, not the fault — a fault with two
+// attempts has two independent values and the caller must say which one it is fixing.
+Route::middleware(['auth:sanctum'])->prefix('fault-stints')->controller(MaintenanceWorkflowController::class)->group(function () {
+    Route::post('/{stint}/labor/correct', 'correctFaultLabor')->middleware('permission:maintenance.labor.correct');
+    Route::post('/{stint}/labor/override', 'overrideFaultLabor')->middleware('permission:maintenance.labor.override');
 });
 
 // INDEPENDENT VERIFICATION — the inspector's separate act, deliberately behind a DIFFERENT
@@ -1391,6 +1557,9 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/damage', [DashboardController::class, 'damage']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history', [DashboardController::class, 'maintenanceHistory']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history/{vehicle}/visits', [DashboardController::class, 'maintenanceHistoryVisits']);
+// Point-in-time counterpart: the cars that were at a garage on ONE chosen day, with the date each was
+// promised back and how far past it the day already was.
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-on-day', [DashboardController::class, 'maintenanceInShopOn']);
 
 // Trip Dashboard: aggregated pickup/drop-off trip log (Main Trip Dashboard sheet) for the
 // Delivery Command dashboard + Orders board. Cached read; ?refresh forces a re-read.
@@ -1414,6 +1583,89 @@ Route::middleware('auth:sanctum')->prefix('Registration')->controller(VehicleReg
 Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('odoo-export')->group(function () {
     Route::get('/ticket/{ticket}', [\App\Http\Controllers\OdooExportController::class, 'ticket']);
     Route::get('/contract/{contract}', [\App\Http\Controllers\OdooExportController::class, 'contract']);
+});
+
+// ── ODOO FINANCIAL INTEGRATION (live) ─────────────────────────────────────────────────────────────
+//
+// The LIVE bridge, as distinct from the read-only odoo-export payload above: these routes raise, check
+// and send real financial obligations. Every write is gated on its own permission because the four acts
+// are genuinely different levels of trust — seeing what is owed, accepting it as real, sending it to
+// the accounting system, and deciding what maps to what.
+//
+// Nothing here talks to Odoo inline. A sync is queued (§36) unless ?now=1 is passed, which exists for
+// operators and tests and runs the identical code path.
+Route::middleware(['auth:sanctum'])->prefix('financial-events')->group(function () {
+    Route::middleware('permission:financial.view')->group(function () {
+        Route::get('/', [\App\Http\Controllers\FinancialEventController::class, 'index']);
+        // Before /{event}, or "summary" is read as an id.
+        Route::get('/summary', [\App\Http\Controllers\FinancialEventController::class, 'summary']);
+        Route::get('/{event}', [\App\Http\Controllers\FinancialEventController::class, 'show']);
+        // Re-checking against the current mappings reads only — it is how somebody confirms the mapping
+        // they just made has unblocked this event, so it costs no more than viewing.
+        Route::post('/{event}/validate', [\App\Http\Controllers\FinancialEventController::class, 'validateEvent']);
+    });
+
+    Route::post('/{event}/sync', [\App\Http\Controllers\FinancialEventController::class, 'syncEvent'])
+        ->middleware('permission:financial.sync');
+    Route::post('/{event}/retry', [\App\Http\Controllers\FinancialEventController::class, 'retry'])
+        ->middleware('permission:financial.retry');
+
+    Route::middleware('permission:financial.approve')->group(function () {
+        Route::post('/{event}/approve', [\App\Http\Controllers\FinancialEventController::class, 'approve']);
+        Route::post('/{event}/cancel', [\App\Http\Controllers\FinancialEventController::class, 'cancel']);
+    });
+});
+
+// ── EVERYDAY RUNNING COSTS ────────────────────────────────────────────────────────────────────────
+//
+// Fuel, car wash, registration renewal and the driver's taxi fare — the four costs a car incurs outside
+// the workshop. Each route hangs off the OPERATIONAL record that incurred it (a vehicle, a registration,
+// a movement) rather than off a finance collection, because there is no finance module to visit: every
+// one of these raises an obligation through the same FinancialEvent pipeline as a garage bill.
+//
+// Gated on the permission that already owns each area, NOT on a financial one — the driver who fills
+// the car records the fuel, the cleaner records the wash. Approving and SENDING what those costs become
+// is a separate act behind financial.approve / financial.sync.
+Route::middleware('auth:sanctum')->controller(\App\Http\Controllers\VehicleOperatingCostController::class)->group(function () {
+    Route::middleware('permission:vehicles.view')->group(function () {
+        Route::get('/vehicles/{vehicle}/fuel-fills', 'fuelIndex');
+        Route::get('/vehicles/{vehicle}/wash-jobs', 'washIndex');
+    });
+
+    // Recording a fill or a wash is operational custody of the car, which is what vehicles.manage means.
+    Route::middleware('permission:vehicles.manage')->group(function () {
+        Route::post('/vehicles/{vehicle}/fuel-fills', 'storeFuel');
+        Route::put('/fuel-fills/{fill}', 'updateFuel');
+        Route::post('/vehicles/{vehicle}/wash-jobs', 'storeWash');
+    });
+
+    // A renewal fee belongs to whoever administers registration.
+    Route::post('/vehicle-registrations/{registration}/renewal', 'storeRenewal')
+        ->middleware('permission:registration.manage');
+
+    // A fare belongs to whoever runs the movement it was taken on.
+    Route::post('/logistics-tasks/{task}/taxi-fare', 'storeTaxiFare')
+        ->middleware('permission:logistics.dispatch|maintenance.logistics');
+});
+
+// Mapping administration (§39). Reads are open to anyone who may see financial data — a person fixing a
+// blocked event needs to SEE that the supplier is unmapped. Deciding a mapping is its own permission,
+// because a wrong mapping posts real money to the wrong account.
+Route::middleware(['auth:sanctum'])->prefix('odoo')->group(function () {
+    Route::middleware('permission:financial.view')->group(function () {
+        Route::get('/health', [\App\Http\Controllers\OdooMappingController::class, 'health']);
+        Route::get('/expense-types', [\App\Http\Controllers\OdooMappingController::class, 'expenseTypes']);
+        Route::get('/accounts', [\App\Http\Controllers\OdooMappingController::class, 'accountOptions']);
+        Route::get('/mappings/{kind}', [\App\Http\Controllers\OdooMappingController::class, 'index']);
+        Route::get('/mappings/{kind}/options', [\App\Http\Controllers\OdooMappingController::class, 'options']);
+        Route::get('/mappings/{kind}/{id}/suggestions', [\App\Http\Controllers\OdooMappingController::class, 'suggestions']);
+    });
+
+    Route::middleware('permission:financial.manage_mappings')->group(function () {
+        Route::put('/mappings/{kind}/{id}', [\App\Http\Controllers\OdooMappingController::class, 'store']);
+        Route::delete('/mappings/{kind}/{id}', [\App\Http\Controllers\OdooMappingController::class, 'destroy']);
+        Route::put('/expense-types/{expenseType}', [\App\Http\Controllers\OdooMappingController::class, 'updateExpenseType']);
+    });
 });
 
 // Concept Bridge Review — the human benchmark that decides whether legacy maintenance text may be

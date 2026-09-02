@@ -12,6 +12,7 @@ import { EmptyState, ErrorState, SearchInput } from '../../components/ui/Misc';
 import Segmented from '../../components/ui/Segmented';
 import DateRangePicker from '../../components/ui/DateRangePicker';
 import ComponentRepeatAlert from './ComponentRepeatAlert';
+import { PartSpecDetail, PartSpecLine } from '../parts/PartSpecFields';
 import { aed2, fmtDate, num } from '../../lib/format';
 import { useI18n } from '../../i18n/I18nContext';
 
@@ -228,6 +229,10 @@ export default function VehicleComponentsPanel({ vehicleId }) {
               )}
             </div>
             <div className="truncate text-xs text-slate-400">{r.part_name}</div>
+            {/* WHAT it is — "12V · 60 Ah", "225/65R17". Rendered by the backend through
+                PartSpecs so the wording matches every other surface, and absent entirely on a
+                part nobody specced rather than showing an empty line. */}
+            <PartSpecLine summary={r.spec_summary} className="block truncate" />
           </div>
         ),
       },
@@ -279,7 +284,17 @@ export default function VehicleComponentsPanel({ vehicleId }) {
           header: t('Service life'),
           render: (r) => <LifeBar life={r.service_life} />,
         },
-        { key: 'supplier', header: t('Supplier'), render: (r) => r.supplier?.name || '—' },
+        {
+          key: 'supplier',
+          header: t('Supplier'),
+          // A part taken off the fleet's own shelf has no supplier to name — it was bought into the
+          // storehouse at some earlier date, from whoever sold it then. Saying "Storehouse" is the
+          // honest answer to "where did this come from?"; leaving the cell blank would read as a
+          // missing record, which is the one thing it is not.
+          render: (r) => (r.from_store
+            ? <Badge tone="blue">{t('Storehouse')}</Badge>
+            : r.supplier?.name || '—'),
+        },
         {
           key: 'cost',
           header: t('Cost'),
@@ -612,6 +627,14 @@ function ComponentDossierDrawer({ componentId, onClose }) {
             <Row label={t('Brand / model')} value={[c.brand, c.model].filter(Boolean).join(' ') || '—'} />
             <Row label={t('Part number')} value={c.part_number} mono />
             <Row label={t('Serial number')} value={c.serial_no} mono />
+            {/* The full specification, INCLUDING the fields nobody answered — "Terminal side: not
+                recorded" is the line that gets someone to go and look at the battery, and it is
+                the only reason the gaps are shown rather than hidden. */}
+            {c.spec_detail?.length > 0 && (
+              <div className="col-span-full pt-2">
+                <PartSpecDetail detail={c.spec_detail} emptyLabel={t('Not recorded')} />
+              </div>
+            )}
             <Row label={t('Position')} value={c.position ? (POSITION_LABEL[c.position] ? t(POSITION_LABEL[c.position]) : c.position) : '—'} />
             <Row label={t('Installed')} value={`${fmtDate(c.installed_at)} · ${km(c.installed_odometer)}`} />
             <Row label={t('Age')} value={t('{age} · {distance} driven', { age: humanAge(c.age_days, t), distance: km(c.distance_km) })} />
@@ -632,7 +655,10 @@ function ComponentDossierDrawer({ componentId, onClose }) {
           </DossierSection>
 
           <DossierSection title={t('Commercial')}>
-            <Row label={t('Supplier')} value={c.supplier?.name} />
+            <Row
+              label={t('Supplier')}
+              value={c.from_store ? t('Taken from the storehouse') : c.supplier?.name}
+            />
             <Row label={t('Purchase cost')} value={c.purchase_cost === null ? '—' : aed2(c.purchase_cost)} />
             <Row label={t('Cost per km')} value={c.cost_per_km ? `${aed2(c.cost_per_km)} / km` : '—'} />
             <Row label={t('Warranty')} value={c.warranty?.months ? t('{n} months', { n: c.warranty.months }) : t('None')} />
@@ -662,6 +688,13 @@ function ComponentDossierDrawer({ componentId, onClose }) {
             <LinkRow label={t('Maintenance ticket')} to={links.maintenance_id && `/maintenance-workflow/${links.maintenance_id}`} value={links.maintenance_id && `#${links.maintenance_id}`} />
             <Row label={t('Purchase order')} value={links.purchase_order_no} mono />
             <LinkRow label={t('Part purchase')} to={links.part_purchase_id && `/parts?purchase=${links.part_purchase_id}`} value={links.part_purchase_id && `#${links.part_purchase_id}`} />
+            {/* Where a stock-issued part actually came from: the shelf it left. The purchase above
+                has no supplier and no invoice behind it, and this is what explains why. */}
+            <LinkRow
+              label={t('Storehouse shelf')}
+              to={links.store_item_id && `/parts?tab=store`}
+              value={links.store_item_id && t('Issued from stock')}
+            />
             <LinkRow label={t('Invoice')} to={links.maintenance_invoice_id && `/maintenance-workflow/${links.maintenance_id}?tab=invoices`} value={links.maintenance_invoice_id && `#${links.maintenance_invoice_id}`} />
             <LinkRow label={t('Supplier')} to={links.supplier_vendor_id && `/vendors/${links.supplier_vendor_id}`} value={c.supplier?.name} />
             <LinkRow label={t('Removal ticket')} to={links.removal_maintenance_id && `/maintenance-workflow/${links.removal_maintenance_id}`} value={links.removal_maintenance_id && `#${links.removal_maintenance_id}`} />

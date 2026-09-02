@@ -61,6 +61,7 @@ class MaintenanceVisitJourneyService
                 'vendor',
                 'requester', 'reviewer', 'inspector', 'assignedDriver',
                 'tasks.assignments.vendor',
+                'tasks.workSessions',
                 'tasks.faultCatalog', 'tasks.serviceCatalog', 'tasks.inspectionType', 'tasks.damageCatalog',
                 'tasks.identifiedBy', 'tasks.resolvedBy',
             ])

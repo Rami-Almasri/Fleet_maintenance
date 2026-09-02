@@ -30,6 +30,7 @@ class VehicleStatusController extends Controller
         private OperationsService $ops,
         private VehicleReadinessService $readiness,
         private VehicleLogService $log,
+        private \App\Services\MaintenanceTaskService $tasks,
     ) {
     }
 
@@ -148,8 +149,12 @@ class VehicleStatusController extends Controller
                 // 1) Sign the re-inspection ticket off through the engine (marks it IN + cascades the
                 //    car free), after completing any still-open faults.
                 if ($ticket) {
+                    // Route through the task service, NOT a raw update. A bare status write leaves the
+                    // fault's garage stint open forever (no released_at, no outcome) and leaves its work
+                    // clock running, so the fault would keep accruing time after the car was back in
+                    // service — the timeline equivalent of never clocking out.
                     foreach ($ticket->tasks()->whereNotIn('status', \App\Models\MaintenanceTask::TERMINAL)->get() as $task) {
-                        $task->update(['status' => \App\Models\MaintenanceTask::STATUS_COMPLETED]);
+                        $this->tasks->setStatus($task, \App\Models\MaintenanceTask::STATUS_COMPLETED, $actor);
                     }
                     $this->workflow->close($ticket, [], $actor);
                 }

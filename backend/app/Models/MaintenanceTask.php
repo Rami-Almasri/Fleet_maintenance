@@ -457,6 +457,22 @@ class MaintenanceTask extends Model
         return $this->hasMany(MaintenanceTaskAssignment::class)->whereNull('released_at');
     }
 
+    /**
+     * Every work/blocked interval clocked on this fault, oldest first — the ACTIVE-WORK ledger.
+     * Active labor is the sum of the `work` rows here, never the wall-clock between two stamps;
+     * see MaintenanceTaskWorkSession and FaultWorkSessionService.
+     */
+    public function workSessions(): HasMany
+    {
+        return $this->hasMany(MaintenanceTaskWorkSession::class)->orderBy('started_at')->orderBy('id');
+    }
+
+    /** The interval running right now — work or blocked. At most one (the service holds the lock). */
+    public function openWorkSession(): HasMany
+    {
+        return $this->hasMany(MaintenanceTaskWorkSession::class)->whereNull('ended_at');
+    }
+
     /** The part/labor cost lines attributed to this specific fault. */
     public function lineItems(): HasMany
     {

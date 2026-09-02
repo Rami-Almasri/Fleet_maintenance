@@ -5,6 +5,7 @@ namespace Tests\Crud;
 use App\Models\Maintenance;
 use App\Models\MaintenanceInvoice;
 use App\Models\MaintenanceLineItem;
+use App\Models\MaintenanceRequiredPart;
 use App\Models\MaintenanceTask;
 use App\Services\CostSourceResolver;
 use App\Services\MaintenanceWorkflowService;
@@ -44,10 +45,30 @@ class NoFinancialBypassTest extends CrudTestCase
         ]);
     }
 
-    private function lines(): array
+    /**
+     * A part line and a labour line for this ticket.
+     *
+     * The part is RECORDED on the ticket first (as the inspector's required-part line) and the billed
+     * line points at that record. That is not test scaffolding — it is the rule
+     * MaintenanceInvoiceService::assertPartBillable enforces: a part line must name a part this ticket
+     * actually recorded, so the price on a bill is always the price of something we can trace. Billing
+     * a part that appears from nowhere is exactly the double-charge that guard exists to stop.
+     *
+     * Labour carries no part_source: nothing was supplied, so there is nothing to trace to.
+     */
+    private function lines(Maintenance $ticket): array
     {
+        $required = MaintenanceRequiredPart::create([
+            'maintenance_id' => $ticket->id,
+            'vehicle_id'     => $ticket->vehicle_id,
+            'finding_text'   => 'Brake noise',
+            'part_name'      => 'Brake Pad Set',
+            'quantity'       => 1,
+        ]);
+
         return [
-            ['kind' => 'part',  'description' => 'Brake Pad Set', 'finding_text' => 'Brake noise', 'quantity' => 1, 'unit_price' => 400],
+            ['kind' => 'part',  'description' => 'Brake Pad Set', 'finding_text' => 'Brake noise', 'quantity' => 1, 'unit_price' => 400,
+             'part_source' => MaintenanceLineItem::PART_SOURCE_REQUIRED, 'part_source_id' => $required->id],
             ['kind' => 'labor', 'description' => 'Fit pads',      'finding_text' => 'Brake noise', 'quantity' => 1, 'unit_price' => 150],
         ];
     }
@@ -60,7 +81,7 @@ class NoFinancialBypassTest extends CrudTestCase
         $this->fault($ticket);
 
         $this->putJson("/api/maintenance-tickets/{$ticket->id}/line-items", [
-            'line_items' => $this->lines(),
+            'line_items' => $this->lines($ticket),
         ])->assertSuccessful();
 
         // It used to write bare lines onto the ticket. Now there is a bill behind them.
@@ -80,7 +101,7 @@ class NoFinancialBypassTest extends CrudTestCase
         $this->fault($ticket);
 
         $this->putJson("/api/maintenance-tickets/{$ticket->id}/line-items", [
-            'line_items' => $this->lines(),
+            'line_items' => $this->lines($ticket),
         ])->assertSuccessful();
 
         $audit = app(CostSourceResolver::class)->auditTicket($ticket->fresh());
@@ -95,7 +116,7 @@ class NoFinancialBypassTest extends CrudTestCase
         $ticket = $this->ticket();
         $this->fault($ticket);
 
-        $this->putJson("/api/maintenance-tickets/{$ticket->id}/line-items", ['line_items' => $this->lines()])
+        $this->putJson("/api/maintenance-tickets/{$ticket->id}/line-items", ['line_items' => $this->lines($ticket)])
             ->assertSuccessful();
         $this->putJson("/api/maintenance-tickets/{$ticket->id}/line-items", [
             'line_items' => [['kind' => 'labor', 'description' => 'Fit pads', 'finding_text' => 'Brake noise', 'quantity' => 1, 'unit_price' => 200]],
@@ -119,7 +140,7 @@ class NoFinancialBypassTest extends CrudTestCase
         }
 
         // "Replace the ticket's lines" has no single meaning across two bills — it is refused, not guessed.
-        $this->putJson("/api/maintenance-tickets/{$ticket->id}/line-items", ['line_items' => $this->lines()])
+        $this->putJson("/api/maintenance-tickets/{$ticket->id}/line-items", ['line_items' => $this->lines($ticket)])
             ->assertStatus(422);
 
         $this->assertSame(200.0, round((float) $ticket->fresh()->cost, 2), 'Neither bill was touched.');
@@ -135,7 +156,7 @@ class NoFinancialBypassTest extends CrudTestCase
         $this->postJson("/api/maintenance-tickets/{$ticket->id}/invoices", [
             'is_internal'     => true,
             'task_ids'        => [$task->id],
-            'line_items'      => $this->lines(),
+            'line_items'      => $this->lines($ticket),
             'vat_amount'      => 27.5,
             'discount_amount' => 50,
         ])->assertSuccessful();
@@ -152,7 +173,7 @@ class NoFinancialBypassTest extends CrudTestCase
     {
         $ticket = $this->ticket();
         $this->fault($ticket);
-        $this->putJson("/api/maintenance-tickets/{$ticket->id}/line-items", ['line_items' => $this->lines()])
+        $this->putJson("/api/maintenance-tickets/{$ticket->id}/line-items", ['line_items' => $this->lines($ticket)])
             ->assertSuccessful();
 
         $this->postJson("/api/maintenance-tickets/{$ticket->id}/cost", ['cost' => 9999])
@@ -325,7 +346,7 @@ class NoFinancialBypassTest extends CrudTestCase
         $res = $this->postJson("/api/maintenance-tickets/{$ticket->id}/invoices", [
             'is_internal' => true,
             'task_ids'    => [$task->id],
-            'line_items'  => $this->lines(),
+            'line_items'  => $this->lines($ticket),
         ]);
         $res->assertSuccessful();
 
@@ -352,7 +373,7 @@ class NoFinancialBypassTest extends CrudTestCase
         $this->postJson("/api/maintenance-tickets/{$ticket->id}/invoices", [
             'is_internal' => true,
             'task_ids'    => [$task->id],
-            'line_items'  => $this->lines(),
+            'line_items'  => $this->lines($ticket),
         ])->assertSuccessful();
         $task->forceFill(['status' => MaintenanceTask::STATUS_COMPLETED])->save();
 
@@ -372,7 +393,7 @@ class NoFinancialBypassTest extends CrudTestCase
         $this->postJson("/api/maintenance-tickets/{$ticket->id}/invoices", [
             'is_internal' => true,
             'task_ids'    => [$task->id],
-            'line_items'  => $this->lines(),
+            'line_items'  => $this->lines($ticket),
         ])->assertSuccessful();
         $task->forceFill(['status' => MaintenanceTask::STATUS_COMPLETED])->save();
 
@@ -389,7 +410,7 @@ class NoFinancialBypassTest extends CrudTestCase
         $this->fault($ticket)->forceFill(['status' => MaintenanceTask::STATUS_COMPLETED])->save();
 
         app(MaintenanceWorkflowService::class)->markReady($ticket, [
-            'line_items' => $this->lines(),
+            'line_items' => $this->lines($ticket),
         ], $this->admin);
 
         $this->assertSame(1, MaintenanceInvoice::where('maintenance_id', $ticket->id)->count());

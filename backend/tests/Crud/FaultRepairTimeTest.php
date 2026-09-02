@@ -308,4 +308,246 @@ class FaultRepairTimeTest extends CrudTestCase
         $this->assertCount(2, $time['attempts'][0]['stints']);
         $this->assertSame(4.0, $time['attempts'][0]['labor_hours']);
     }
+
+    // ── THE WORK CLOCK AND THE LABOR CEILING ──────────────────────────────────────────────────────
+
+    /**
+     * THE HEADLINE RULE. A fault whose recorded work window is 3 hours cannot be booked 4 hours of
+     * labor. It is REJECTED — never quietly clamped to 3, because silently rewriting a mechanic's entry
+     * destroys the one signal worth having: that the record and the clock disagree.
+     */
+    public function test_labor_above_the_work_ceiling_is_rejected_and_never_clamped(): void
+    {
+        $ticket = $this->ticketAtGarage();
+        $task   = $this->fault($ticket);
+        $svc    = app(FaultRepairTimeService::class);
+
+        // Work ran 10:00 → 13:00. Exactly three hours on the clock.
+        $this->openStint($task, $this->makeVendor(), Carbon::now()->subHours(4), Carbon::now()->subHours(3));
+        app(MaintenanceTaskService::class)->setStatus($task->refresh(), MaintenanceTask::STATUS_COMPLETED, $this->admin, 'done');
+
+        try {
+            $svc->recordAttemptLabor($task->refresh(), 4.0, $this->admin);
+            $this->fail('4h of labor against a 3h work window must be rejected.');
+        } catch (\App\Exceptions\WorkflowTransitionException $e) {
+            $this->assertStringContainsString('cannot exceed the recorded fault work duration', $e->getMessage());
+            $this->assertStringContainsString('3h 00m', $e->getMessage());
+        }
+
+        // NOTHING was written — not 4, and emphatically not a silently-clamped 3.
+        $this->assertNull($task->refresh()->repair_hours);
+        $this->assertNull($task->assignments()->latest('id')->first()->labor_hours);
+
+        // The honest number for the same window is accepted, and recorded as MEASURED-by-window.
+        $this->assertTrue($svc->recordAttemptLabor($task->refresh(), 3.0, $this->admin));
+        $this->assertSame(3.0, (float) $task->refresh()->repair_hours);
+        $this->assertSame(
+            \App\Models\MaintenanceTaskAssignment::LABOR_LEGACY_WINDOW,
+            $task->assignments()->latest('id')->first()->labor_basis,
+        );
+    }
+
+    /**
+     * THE WAITING-TIME RULE — the reason the session ledger exists.
+     *
+     * The worked example: car in at 10:00, work starts 11:00, blocked on a part 12:00 → 16:00, finished
+     * 17:00. Active work is 2h + 1h = 3h even though the fault sat on the bench for six. The ceiling
+     * must follow the ACTIVE total, so 4h is refused despite a six-hour work window existing.
+     */
+    public function test_waiting_for_parts_is_excluded_from_active_work_and_from_the_ceiling(): void
+    {
+        $ticket   = $this->ticketAtGarage();
+        $task     = $this->fault($ticket);
+        $sessions = app(\App\Services\FaultWorkSessionService::class);
+        $svc      = app(FaultRepairTimeService::class);
+
+        $this->openStint($task, $this->makeVendor(), Carbon::parse('2026-08-20 10:00:00'), null);
+        // The stint helper defaults work_started_at to assigned_at; clear it so the ledger is the only
+        // evidence, which is the state a freshly-clocked repair is actually in.
+        $task->assignments()->latest('id')->first()->forceFill(['work_started_at' => null])->save();
+
+        Carbon::setTestNow('2026-08-20 10:00:00');
+        $sessions->startWork($task->refresh(), $this->admin);
+        Carbon::setTestNow('2026-08-20 12:00:00');
+        $sessions->block($task->refresh(), \App\Models\MaintenanceTaskWorkSession::BLOCK_PARTS, $this->admin);
+        Carbon::setTestNow('2026-08-20 16:00:00');
+        $sessions->startWork($task->refresh(), $this->admin);          // resume
+        Carbon::setTestNow('2026-08-20 17:00:00');
+        app(MaintenanceTaskService::class)->setStatus($task->refresh(), MaintenanceTask::STATUS_COMPLETED, $this->admin, 'part fitted');
+
+        $time = $svc->forTask($task->refresh()->load(['assignments', 'workSessions']));
+
+        $this->assertSame('sessions', $time['basis']);
+        $this->assertSame(3 * 3600, $time['cumulative_active_seconds'], 'active work is 2h + 1h, not the 6h span');
+        $this->assertSame(4 * 3600, $time['cumulative_blocked_seconds']);
+        $this->assertSame(4 * 3600, $time['blocked_by_reason']['parts']);
+        // Custody — the car was in the shop from 10:00. Seven hours, and never the fault's number.
+        $this->assertSame(7 * 3600, $time['cumulative_custody_seconds']);
+
+        // 4h is refused against 3h of ACTIVE work even though 6h of wall clock elapsed.
+        try {
+            $svc->recordAttemptLabor($task->refresh(), 4.0, $this->admin);
+            $this->fail('Labor above the ACTIVE work total must be rejected.');
+        } catch (\App\Exceptions\WorkflowTransitionException $e) {
+            $this->assertStringContainsString('3h 00m', $e->getMessage());
+            $this->assertStringContainsString('waiting', strtolower($e->getMessage()));
+        }
+
+        // 3h and 2.5h are both legitimate: labor may be less than the active window, never more.
+        $this->assertTrue($svc->recordAttemptLabor($task->refresh(), 2.5, $this->admin));
+        $this->assertSame(
+            \App\Models\MaintenanceTaskAssignment::LABOR_MEASURED,
+            $task->assignments()->latest('id')->first()->labor_basis,
+        );
+
+        Carbon::setTestNow();
+    }
+
+    /** A double-tapped "Start work" must not open a second interval and double the fault's labor. */
+    public function test_double_start_does_not_open_a_second_session(): void
+    {
+        $ticket   = $this->ticketAtGarage();
+        $task     = $this->fault($ticket);
+        $sessions = app(\App\Services\FaultWorkSessionService::class);
+
+        $this->openStint($task, $this->makeVendor(), Carbon::now()->subHour());
+
+        $first  = $sessions->startWork($task->refresh(), $this->admin);
+        $second = $sessions->startWork($task->refresh(), $this->admin);
+
+        $this->assertSame($first->id, $second->id);
+        $this->assertSame(1, $task->refresh()->workSessions()->count());
+        // Pausing twice is equally idempotent — no second block interval from a resent request.
+        $sessions->block($task->refresh(), \App\Models\MaintenanceTaskWorkSession::BLOCK_APPROVAL, $this->admin);
+        $sessions->block($task->refresh(), \App\Models\MaintenanceTaskWorkSession::BLOCK_APPROVAL, $this->admin);
+        $this->assertSame(1, $task->refresh()->openWorkSession()->count());
+    }
+
+    /** Releasing the fault closes the running interval, so its seconds stop growing forever. */
+    public function test_release_closes_the_running_session(): void
+    {
+        $ticket   = $this->ticketAtGarage();
+        $task     = $this->fault($ticket);
+        $sessions = app(\App\Services\FaultWorkSessionService::class);
+
+        $this->openStint($task, $this->makeVendor(), Carbon::now()->subHours(2));
+        $sessions->startWork($task->refresh(), $this->admin);
+        $this->assertNotNull($sessions->openSession($task->refresh()));
+
+        app(MaintenanceTaskService::class)->setStatus($task->refresh(), MaintenanceTask::STATUS_COMPLETED, $this->admin, 'fixed');
+
+        $this->assertNull($sessions->openSession($task->refresh()), 'the work clock must stop when the fault is released');
+        $this->assertNotNull($task->refresh()->workSessions()->first()->ended_at);
+    }
+
+    /** A correction is not a way around the ceiling — the same rule applies to the audited path. */
+    public function test_correction_is_still_bound_by_the_ceiling(): void
+    {
+        $ticket = $this->ticketAtGarage();
+        $task   = $this->fault($ticket);
+        $svc    = app(FaultRepairTimeService::class);
+
+        $this->openStint($task, $this->makeVendor(), Carbon::now()->subHours(4), Carbon::now()->subHours(2));
+        app(MaintenanceTaskService::class)->setStatus($task->refresh(), MaintenanceTask::STATUS_COMPLETED, $this->admin, 'done', null, 1.0);
+        $stint = $task->assignments()->latest('id')->first();
+
+        $this->expectException(\App\Exceptions\WorkflowTransitionException::class);
+        $svc->overwriteAttemptLabor($stint, 5.0, 'garage says it took longer', $this->admin);
+    }
+
+    /**
+     * The OVERRIDE exists for the real case (worked four hours, forgot to clock in) but is never
+     * silent: it flags the row, keeps the reason, and writes its own audit event naming the ceiling.
+     */
+    public function test_override_records_the_breach_rather_than_hiding_it(): void
+    {
+        $ticket = $this->ticketAtGarage();
+        $task   = $this->fault($ticket);
+        $svc    = app(FaultRepairTimeService::class);
+
+        $this->openStint($task, $this->makeVendor(), Carbon::now()->subHours(4), Carbon::now()->subHours(2));
+        app(MaintenanceTaskService::class)->setStatus($task->refresh(), MaintenanceTask::STATUS_COMPLETED, $this->admin, 'done', null, 1.0);
+        $stint = $task->assignments()->latest('id')->first();
+
+        $svc->overrideAttemptLabor($stint, 5.0, 'clocked in late — job card from the garage shows 5h', $this->admin);
+
+        $stint->refresh();
+        $this->assertSame(5.0, (float) $stint->labor_hours);
+        $this->assertSame(\App\Models\MaintenanceTaskAssignment::LABOR_OVERRIDE, $stint->labor_basis);
+        $this->assertStringContainsString('job card', $stint->labor_override_reason);
+
+        // The breach is on the vehicle timeline, attributed, with the ceiling it exceeded.
+        $event = \App\Models\VehicleLogEvent::where('maintenance_task_id', $task->id)
+            ->where('event_type', \App\Models\VehicleLogEvent::EVENT_TASK_LABOR_OVERRIDE)->first();
+        $this->assertNotNull($event, 'an override must always leave an audit event');
+        $this->assertSame(5.0, (float) $event->meta['new_hours']);
+        $this->assertNotNull($event->meta['ceiling_hours']);
+
+        // A blank or throwaway reason is refused — the reason IS the control.
+        $this->expectException(\App\Exceptions\WorkflowTransitionException::class);
+        $svc->overrideAttemptLabor($stint, 6.0, 'nope', $this->admin);
+    }
+
+    /**
+     * A fault with NO work timeline at all still accepts labor — refusing would block every legacy and
+     * on-site repair — but the value is stamped `declared` so analytics can tell a trusted claim from a
+     * measured one instead of averaging them together.
+     */
+    public function test_labor_without_a_work_timeline_is_recorded_as_declared(): void
+    {
+        $ticket = $this->ticketAtGarage();
+        $task   = $this->fault($ticket);
+        $svc    = app(FaultRepairTimeService::class);
+
+        // A stint that never received a work signal — the state 26 of 30 live closed stints are in.
+        $this->openStint($task, $this->makeVendor(), Carbon::now()->subHours(6));
+        $task->assignments()->latest('id')->first()->forceFill(['work_started_at' => null])->save();
+        app(MaintenanceTaskService::class)->setStatus($task->refresh(), MaintenanceTask::STATUS_COMPLETED, $this->admin, 'done');
+
+        $this->assertTrue($svc->recordAttemptLabor($task->refresh(), 8.0, $this->admin));
+        $stint = $task->assignments()->latest('id')->first();
+        $this->assertSame(8.0, (float) $stint->labor_hours);
+        $this->assertSame(\App\Models\MaintenanceTaskAssignment::LABOR_DECLARED, $stint->labor_basis);
+
+        // And the read layer refuses to call it a measured fault time.
+        $time = $svc->forTask($task->refresh()->load(['assignments', 'workSessions']));
+        $this->assertNull($time['cumulative_active_seconds']);
+        $this->assertNull($time['cumulative_work_seconds']);
+        $this->assertSame('custody', $time['basis']);
+    }
+
+    /**
+     * Attempt #2's ceiling must be computed from attempt #2's work ONLY. If attempt #1's hours leaked
+     * into the bound, a fault that came back could be booked twice over on the strength of the first
+     * try's clock.
+     */
+    public function test_second_attempt_ceiling_ignores_the_first_attempts_work(): void
+    {
+        $ticket = $this->ticketAtGarage();
+        $task   = $this->fault($ticket);
+        $vendor = $this->makeVendor();
+        $tasks  = app(MaintenanceTaskService::class);
+        $svc    = app(FaultRepairTimeService::class);
+
+        // Attempt #1 — a long 8h window, booked 6h.
+        $this->openStint($task, $vendor, Carbon::now()->subHours(20), Carbon::now()->subHours(20));
+        $tasks->setStatus($task->refresh(), MaintenanceTask::STATUS_COMPLETED, $this->admin, 'first go', null, 6.0);
+        $task->assignments()->latest('id')->first()->forceFill(['released_at' => Carbon::now()->subHours(12)])->save();
+
+        $tasks->failReinspection($task->refresh(), 'came back', $this->admin);
+
+        // Attempt #2 — only a 1h window. The generous first attempt must not licence a big second entry.
+        $this->openStint($task, $vendor, Carbon::now()->subHour(), Carbon::now()->subHour());
+        $tasks->setStatus($task->refresh(), MaintenanceTask::STATUS_COMPLETED, $this->admin, 'second go');
+
+        try {
+            $svc->recordAttemptLabor($task->refresh(), 5.0, $this->admin);
+            $this->fail('attempt #2 must be bounded by its OWN work, not attempt #1\'s');
+        } catch (\App\Exceptions\WorkflowTransitionException $e) {
+            $this->assertStringContainsString('1h 00m', $e->getMessage());
+        }
+
+        // Attempt #1's recorded 6h is untouched by the rejection.
+        $this->assertSame(6.0, (float) $task->refresh()->repair_hours);
+    }
 }

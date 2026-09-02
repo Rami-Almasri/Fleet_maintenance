@@ -10,6 +10,7 @@ import { EmptyState } from '../ui/Misc';
 import { useToast } from '../ui/Toast';
 import { useCountUp } from '../ui/Gauge';
 import FindingsList from './FindingsList';
+import FindingApprovalPanel from './FindingApprovalPanel';
 import TicketParts from './TicketParts';
 import TicketContract from './TicketContract';
 import FaultRecurrence, { hasFaultHistory } from './FaultRecurrence';
@@ -625,6 +626,16 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
             <JourneyTimeline tk={tk} tone={tone} t={t} />
           </div>
         </div>
+
+        {/* THE HOLD — above even the money blockers, because it is the only one that stops the ticket
+            dead rather than stopping it closing. A finding the car's own data disagrees with (an oil
+            change on a car with most of its interval left, the same fault raised twice) is parked here
+            until somebody with the authority approves or refuses it. See [[FindingApprovalService]]. */}
+        <FindingApprovalPanel
+          ticketId={tk.id}
+          pending={tk.pending_finding_approvals || []}
+          onDecided={load}
+        />
 
         {/* Closure blockers — directly under the deck, because a ticket that cannot close is the most
             important thing on this page and it used to be invisible here. Each line names the amount and

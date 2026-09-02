@@ -118,6 +118,10 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_CHECK_INSPECTED      => 'Check performed',
         VehicleLogEvent::EVENT_CHECK_DECIDED        => 'Check decision',
         VehicleLogEvent::EVENT_CHECK_RESOLVED       => 'Check resolved',
+        // Finding approval — read as one story: asked → answered.
+        VehicleLogEvent::EVENT_FINDING_APPROVAL_REQUIRED => 'Finding held for approval',
+        VehicleLogEvent::EVENT_FINDING_APPROVED          => 'Finding approved',
+        VehicleLogEvent::EVENT_FINDING_REJECTED          => 'Finding rejected',
         VehicleLogEvent::EVENT_REVIEW_APPROVED      => 'Inspection review approved',
         VehicleLogEvent::EVENT_REVIEW_REJECTED      => 'Inspection review rejected',
         VehicleLogEvent::EVENT_RECOMMENDATION_APPROVED  => 'Recommendation approved',

@@ -39,7 +39,13 @@ class VehicleService
         // openMaintenanceContract / openMaintenanceTicket answer WHERE a garage visit came from:
         // an OfficeManager contract (show it, with its number) or our own workflow (no OM contract
         // exists — say so, so nobody goes looking for one). Both are hasOne, so still no N+1.
-        ->with(['plateAssignment', 'openContracts.maintenance', 'openMaintenanceTicket'])
+        // `warranties` is eager-loaded, not counted, because the vehicle list's warranty badge is a
+        // COMPUTED state, not a count: whether a promise is still live depends on months OR
+        // kilometres against this car's odometer, and no withCount can answer that. Loading the rows
+        // once for the whole page is what keeps VehicleResource from firing a query per row — the
+        // resource reads the loaded relation and never touches the database.
+        // @see \App\Services\Warranty\WarrantyStatusService::vehicleState()
+        ->with(['plateAssignment', 'openContracts.maintenance', 'openMaintenanceTicket', 'warranties'])
         ->get();
     }
     public function store(array $data)

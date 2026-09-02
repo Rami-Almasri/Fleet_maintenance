@@ -409,6 +409,40 @@ class DashboardController extends Controller
     }
 
     /**
+     * "Which cars were at a garage on THIS DAY" — the point-in-time view on the Maintenance History
+     * page. `?date=YYYY-MM-DD` (default today), `?source=officemanager|system` to keep only visits
+     * one of the two record sources opened.
+     */
+    public function maintenanceInShopOn(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $date = $this->parseDate($request->query('date')) ?? \Carbon\Carbon::today()->toDateString();
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->maintenanceInShopOn($date, $request->query('source')),
+                "Cars in the workshop on that day retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /** One date param (YYYY-MM-DD) normalised, or null when absent/unparseable. */
+    private function parseDate($v): ?string
+    {
+        $v = is_string($v) ? trim($v) : '';
+        if ($v === '') {
+            return null;
+        }
+        try {
+            return \Carbon\Carbon::parse($v)->toDateString();
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    /**
      * Parse an optional explicit `from`/`to` date-range filter (YYYY-MM-DD) from the request.
      * Invalid dates are dropped; if both are present and reversed they're swapped so from <= to.
      * Either bound (or both) present means the caller wants an explicit range over the trailing window.

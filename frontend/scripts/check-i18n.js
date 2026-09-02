@@ -194,7 +194,8 @@ const partsVocab = [
   ['status', objKeys('STATUS_LABEL')],
   ['class', objKeys('CLASS_LABEL')],
   ['dupReason', dupReasonKeys],
-  ['sourceLabel', ['garage', 'supplier']],
+  // Mirrors PartPurchase::PURCHASE_SOURCES — 'store' is a part taken off the fleet's own shelf.
+  ['sourceLabel', ['garage', 'supplier', 'store']],
   ['position', ['front_left', 'front_right', 'rear_left', 'rear_right', 'front', 'rear']],
 ];
 let partsCount = 0;

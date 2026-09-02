@@ -139,8 +139,52 @@ class PartInvoiceService
         DB::transaction(function () use ($invoice, $actor) {
             $this->logToVehicles($invoice, $actor, 'deleted');
             $invoice->purchases()->update(['part_invoice_id' => null]);
+            // Same rule for the shelf lines: the STOCK stays and the movements stay — only the paper
+            // goes. A receipt that loses its invoice becomes an unpapered receipt, which the
+            // storehouse can show and someone can re-key; deleting the movement would delete parts
+            // that are physically on a shelf.
+            \App\Models\StoreMovement::where('part_invoice_id', $invoice->id)->update(['part_invoice_id' => null]);
             $invoice->delete();
         });
+    }
+
+    /**
+     * Refuse to rewrite or remove a bill the business has already accepted.
+     *
+     * The rule itself is not new — {@see \App\Models\Concerns\IsFinancialDocument::isEditable()} has always
+     * said a document stops being editable at approval, and the ledger page has always hidden its Edit and
+     * Delete buttons accordingly. What was missing is that NOTHING enforced it. The endpoints took the
+     * write regardless, so an approved invoice could be re-keyed, or deleted outright, by anyone holding
+     * parts.purchase and a URL — including one with payments allocated against it, which would leave the
+     * money pointing at a document that no longer exists.
+     *
+     * A hidden button is a suggestion. This is the rule.
+     *
+     * Called from the controller rather than from inside update() on purpose: the storehouse re-derives an
+     * invoice's totals through the same service when a stock receipt lands on it, and that is a
+     * recalculation of what the paper already says rather than a person editing an accepted obligation.
+     */
+    public function assertEditable(PartInvoice $invoice, string $action = 'changed'): void
+    {
+        if ($invoice->isEditable()) {
+            return;
+        }
+
+        $status = $invoice->documentStatus();
+
+        // The way out differs by where the document stands, and naming the wrong one is worse than
+        // naming none: an approval can be withdrawn to reopen the paper, but a bill that has been paid
+        // against cannot be — telling someone to unapprove it sends them at a button that is not there.
+        $remedy = \App\Support\FinancialDocumentStatus::canMove($invoice->status, \App\Support\FinancialDocumentStatus::PENDING)
+            ? ' Withdraw the approval first if it was given in error.'
+            : '';
+
+        throw new WorkflowTransitionException(
+            'This invoice is ' . \App\Support\FinancialDocumentStatus::label($status)
+            . ', so it can no longer be ' . $action . '. An accepted bill is corrected with an adjustment, '
+            . 'not by rewriting the paper.' . $remedy,
+            ['status' => $status, 'editable' => false],
+        );
     }
 
     // ── Internals ────────────────────────────────────────────────────────────────────────────────────

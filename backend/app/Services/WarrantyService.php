@@ -39,6 +39,14 @@ use Illuminate\Validation\ValidationException;
 class WarrantyService
 {
     /**
+     * The vehicle timeline. A warranty being recorded, corrected or destroyed is a fact about the
+     * CAR, and it belongs on the car's history next to everything else that changed what we may do
+     * with it — not only in an audit table nobody browses. Best-effort inside VehicleLogService, so
+     * a logging failure can never sink the write it is describing.
+     */
+    public function __construct(private \App\Services\VehicleLogService $log) {}
+
+    /**
      * Record a warranty someone was given.
      *
      * @param  array $data validated payload (see StoreWarrantyRequest)
@@ -57,6 +65,10 @@ class WarrantyService
             $warranty->created_by      = $actor?->id;
             $warranty->created_by_name = $actor?->name;
             $warranty->save();
+
+            $this->audit($warranty, \App\Models\VehicleLogEvent::EVENT_WARRANTY_RECORDED, $actor,
+                "Warranty recorded — {$warranty->subject}"
+                . ($warranty->provider_name ? " ({$warranty->provider_name})" : ''));
 
             return $warranty->fresh();
         });
@@ -80,6 +92,9 @@ class WarrantyService
         $warranty->updated_by_name = $actor?->name;
         $warranty->save();
 
+        $this->audit($warranty, \App\Models\VehicleLogEvent::EVENT_WARRANTY_UPDATED, $actor,
+            "Warranty updated — {$warranty->subject}");
+
         return $warranty->fresh();
     }
 
@@ -101,6 +116,9 @@ class WarrantyService
         $warranty->updated_by      = $actor?->id;
         $warranty->updated_by_name = $actor?->name;
         $warranty->save();
+
+        $this->audit($warranty, \App\Models\VehicleLogEvent::EVENT_WARRANTY_VOIDED, $actor,
+            "Warranty voided — {$warranty->subject}: " . trim($reason));
 
         return $warranty->fresh();
     }
@@ -320,6 +338,15 @@ class WarrantyService
             ]);
         }
 
+        /**
+         * kind=vehicle has NO anchor beyond the car, and that is the whole point of it rather than an
+         * omission. A manufacturer's warranty is a promise about the vehicle itself — it exists
+         * before anything has been bought, fitted or repaired, which is exactly why it is the only
+         * kind that can stop a purchase before it happens. Requiring an anchor here would have made
+         * it impossible to record the promise a car arrives with.
+         *
+         * The vehicle_id check below still applies to it, and is the only rule it needs.
+         */
         if ($kind === Warranty::KIND_REPAIR
             && empty($data['maintenance_task_id'])
             && empty($data['maintenance_id'])) {
@@ -347,6 +374,38 @@ class WarrantyService
             ->first();
     }
 
+    /**
+     * One row on the car's timeline. Best-effort and deliberately silent on failure: recording a
+     * warranty must not fail because the history table did.
+     *
+     * The `meta` payload carries the structured facts (kind, provider, both expiry legs) so the
+     * timeline can render a warranty change without joining back to a row that may since have been
+     * edited — the same discipline every other event on that trail follows.
+     */
+    private function audit(Warranty $warranty, string $event, ?User $actor, string $description): void
+    {
+        if (! $warranty->vehicle) {
+            return;
+        }
+
+        $this->log->recordVehicle($warranty->vehicle, $event, $actor, [
+            'source_tag'  => 'warranty',
+            'description' => $description,
+            'meta'        => [
+                'warranty_id'     => $warranty->id,
+                'kind'            => $warranty->kind,
+                'subject'         => $warranty->subject,
+                'provider_kind'   => $warranty->provider_kind,
+                'provider_name'   => $warranty->provider_name,
+                'reference_no'    => $warranty->reference_no,
+                'starts_on'       => $warranty->starts_on?->toDateString(),
+                'expires_on'      => $warranty->expires_on?->toDateString(),
+                'expires_at_km'   => $warranty->expires_at_km,
+                'status'          => $warranty->status,
+            ],
+        ]);
+    }
+
     private function describeSubject(array $data): string
     {
         if (! empty($data['component_catalog_id'])) {
@@ -356,6 +415,12 @@ class WarrantyService
             }
         }
 
-        return ($data['kind'] ?? null) === Warranty::KIND_REPAIR ? 'Repair' : 'Part';
+        return match ($data['kind'] ?? null) {
+            Warranty::KIND_REPAIR  => 'Repair',
+            // The default sentence for a whole-car promise names the counterparty, because "Vehicle
+            // warranty" on its own tells a reader nothing they did not already know from the car.
+            Warranty::KIND_VEHICLE => trim(($data['provider_name'] ?? '') . ' vehicle warranty') ?: 'Vehicle warranty',
+            default                => 'Part',
+        };
     }
 }

@@ -59,9 +59,9 @@ class FleetUtilizationService
             $winEnd = $today->copy();
         }
         $winStart = $from ? Carbon::parse($from)->startOfDay() : null;   // null = each car's whole life
-        $hi = $this->dayNum($winEnd);
-        $loBase = $winStart ? $this->dayNum($winStart) : null;
-        $todayNum = $this->dayNum($today);
+        $hi = self::dayNum($winEnd);
+        $loBase = $winStart ? self::dayNum($winStart) : null;
+        $todayNum = self::dayNum($today);
 
         // Timestamp horizon for the SECONDS-based duration engine (real elapsed time, not calendar days).
         // "Now" windows (the leaderboard / All-Time default) run to the current instant so an ongoing shop
@@ -97,7 +97,7 @@ class FleetUtilizationService
         foreach ($vehicles as $v) {
             $rate = (float) ($v->day_rent_value ?: 0);
             // Owned-since (purchase) is METADATA only — the dead-capital gap, never the % denominator.
-            $purchaseNum = $v->purchase_date ? $this->dayNum(Carbon::parse($v->purchase_date)) : null;
+            $purchaseNum = $v->purchase_date ? self::dayNum(Carbon::parse($v->purchase_date)) : null;
             $daysOwned   = $purchaseNum !== null ? max(0, $hi - $purchaseNum) : null;
 
             $base = [
@@ -114,7 +114,7 @@ class FleetUtilizationService
             ];
 
             $inServiceDate = $inServiceMap[$v->id] ?? null;
-            $inServiceNum  = $inServiceDate ? $this->dayNum(Carbon::parse($inServiceDate)) : null;
+            $inServiceNum  = $inServiceDate ? self::dayNum(Carbon::parse($inServiceDate)) : null;
 
             // Currently in the shop = an OPEN type-'U' maintenance contract (no in_date) exists right now.
             $currentlyInShop = false;
@@ -164,8 +164,8 @@ class FleetUtilizationService
             $maintIntervals = $maintByVeh[$v->id] ?? [];
             $rentIntervals  = $rentByVeh[$v->id] ?? [];
 
-            $rentedSec = $loTs !== null ? $this->mergeSeconds($rentIntervals, $loTs, $hiTs, $nowTs) : 0;
-            $unionSec  = $loTs !== null ? $this->mergeSeconds(array_merge($rentIntervals, $maintIntervals), $loTs, $hiTs, $nowTs) : 0;
+            $rentedSec = $loTs !== null ? self::mergeSeconds($rentIntervals, $loTs, $hiTs, $nowTs) : 0;
+            $unionSec  = $loTs !== null ? self::mergeSeconds(array_merge($rentIntervals, $maintIntervals), $loTs, $hiTs, $nowTs) : 0;
             $maintSec  = max(0, $unionSec - $rentedSec);   // TRUE off-road shop seconds = maintenance − rental
             $idleSec   = max(0, $serviceSec - $unionSec);
 
@@ -183,7 +183,7 @@ class FleetUtilizationService
                 'service_seconds'          => $serviceSec,
                 'rental_count'             => count($rentByVeh[$v->id] ?? []),
                 // Visits counted only within the in-service window — pre-service NEW-CAR prep excluded.
-                'maintenance_visits'       => $this->countVisits($maintByVeh[$v->id] ?? [], $lo, $hi, $todayNum),
+                'maintenance_visits'       => self::countVisits($maintByVeh[$v->id] ?? [], $lo, $hi, $todayNum),
                 // Onboarding visits (before first rental) — so in-service + onboarding reconciles to
                 // the car profile's lifetime visit total.
                 'onboarding_visits'        => $this->countOnboardingVisits($maintByVeh[$v->id] ?? [], $inServiceNum, $todayNum),
@@ -205,6 +205,109 @@ class FleetUtilizationService
             'window'         => $this->windowMeta($winStart, $winEnd),
             'status_options' => $this->statusOptions(),   // every status + count, for the filter checkboxes
             'statuses'       => array_values($statuses ?? []),
+        ];
+    }
+
+    /**
+     * ONE car's window, measured by exactly the rules report() uses — same interval sources, same
+     * merge, same Rental-is-King subtraction, same in-service anchor, same visit-inclusion test.
+     *
+     * WHY THIS EXISTS: report() loads the whole fleet, which is the right shape for a leaderboard and
+     * the wrong shape for "this car's maintenance just changed, re-read this car". Running the fleet
+     * report on every workflow transition would be a 443-car scan to answer a one-car question. This
+     * is that question, scoped — three small indexed queries — and it reuses the shared helpers rather
+     * than restating the arithmetic, so there is still exactly ONE definition of a workshop visit and
+     * of maintenance time. See [[maintenance-days-single-source]].
+     *
+     * A car that has never been rented has no performance anchor (see the class docblock): it comes
+     * back `pending_service` with null figures rather than a skewed 0%, exactly as report() reports it.
+     *
+     * @return array{vehicle_id:int, pending_service:bool, in_service_date:?string, window_seconds:int,
+     *               maintenance_visits:int, maintenance_seconds:int, rented_seconds:int,
+     *               downtime_pct:?float, currently_in_shop:bool, last_entry_at:?string,
+     *               window:array{from:?string,to:string,lifetime:bool}}
+     */
+    public function vehicleWindow(int $vehicleId, ?string $from = null, ?string $to = null): array
+    {
+        $today  = Carbon::today();
+        $winEnd = $to ? Carbon::parse($to)->startOfDay() : $today->copy();
+        if ($winEnd->gt($today)) {
+            $winEnd = $today->copy();
+        }
+        $winStart = $from ? Carbon::parse($from)->startOfDay() : null;
+
+        $hi       = self::dayNum($winEnd);
+        $loBase   = $winStart ? self::dayNum($winStart) : null;
+        $todayNum = self::dayNum($today);
+
+        // Same horizon rule as report(): a window ending today runs to the current INSTANT, so a car
+        // sitting in the shop right now accrues its real hours instead of stopping at midnight.
+        $nowTs = Carbon::now()->timestamp;
+        $hiTs  = $winEnd->toDateString() === $today->toDateString()
+            ? $nowTs
+            : $winEnd->copy()->endOfDay()->timestamp;
+
+        $ids            = [$vehicleId];
+        $rentIntervals  = $this->rentalIntervals($ids, $winStart, $winEnd)[$vehicleId] ?? [];
+        $maintIntervals = $this->maintenanceIntervals($ids, $winStart, $winEnd)[$vehicleId] ?? [];
+
+        // An OPEN maintenance contract (no in_date) is a car that is in the shop right now, and the
+        // newest such start is when this stay began — the "last garage entry" the alert quotes.
+        $currentlyInShop = false;
+        $lastEntry       = null;
+        foreach ($maintIntervals as [$ms, $me]) {
+            if ($me === null) {
+                $currentlyInShop = true;
+                if ($lastEntry === null || $ms > $lastEntry) {
+                    $lastEntry = $ms;
+                }
+            }
+        }
+        // Not in the shop → the most recent departure inside the window is still the last entry.
+        if ($lastEntry === null) {
+            foreach ($maintIntervals as [$ms, $me]) {
+                if ($lastEntry === null || $ms > $lastEntry) {
+                    $lastEntry = $ms;
+                }
+            }
+        }
+
+        $base = [
+            'vehicle_id'        => $vehicleId,
+            'currently_in_shop' => $currentlyInShop,
+            'last_entry_at'     => $lastEntry,
+            'window'            => $this->windowMeta($winStart, $winEnd),
+        ];
+
+        $inServiceDate = $this->serviceWindow->inServiceDates($ids)[$vehicleId] ?? null;
+        if ($inServiceDate === null) {
+            return $base + [
+                'pending_service'     => true,
+                'in_service_date'     => null,
+                'window_seconds'      => 0,
+                'maintenance_visits'  => 0,
+                'maintenance_seconds' => 0,
+                'rented_seconds'      => 0,
+                'downtime_pct'        => null,
+            ];
+        }
+
+        $lo   = $this->maxNullable($loBase, self::dayNum(Carbon::parse($inServiceDate)));
+        $loTs = $lo !== null ? $lo * 86400 : null;
+
+        $windowSec = $loTs !== null ? max(0, $hiTs - $loTs) : 0;
+        $rentedSec = $loTs !== null ? self::mergeSeconds($rentIntervals, $loTs, $hiTs, $nowTs) : 0;
+        $unionSec  = $loTs !== null ? self::mergeSeconds(array_merge($rentIntervals, $maintIntervals), $loTs, $hiTs, $nowTs) : 0;
+        $maintSec  = max(0, $unionSec - $rentedSec);   // TRUE off-road shop time — Rental is King
+
+        return $base + [
+            'pending_service'     => false,
+            'in_service_date'     => $inServiceDate,
+            'window_seconds'      => $windowSec,
+            'maintenance_visits'  => self::countVisits($maintIntervals, $lo, $hi, $todayNum),
+            'maintenance_seconds' => $maintSec,
+            'rented_seconds'      => $rentedSec,
+            'downtime_pct'        => $windowSec ? round($maintSec / $windowSec * 100, 1) : null,
         ];
     }
 
@@ -358,12 +461,12 @@ class FleetUtilizationService
             $toC = $today->copy();             // can't count the future
         }
 
-        $todayNum = $this->dayNum($today);
-        $loReq    = $this->dayNum($fromC);
-        $hi       = $this->dayNum($toC);
+        $todayNum = self::dayNum($today);
+        $loReq    = self::dayNum($fromC);
+        $hi       = self::dayNum($toC);
 
         // Don't count days before the car was in the fleet as "available".
-        $purchaseNum = $v->purchase_date ? $this->dayNum(Carbon::parse($v->purchase_date)) : null;
+        $purchaseNum = $v->purchase_date ? self::dayNum(Carbon::parse($v->purchase_date)) : null;
         $clipped     = $purchaseNum !== null && $purchaseNum > $loReq;
         $lo          = $clipped ? $purchaseNum : $loReq;
         $total       = max(0, $hi - $lo);
@@ -449,14 +552,14 @@ class FleetUtilizationService
     public function maintenanceVisits(int $vehicleId, ?string $from = null, ?string $to = null): array
     {
         $today    = Carbon::today();
-        $todayNum = $this->dayNum($today);
+        $todayNum = self::dayNum($today);
         $winEnd   = $to ? Carbon::parse($to)->startOfDay() : $today->copy();
         if ($winEnd->gt($today)) {
             $winEnd = $today->copy();
         }
         $winStart = $from ? Carbon::parse($from)->startOfDay() : null;
-        $hi       = $this->dayNum($winEnd);
-        $loBase   = $winStart ? $this->dayNum($winStart) : null;
+        $hi       = self::dayNum($winEnd);
+        $loBase   = $winStart ? self::dayNum($winStart) : null;
 
         // In-service anchor — pre-first-rental (onboarding) visits are excluded, exactly like the
         // maintenance_visits count. A car never rented has no in-service visits.
@@ -464,7 +567,7 @@ class FleetUtilizationService
         if ($inService === null) {
             return ['vehicle_id' => $vehicleId, 'count' => 0, 'items' => []];
         }
-        $lo = $this->maxNullable($loBase, $this->dayNum(Carbon::parse($inService)));
+        $lo = $this->maxNullable($loBase, self::dayNum(Carbon::parse($inService)));
         if ($lo === null) {
             return ['vehicle_id' => $vehicleId, 'count' => 0, 'items' => []];
         }
@@ -479,26 +582,33 @@ class FleetUtilizationService
             ->when($winStart, fn ($q) => $q->where(fn ($w) => $w
                 ->whereNull('in_date')->orWhereDate('in_date', '>=', $winStart->toDateString())))
             ->orderByDesc('out_date')
-            ->get(['contract_no', 'out_date', 'in_date']);
+            ->get(['id', 'contract_no', 'out_date', 'in_date', 'origin', 'source']);
 
-        // Sheet workshop rows for this car — the reason / garage / cost detail the 'U' contract lacks.
+        // Sheet workshop rows for this car — the reason / garage / cost / PROMISED-BACK detail the 'U'
+        // contract lacks. `expected_return_date` is the only ready-by date the fleet records at scale
+        // (the workflow's forward-looking expected_completion_date exists on a handful of tickets), and
+        // it is carried here with `actual_in` beside it so a caller can tell a real promise from one
+        // rewritten on return — see expectedPromise() for why that distinction is not optional.
         $sheet = DB::table('maintenances')
             ->where('vehicle_id', $vehicleId)
             ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
             ->whereNotNull('out_date')
-            ->get(['out_date', 'garage', 'service_main', 'maintenance_type', 'damage_location', 'maintenance_notes', 'cost'])
+            ->get(['out_date', 'garage', 'service_main', 'service_sup', 'maintenance_type', 'damage_location', 'maintenance_notes', 'cost', 'expected_return_date', 'actual_in_date'])
             ->map(fn ($s) => [
-                'num'    => $this->dayNum(Carbon::parse($s->out_date)),
-                'garage' => trim((string) ($s->garage ?? '')) ?: null,
-                'issue'  => trim((string) ($s->service_main ?: $s->maintenance_type ?: $s->damage_location ?: '')) ?: null,
-                'notes'  => trim((string) ($s->maintenance_notes ?? '')) ?: null,
-                'cost'   => $s->cost !== null ? (float) $s->cost : null,
+                'num'       => self::dayNum(Carbon::parse($s->out_date)),
+                'date'      => substr((string) $s->out_date, 0, 10),
+                'garage'    => trim((string) ($s->garage ?? '')) ?: null,
+                'issue'     => self::workLabel($s),
+                'notes'     => trim((string) ($s->maintenance_notes ?? '')) ?: null,
+                'cost'      => $s->cost !== null ? (float) $s->cost : null,
+                'expected'  => $s->expected_return_date ? substr((string) $s->expected_return_date, 0, 10) : null,
+                'actual_in' => $s->actual_in_date ? substr((string) $s->actual_in_date, 0, 10) : null,
             ]);
 
         $items = [];
         foreach ($contracts as $c) {
-            $a = $this->dayNum(Carbon::parse($c->out_date));
-            $b = $c->in_date ? $this->dayNum(Carbon::parse($c->in_date)) : $todayNum;
+            $a = self::dayNum(Carbon::parse($c->out_date));
+            $b = $c->in_date ? self::dayNum(Carbon::parse($c->in_date)) : $todayNum;
             if ($b < $a) {
                 continue;   // malformed (return before out)
             }
@@ -507,30 +617,199 @@ class FleetUtilizationService
                 continue;
             }
 
-            // Nearest sheet row within ±3 days of the OUT date → garage / issue / notes / cost for this trip.
-            $best = null;
-            $bestD = PHP_INT_MAX;
+            /*
+             * WHICH LOG ROWS BELONG TO THIS TRIP. Two tests, and the second one exists because the
+             * first quietly loses long stays: a car that went out on 11 July and has not come back has
+             * every one of its workshop rows dated weeks after the out-date, so a ±3-day bridge reports
+             * a two-month stay with no garage and no work — which is exactly what the page showed.
+             *
+             *   ±3 days of the OUT date — the established bridge, and still the STRONGER claim: these
+             *                             rows describe the trip's opening and win every field.
+             *   inside the stay         — a row dated between the out-date and the return (or today,
+             *                             for a stay still running). The car was demonstrably at a
+             *                             garage on that date, on this trip, because this trip is what
+             *                             it was doing then.
+             *
+             * The row set is then read in TWO orders, because the two questions want opposite ends of
+             * it: where the car is NOW takes the newest entry, while what it was PROMISED takes the
+             * entries nearest the out-date — a ready-by date belongs to the trip's opening, and reading
+             * a later one would report a car that left in July as promised back in 51 days.
+             */
+            $near = [];
             foreach ($sheet as $se) {
                 $d = abs($se['num'] - $a);
-                if ($d <= 3 && $d < $bestD) {
-                    $bestD = $d;
-                    $best = $se;
+                if ($d <= 3 || ($se['num'] >= $a && $se['num'] <= $b)) {
+                    $near[] = $se + ['d' => $d];
                 }
             }
 
+            $newestFirst = $near;
+            usort($newestFirst, fn ($x, $y) => $y['num'] <=> $x['num']);
+            $latest = self::mergeWorkshopRows($newestFirst, ['garage', 'issue', 'notes', 'cost']);
+
+            $nearestFirst = $near;
+            usort($nearestFirst, fn ($x, $y) => $x['d'] <=> $y['d']);
+            $opening = self::mergeWorkshopRows($nearestFirst, ['expected', 'actual_in']);
+
+            $outStr  = substr((string) $c->out_date, 0, 10);
+            $inStr   = $c->in_date ? substr((string) $c->in_date, 0, 10) : null;
+            $promise = self::expectedPromise($outStr, $opening['expected'] ?? null, $opening['actual_in'] ?? null);
+
             $items[] = [
-                'out_date' => substr((string) $c->out_date, 0, 10),
-                'in_date'  => $c->in_date ? substr((string) $c->in_date, 0, 10) : null,
+                // The contract id, so the page can hand this visit to the Workshop Events panel — which
+                // windows the log by date off exactly this contract and already renders the events
+                // properly (stage, severity, the complaint and the fix). One log view, not two.
+                'contract_id' => (int) $c->id,
+                'out_date' => $outStr,
+                'in_date'  => $inStr,
                 'days'     => $c->in_date ? max(0, $b - $a) : null,   // gross trip length; open stay = unknown
-                'garage'   => $best['garage'] ?? null,
-                'issue'    => $best['issue'] ?? null,
-                'notes'    => $best['notes'] ?? null,
-                'cost'     => $best['cost'] ?? null,
+                // WHERE THE CAR IS NOW and what is being done to it — the newest log entry inside the
+                // stay, with the day it was logged, not the opening entry from weeks ago.
+                'garage'   => $latest['garage'] ?? null,
+                'issue'    => $latest['issue'] ?? null,
+                'notes'    => $latest['notes'] ?? null,
+                'cost'     => $latest['cost'] ?? null,
+                'latest_log_on' => $latest['as_of'] ?? null,
                 'returned' => $c->in_date !== null,
+                // WHO RECORDED THIS TRIP — 'officemanager' for a 'U' contract that arrived over the OM
+                // API, 'system' for one opened in FleetView's own maintenance workflow.
+                'recorded_by' => self::visitSource($c->origin ?? null, $c->source ?? null),
+                // The promise and whether it was kept, measured at the trip's own end (or today for an
+                // open stay). Null promise = the sheet never carried a ready-by date for this trip.
+                'expected_on'   => $promise['expected_on'],
+                'expected_days' => $promise['expected_on'] === null
+                    ? null
+                    : max(0, self::dayNum(Carbon::parse($promise['expected_on'])) - $a),
+                'expected_recorded_on_return' => $promise['recorded_on_return'],
+                // Null, not zero, whenever there is nothing to measure against: no promise at all, or a
+                // date written when the car came back (which can only ever report itself as on time).
+                'late_days' => $promise['expected_on'] === null || $promise['recorded_on_return']
+                    ? null
+                    : max(0, ($c->in_date ? $b : $todayNum) - self::dayNum(Carbon::parse($promise['expected_on']))),
             ];
         }
 
         return ['vehicle_id' => $vehicleId, 'count' => count($items), 'items' => $items];
+    }
+
+    /**
+     * WHO OPENED THIS MAINTENANCE VISIT — the one place the two record sources are named, so every
+     * surface that offers an "OfficeManager / this system" filter splits the set the same way.
+     *
+     *   'officemanager' — the type-'U' contract arrived over the OM API (`contracts.origin = 'api'`).
+     *                     Effectively the whole corpus: OM is the sole source for contracts.
+     *   'system'        — the contract was opened by FleetView's own maintenance workflow
+     *                     (`origin = 'web'`, `source = 'workflow'`). A handful of trips today.
+     *
+     * Anything else is reported as 'system' only when it is demonstrably ours; an unrecognised origin
+     * returns 'unknown' rather than being folded into either side, because a filter that quietly
+     * assigns a row it cannot read makes the two counts stop summing to the total.
+     */
+    /**
+     * WHAT IS HAPPENING TO THIS CAR — the workshop-log detail for one stay, read newest first.
+     *
+     * Two things make this harder than picking a row.
+     *
+     * The log holds several rows per stay — one per fault, sometimes the same fault re-typed the next
+     * day — and they are not equally filled in: a row is routinely blank in the garage or
+     * expected-return column with the detail sitting on a sibling. So no single row wins the record;
+     * each row wins the FIELDS it actually fills, and a blank never overwrites a value.
+     *
+     * And the order is NEWEST FIRST, deliberately. A car that went out in July and is still out has
+     * moved between garages since; the July row is where it started, not where it is. Reporting the
+     * opening row as the current garage is how this page came to say a car was at "Al hezam al abyad
+     * for Tires" when the log plainly said it went to Algourab for a deep clean two days ago. The
+     * latest entry is what happened; earlier ones only fill gaps the latest one left.
+     *
+     * `$rows` must already be ordered by the caller, most-preferred first, and bounded to this stay.
+     * The order that is right depends on the field, which is why callers merge twice: WHERE THE CAR IS
+     * reads newest-first, while WHAT IT WAS PROMISED reads from the rows nearest the out-date — the
+     * ready-by date belongs to the trip's opening, and taking a later one would report a car that left
+     * in July as having been promised back in 51 days.
+     *
+     * @param  array<int,array<string,mixed>>  $rows
+     * @param  array<int,string>  $fields
+     * @return array<string,mixed>|null
+     */
+    public static function mergeWorkshopRows(array $rows, array $fields = ['garage', 'issue', 'notes', 'cost', 'expected', 'actual_in']): ?array
+    {
+        if ($rows === []) {
+            return null;
+        }
+
+        $merged = ['as_of' => $rows[0]['date'] ?? null];   // the day the most-preferred entry was logged
+        foreach ($fields as $field) {
+            $merged[$field] = null;
+            foreach ($rows as $r) {
+                if (($r[$field] ?? null) !== null && $r[$field] !== '') {
+                    $merged[$field] = $r[$field];
+                    break;
+                }
+            }
+        }
+
+        return $merged;
+    }
+
+    /**
+     * WHAT WAS DONE, as the sheet wrote it. The log splits one job across `service_main` (the system —
+     * "Interior") and `service_sup` (the job itself — "Deep Cleaning"), and reading only the first
+     * reports the area a car was in the shop for while dropping the thing that was actually done.
+     * Joined with a separator rather than merged into prose: both halves are controlled vocabulary and
+     * neither is a sentence. Falls back to the older type/location columns for rows that predate them.
+     *
+     * @param  object  $s  a maintenances row
+     */
+    public static function workLabel(object $s): ?string
+    {
+        $main = trim((string) ($s->service_main ?? ''));
+        $sup  = trim((string) ($s->service_sup ?? ''));
+
+        if ($main !== '' && $sup !== '' && $main !== $sup) {
+            return "{$main} · {$sup}";
+        }
+
+        return ($main ?: $sup ?: trim((string) ($s->maintenance_type ?? '')) ?: trim((string) ($s->damage_location ?? ''))) ?: null;
+    }
+
+    public static function visitSource(?string $origin, ?string $source): string
+    {
+        if ($source === 'workflow' || $origin === 'web') {
+            return 'system';
+        }
+
+        return $origin === 'api' ? 'officemanager' : 'unknown';
+    }
+
+    /**
+     * THE PROMISED READY-BY DATE, and the one caveat that comes with it.
+     *
+     * `maintenances.expected_return_date` is the only ready-by date the fleet records at scale, and it
+     * is NOT a clean promise: on a trip that has already ended it equals `actual_in_date` in ~89% of
+     * rows — the Controller writes the real return into the expected column when the car comes back.
+     * An "on-time rate" built on it is meaningless, which is why GarageScorecardService and
+     * Knowledge\GaragePerformanceQueryService both refuse to score a garage on it.
+     *
+     * Showing a LATE RETURN as an operational fact is still allowed under that ruling, so this helper
+     * hands back the date together with `recorded_on_return` — true when the expected date and the
+     * logged return are the same day, i.e. the promise cannot be independent evidence of anything. A
+     * consumer must show that flag; it must not average it away.
+     *
+     * A date BEFORE the out-date (29 rows fleet-wide) is a data-entry error, not a same-day promise,
+     * and comes back as no promise at all.
+     *
+     * @return array{expected_on: ?string, recorded_on_return: bool}
+     */
+    public static function expectedPromise(string $outDate, ?string $expected, ?string $actualIn): array
+    {
+        if ($expected === null || $expected < $outDate) {
+            return ['expected_on' => null, 'recorded_on_return' => false];
+        }
+
+        return [
+            'expected_on'        => $expected,
+            'recorded_on_return' => $actualIn !== null && $actualIn === $expected,
+        ];
     }
 
     /**
@@ -635,7 +914,7 @@ class FleetUtilizationService
             $shopIn  = $u
                 ? ($u->in_date ? substr((string) $u->in_date, 0, 10) : null)
                 : ($sheet->actual_in_date ? substr((string) $sheet->actual_in_date, 0, 10) : null);
-            $shopDays = max(1, $this->dayNum($today) - $this->dayNum(Carbon::parse($shopOut)) + 1);
+            $shopDays = max(1, self::dayNum($today) - self::dayNum(Carbon::parse($shopOut)) + 1);
 
             $cars[] = [
                 'vehicle_id'     => $vid,
@@ -718,7 +997,7 @@ class FleetUtilizationService
 
         $start = $rStart->gt($mStart) ? $rStart : $mStart;   // later of the two starts
         $end   = $rEnd->lt($mEnd) ? $rEnd : $mEnd;            // earlier of the two ends
-        $days  = $this->dayNum($end) - $this->dayNum($start);
+        $days  = self::dayNum($end) - self::dayNum($start);
         if ($days <= 0) {
             return null;   // no shared day → no overlap to subtract
         }
@@ -742,7 +1021,7 @@ class FleetUtilizationService
     public function maintenanceOverlaps(int $months = 12): array
     {
         $today    = Carbon::today();
-        $todayNum = $this->dayNum($today);
+        $todayNum = self::dayNum($today);
         $floor    = $today->copy()->subMonthsNoOverflow(max(1, $months))->toDateString();
 
         // 'U' maintenance contracts opened within the window.
@@ -783,7 +1062,7 @@ class FleetUtilizationService
             ->whereDate('out_date', '>=', $sheetFloor)
             ->get(['vehicle_id', 'out_date', 'service_main', 'maintenance_type', 'garage']) as $m) {
             $sheetByVeh[(int) $m->vehicle_id][] = [
-                'a'      => $this->dayNum(Carbon::parse($m->out_date)),
+                'a'      => self::dayNum(Carbon::parse($m->out_date)),
                 'reason' => $m->service_main ?: $m->maintenance_type,
                 'garage' => $m->garage,
             ];
@@ -792,8 +1071,8 @@ class FleetUtilizationService
         $events = [];
         foreach ($us as $u) {
             $vid = (int) $u->vehicle_id;
-            $ua = $this->dayNum(Carbon::parse($u->out_date));
-            $ub = $u->in_date ? $this->dayNum(Carbon::parse($u->in_date)) : $todayNum;
+            $ua = self::dayNum(Carbon::parse($u->out_date));
+            $ub = $u->in_date ? self::dayNum(Carbon::parse($u->in_date)) : $todayNum;
             $rate = $vehicles[$vid] ?? null ? (float) (($vehicles[$vid]->day_rent_value ?? 0) ?: 0) : 0;
 
             // Closest sheet event within ±3 days of the 'U' out date → the reason it went in.
@@ -962,7 +1241,7 @@ class FleetUtilizationService
      *
      * @param  array<int,array{0:string,1:?string}>  $intervals
      */
-    private function mergeSeconds(array $intervals, int $loTs, int $hiTs, int $nowTs): int
+    public static function mergeSeconds(array $intervals, int $loTs, int $hiTs, int $nowTs): int
     {
         if ($hiTs <= $loTs || empty($intervals)) {
             return 0;
@@ -1018,8 +1297,8 @@ class FleetUtilizationService
 
         $segs = [];
         foreach ($intervals as [$s, $e]) {
-            $a = $this->dayNum(Carbon::parse($s));
-            $b = $e !== null ? $this->dayNum(Carbon::parse($e)) : $todayNum;
+            $a = self::dayNum(Carbon::parse($s));
+            $b = $e !== null ? self::dayNum(Carbon::parse($e)) : $todayNum;
             if ($b < $a) {
                 continue;   // malformed (return before out) — skip rather than count negative
             }
@@ -1057,15 +1336,15 @@ class FleetUtilizationService
      *
      * @param  array<int,array{0:string,1:?string}>  $intervals
      */
-    private function countVisits(array $intervals, ?int $lo, int $hi, int $todayNum): int
+    public static function countVisits(array $intervals, ?int $lo, int $hi, int $todayNum): int
     {
         if ($lo === null) {
             return 0;
         }
         $n = 0;
         foreach ($intervals as [$s, $e]) {
-            $a = $this->dayNum(Carbon::parse($s));
-            $b = $e !== null ? $this->dayNum(Carbon::parse($e)) : $todayNum;
+            $a = self::dayNum(Carbon::parse($s));
+            $b = $e !== null ? self::dayNum(Carbon::parse($e)) : $todayNum;
             if ($b < $a) {
                 continue;   // malformed (return before out)
             }
@@ -1096,8 +1375,8 @@ class FleetUtilizationService
     {
         $n = 0;
         foreach ($intervals as [$s, $e]) {
-            $a = $this->dayNum(Carbon::parse($s));
-            $b = $e !== null ? $this->dayNum(Carbon::parse($e)) : $todayNum;
+            $a = self::dayNum(Carbon::parse($s));
+            $b = $e !== null ? self::dayNum(Carbon::parse($e)) : $todayNum;
             if ($b < $a) {
                 continue;
             }
@@ -1110,7 +1389,7 @@ class FleetUtilizationService
     }
 
     /** Whole-day index for a date (UTC-noon safe), so day arithmetic is exact. */
-    private function dayNum(Carbon $d): int
+    public static function dayNum(Carbon $d): int
     {
         return (int) floor($d->copy()->startOfDay()->timestamp / 86400);
     }
