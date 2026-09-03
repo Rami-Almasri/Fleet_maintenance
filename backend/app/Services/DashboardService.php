@@ -2253,6 +2253,161 @@ class DashboardService
     }
 
     /**
+     * One level deeper than faultCars(): the individual RECORDS behind "this car was hit by this fault
+     * N times" — one row per occurrence, each carrying the maintenance CONTRACT it happened under.
+     *
+     * The two sources are the same pair the leaderboard counts, kept distinguishable rather than merged:
+     *   - system → a maintenance_tasks row (a workflow ticket's fault), which opens as a ticket
+     *   - sheet  → a maintenances workshop-log row (classified by reason), which has no ticket page
+     *
+     * CONTRACT resolution is explicit-first and never invents a link: the row's own `contract_id`
+     * (the 1:1 header) or `linked_contract_id` (the type-U contract it was dispatched under) if it has
+     * one, otherwise the type-U contract of THIS vehicle whose out→in window covers the event date.
+     * A record with no covering contract returns contract = null — that is a real state (a workshop
+     * event the sheet never opened a contract for), not an error to paper over.
+     *
+     * @return array{fault:string, vehicle_id:int, total:int, items:array<int,array<string,mixed>>}
+     */
+    public function faultCarRecords(string $fault, int $vehicleId, int $limit = 25): array
+    {
+        $target = null;
+        foreach (array_merge(array_column(self::FAULT_CATEGORIES, 0), ['Other']) as $label) {
+            if (strcasecmp($label, trim($fault)) === 0) {
+                $target = $label;
+                break;
+            }
+        }
+        if ($target === null || $vehicleId <= 0) {
+            return ['fault' => trim($fault), 'vehicle_id' => $vehicleId, 'total' => 0, 'items' => []];
+        }
+
+        return $this->remember("fault_car_records:v1:{$target}:{$vehicleId}:{$limit}", self::CACHE_TTL, function () use ($target, $vehicleId, $limit) {
+            // This car's type-U contracts, for the date-window fallback below.
+            $contracts = Contract::where('contract_type', 'U')
+                ->where('vehicle_id', $vehicleId)
+                ->whereNotNull('out_date')
+                ->orderBy('out_date')
+                ->get(['id', 'contract_no', 'out_date', 'in_date']);
+            $byId = $contracts->keyBy('id');
+
+            // The contract a record belongs to: its own link first, then the covering window.
+            $resolve = function ($explicitId, ?string $date) use ($contracts, $byId) {
+                $c = $explicitId ? $byId->get((int) $explicitId) : null;
+                if (! $c && $date) {
+                    $d = Carbon::parse($date);
+                    $bestOut = null;
+                    foreach ($contracts as $row) {
+                        if ($d->lt(Carbon::parse($row->out_date)->startOfDay())) {
+                            continue;
+                        }
+                        if ($row->in_date && $d->gt(Carbon::parse($row->in_date)->endOfDay())) {
+                            continue;
+                        }
+                        if ($bestOut === null || $row->out_date > $bestOut) {
+                            $bestOut = $row->out_date;
+                            $c = $row;
+                        }
+                    }
+                }
+                if (! $c) {
+                    return null;
+                }
+
+                return [
+                    'id'       => (int) $c->id,
+                    'no'       => $c->contract_no,
+                    'out_date' => $c->out_date ? substr((string) $c->out_date, 0, 10) : null,
+                    'in_date'  => $c->in_date ? substr((string) $c->in_date, 0, 10) : null,
+                    // How we know: the record named the contract, or its date fell inside the window.
+                    'matched'  => $explicitId && $byId->get((int) $explicitId) ? 'linked' : 'by_date',
+                ];
+            };
+
+            $items = [];
+
+            // ── Source A: OUR SYSTEM — one workflow task per fault occurrence ───────────────────────
+            DB::table('maintenance_tasks as t')
+                ->leftJoin('maintenances as m', 'm.id', '=', 't.maintenance_id')
+                ->where('t.vehicle_id', $vehicleId)
+                ->whereNotIn('t.status', MaintenanceTask::NON_REPAIR_TERMINAL)
+                ->whereIn('t.kind', MaintenanceTask::reliabilityKindsForMode())
+                ->whereNotNull('t.symptom')->where('t.symptom', '<>', '')
+                ->select([
+                    't.id', 't.symptom', 't.severity', 't.status', 't.identified_at', 't.created_at',
+                    't.resolved_at', 't.maintenance_id',
+                    'm.garage', 'm.out_date', 'm.contract_id', 'm.linked_contract_id',
+                ])
+                ->orderByDesc(DB::raw('COALESCE(t.identified_at, t.created_at)'))
+                ->limit(500)
+                ->get()
+                ->each(function ($r) use ($target, &$items, $resolve) {
+                    if (self::faultCategory($r->symptom) !== $target) {
+                        return;
+                    }
+                    $at = $r->identified_at ?: ($r->out_date ?: $r->created_at);
+                    $items[] = [
+                        'key'       => 'task:' . $r->id,
+                        'at'        => $at ? substr((string) $at, 0, 10) : null,
+                        'detail'    => trim((string) $r->symptom),
+                        'source'    => 'system',
+                        'severity'  => $r->severity,
+                        'status'    => $r->status,
+                        'garage'    => $r->garage,
+                        'closed_at' => $r->resolved_at ? substr((string) $r->resolved_at, 0, 10) : null,
+                        // The workflow ticket this fault was raised on — the only source with one.
+                        'ticket_id' => $r->maintenance_id ? (int) $r->maintenance_id : null,
+                        'contract'  => $resolve($r->contract_id ?: $r->linked_contract_id, $at ? substr((string) $at, 0, 10) : null),
+                    ];
+                });
+
+            // ── Source B: THE SHEET / manual workshop log — one visit per fault occurrence ──────────
+            DB::table('maintenances as m')
+                ->join('maintenance_reasons as r', 'r.id', '=', 'm.maintenance_reason_id')
+                ->where('m.vehicle_id', $vehicleId)
+                // HISTORICAL, exactly as faultCars() counts it: no deleted_at gate here, because the
+                // parent bar has none either. Filtering only in the drill-down would make it show
+                // fewer records than the count that opened it.
+                ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                ->whereIn('m.maintenance_reason_id', app(\App\Services\EventClassificationService::class)->faultReasonIds())
+                ->select([
+                    'm.id', 'm.out_date', 'm.actual_in_date', 'm.garage', 'm.invoice_no',
+                    'm.contract_id', 'm.linked_contract_id', 'r.reason_en', 'r.level',
+                ])
+                ->orderByDesc('m.out_date')
+                ->limit(500)
+                ->get()
+                ->each(function ($r) use ($target, &$items, $resolve) {
+                    if (self::faultCategory($r->reason_en) !== $target) {
+                        return;
+                    }
+                    $at = $r->out_date ? substr((string) $r->out_date, 0, 10) : null;
+                    $items[] = [
+                        'key'       => 'log:' . $r->id,
+                        'at'        => $at,
+                        'detail'    => trim((string) $r->reason_en),
+                        'source'    => 'sheet',
+                        'severity'  => $r->level,
+                        'status'    => $r->actual_in_date ? 'completed' : 'open',
+                        'garage'    => $r->garage,
+                        'closed_at' => $r->actual_in_date ? substr((string) $r->actual_in_date, 0, 10) : null,
+                        'ticket_id' => null,
+                        'contract'  => $resolve($r->contract_id ?: $r->linked_contract_id, $at),
+                    ];
+                });
+
+            // Newest first — a record with no date sinks to the bottom rather than jumping the queue.
+            usort($items, fn ($a, $b) => [$b['at'] ?? '', $b['key']] <=> [$a['at'] ?? '', $a['key']]);
+
+            return [
+                'fault'      => $target,
+                'vehicle_id' => $vehicleId,
+                'total'      => count($items),
+                'items'      => array_slice($items, 0, $limit),
+            ];
+        });
+    }
+
+    /**
      * The full "Most in Maintenance" list — EVERY in-fleet car that saw the workshop within the window,
      * with how OFTEN (visits) and how LONG (days in shop). BOTH figures come from the ONE canonical
      * source — FleetUtilizationService via canonicalMaintenanceDays() — so every row is byte-identical

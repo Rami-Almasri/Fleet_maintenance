@@ -13,7 +13,6 @@ import BarChart from '../components/ui/BarChart';
 import LineChart from '../components/ui/LineChart';
 import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
-import RecentlyFixedCard from '../components/RecentlyFixedCard';
 import RepeatLeaderboard from '../components/dashboard/RepeatLeaderboard';
 import PipelinePanel from '../components/analytics/PipelinePanel';
 import { aed, fmtDate } from '../lib/format';
@@ -22,6 +21,7 @@ import CheckpointModal from '../components/maintenance/CheckpointModal';
 import { useToast } from '../components/ui/Toast';
 import { SHOW_FINANCIALS } from '../config/features';
 import { useAuth } from '../auth/AuthContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { useI18n } from '../i18n/I18nContext';
 
 // Time-of-day greeting key for the dashboard header ("Good morning, Rami!").
@@ -373,8 +373,22 @@ function ProactiveFlags({ data, loading, onReload }) {
     sourceFilter === 'all' ||
     it.source === sourceFilter ||
     (it.source === 'both' && (sourceFilter === 'contract' || sourceFilter === 'workshop'));
-  const items = allItems.filter(matchesSource);
 
+  // Plate search — find ONE car in a shop full of them. Matched loosely (case- and separator-blind,
+  // so "A 12345", "a-12345" and "12345" all find plate "A-12345") and widened to the model name,
+  // because people type "patrol" as readily as they type the plate.
+  const [plateQuery, setPlateQuery] = useState('');
+  const plateNeedle = plateQuery.trim().toLowerCase().replace(/[\s-]+/g, '');
+  const matchesPlate = (it) => {
+    if (!plateNeedle) return true;
+    const hay = `${it.plate || ''} ${it.car || ''}`.toLowerCase().replace(/[\s-]+/g, '');
+    return hay.includes(plateNeedle);
+  };
+  const items = allItems.filter((it) => matchesSource(it) && matchesPlate(it));
+
+  // Counts stay on the SOURCE pills as the provenance split of the whole shop; the plate box narrows
+  // what is rendered without rewriting those totals (they answer "how big is each record", not
+  // "how many matched my search"). The header count below reflects the search.
   const SOURCE_FILTERS = [
     { key: 'all',      label: t('dash.flags.filterAll'),      count: inShop.count },
     { key: 'contract', label: t('dash.source.contract.label'), count: (src.contract || 0) + (src.both || 0) },
@@ -386,11 +400,38 @@ function ProactiveFlags({ data, loading, onReload }) {
       // Every car in the shop right now rendered as a visual Repair-Progress KPI card (progress bar +
       // figures), not a text row. `cardItems` switches the renderer from the row list to the card grid.
       key: 'maintenance', title: t('dash.flags.inMaintenance'), icon: <Icon.Wrench className="h-4 w-4" />, tone: 'blue',
-      count: inShop.count, viewAll: '/maintenance-workflow',
-      empty: t(sourceFilter === 'all' ? 'dash.flags.emptyAll' : 'dash.flags.emptySource'),
+      // While a plate is being searched the badge counts the MATCHES, not the whole shop — otherwise
+      // a header reading "17" over a single visible card would be lying about what is on screen.
+      count: plateNeedle ? items.length : inShop.count,
+      note: plateNeedle ? t('dash.flags.plateMatches', { n: items.length, total: inShop.count }) : null,
+      viewAll: '/maintenance-workflow',
+      empty: t(plateNeedle ? 'dash.flags.emptyPlate' : sourceFilter === 'all' ? 'dash.flags.emptyAll' : 'dash.flags.emptySource'),
       cardItems: items,
-      // The provenance filter, doubling as the split ("7 from sheet · 10 from system").
+      // The provenance filter, doubling as the split ("7 from sheet · 10 from system"), preceded by
+      // the plate box — the "just show me THIS car" escape hatch from a shop-wide grid.
       filter: (
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <div className="relative">
+            <Icon.Search className="pointer-events-none absolute inset-y-0 start-2 my-auto h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="search"
+              value={plateQuery}
+              onChange={(e) => setPlateQuery(e.target.value)}
+              placeholder={t('dash.flags.platePlaceholder')}
+              aria-label={t('dash.flags.plateAria')}
+              className="focus-ring-self w-40 rounded-full border-0 bg-white py-1 pe-7 ps-7 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200 placeholder:font-normal placeholder:text-slate-400 hover:bg-slate-50 focus:ring-indigo-400"
+            />
+            {plateQuery && (
+              <button
+                type="button"
+                onClick={() => setPlateQuery('')}
+                aria-label={t('dash.flags.plateClear')}
+                className="absolute inset-y-0 end-1.5 my-auto flex h-4 w-4 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <Icon.X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1" role="group" aria-label={t('dash.flags.filterAria')}>
           {SOURCE_FILTERS.map((f) => {
             const on = sourceFilter === f.key;
@@ -411,6 +452,7 @@ function ProactiveFlags({ data, loading, onReload }) {
               </button>
             );
           })}
+        </div>
         </div>
       ),
     },
@@ -857,13 +899,121 @@ function MostFrequentFaults() {
   );
 }
 
+// One car's individual records for ONE fault: the occurrences behind "44 ×". Each row is a dated
+// record — its wording, where it happened and which source holds it — carrying the maintenance
+// CONTRACT it happened under (number, linked to the contract) and, for a system record, the workflow
+// ticket. A record with no covering type-U contract says so rather than showing a blank: that is a
+// real gap in the sheet, not a rendering failure. Reads /Dashboard/fault-car-records (lazy, per car).
+function FaultCarRecords({ detail, car }) {
+  const { t, lang } = useI18n();
+  const { can } = usePermissions();
+  const numLocale = lang === 'ar' ? 'ar-AE-u-nu-latn' : 'en-US';
+  const num = (n) => Number(n || 0).toLocaleString(numLocale);
+
+  if (!detail || detail.loading) {
+    return (
+      <div className="space-y-1 px-3 pb-2.5">
+        {[0, 1].map((i) => <Skeleton key={i} className="h-8 rounded-lg" />)}
+      </div>
+    );
+  }
+  if (detail.error) {
+    return <p className="px-3 pb-2.5 text-[11px] text-rose-600">{t('dash.faultRecords.error')}</p>;
+  }
+  if (!detail.items.length) {
+    return <p className="px-3 pb-2.5 text-[11px] text-slate-400">{t('dash.faultRecords.empty')}</p>;
+  }
+
+  return (
+    <div className="border-t border-slate-100 bg-slate-50/70 px-3 py-2">
+      <p className="mb-1.5 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+        <span>{t('dash.faultRecords.title', { car: car.plate || `#${car.id}` })}</span>
+        {detail.total > detail.items.length && (
+          <span className="font-medium normal-case tracking-normal">
+            {t('dash.faultRecords.showing', { n: num(detail.items.length), total: num(detail.total) })}
+          </span>
+        )}
+      </p>
+      <ol className="space-y-1">
+        {detail.items.map((r) => (
+          <li
+            key={r.key}
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-white px-2.5 py-1.5 ring-1 ring-slate-200/70"
+          >
+            <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-700">
+              {fmtDate(r.at) || t('dash.faultRecords.noDate')}
+            </span>
+            <span className="shrink-0" aria-hidden title={t(r.source === 'sheet' ? 'dash.faults.sheetHint' : 'dash.faults.systemHint')}>
+              {r.source === 'sheet' ? '🗒️' : '⚙️'}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[11px] text-slate-600" title={r.detail}>
+              {r.detail}
+              {r.garage && <span className="text-slate-400"> · {r.garage}</span>}
+            </span>
+
+            {/* The contract this record happened under — the number, and a link to it. */}
+            {r.contract ? (
+              can('contracts.view') ? (
+                <Link
+                  to={`/contracts/${r.contract.id}`}
+                  title={t(r.contract.matched === 'linked' ? 'dash.faultRecords.contractLinked' : 'dash.faultRecords.contractByDate')}
+                  className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 font-mono text-[10px] font-semibold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100"
+                >
+                  {r.contract.no || `#${r.contract.id}`}
+                  {r.contract.matched === 'by_date' && <span className="ms-1 font-sans font-normal opacity-70">≈</span>}
+                </Link>
+              ) : (
+                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] font-semibold text-slate-500">
+                  {r.contract.no || `#${r.contract.id}`}
+                </span>
+              )
+            ) : (
+              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-400" title={t('dash.faultRecords.noContractHint')}>
+                {t('dash.faultRecords.noContract')}
+              </span>
+            )}
+
+            {r.ticket_id && (
+              <Link
+                to={`/maintenance-workflow/${r.ticket_id}`}
+                className="shrink-0 text-[10px] font-semibold text-slate-500 hover:text-indigo-600"
+              >
+                {t('dash.faultRecords.ticket')}
+              </Link>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 // The per-fault drill-down: "which cars fixed this fault the most". Given one fault category, ranks the
 // vehicles that racked it up — medal for the podium, a mini-bar scaled to the top offender, plate/model
-// linking to the profile, and the sheet-vs-system split. Reads /Dashboard/fault-cars?fault=… (lazy).
+// and the sheet-vs-system split. Reads /Dashboard/fault-cars?fault=… (lazy). Clicking a car does NOT
+// jump away any more: it opens that car's records for this fault (with the contract behind each) in
+// place, because "which contract was this car out on?" is the question the count raises. The profile is
+// still one click away on the row's own arrow.
 function FaultCarBreakdown({ detail, fault, sevMeta: m }) {
   const { t, tp, lang } = useI18n();
   const numLocale = lang === 'ar' ? 'ar-AE-u-nu-latn' : 'en-US';
   const num = (n) => Number(n || 0).toLocaleString(numLocale);
+
+  // Which car's records are open, and the fetched records per car (cached for this fault).
+  const [openCar, setOpenCar] = useState(null);
+  const [records, setRecords] = useState({});
+  const toggleCar = (car) => {
+    setOpenCar((cur) => (cur === car.id ? null : car.id));
+    if (records[car.id]) return;
+    setRecords((s) => ({ ...s, [car.id]: { loading: true, items: [], error: false } }));
+    api.get('/Dashboard/fault-car-records', { params: { fault, vehicle_id: car.id, limit: 25 } })
+      .then((res) => {
+        const d = res.data.data || {};
+        setRecords((s) => ({ ...s, [car.id]: { loading: false, items: d.items || [], total: d.total || 0, error: false } }));
+      })
+      .catch(() => setRecords((s) => ({ ...s, [car.id]: { loading: false, items: [], error: true } })));
+  };
+
   if (!detail || detail.loading) {
     return (
       <div className="space-y-1.5 rounded-xl bg-white p-2 ring-1 ring-slate-200/70">
@@ -899,11 +1049,14 @@ function FaultCarBreakdown({ detail, fault, sevMeta: m }) {
           const pct = Math.max(8, Math.round((c.count / topCount) * 100));
           const medal = RANK_MEDAL[i];
           const isLeader = i === 0;
+          const isOpen = openCar === c.id;
           return (
-            <li key={c.id}>
-              <Link
-                to={`/vehicles/${c.id}`}
-                className="group/car flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-indigo-50/50"
+            <li key={c.id} className={isOpen ? 'bg-indigo-50/30' : ''}>
+              <button
+                type="button"
+                onClick={() => toggleCar(c)}
+                aria-expanded={isOpen}
+                className="group/car flex w-full items-center gap-2.5 px-3 py-2 text-start transition-colors hover:bg-indigo-50/50"
               >
                 {/* rank medal / chip */}
                 <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] font-extrabold tabular-nums ${
@@ -945,8 +1098,23 @@ function FaultCarBreakdown({ detail, fault, sevMeta: m }) {
                   </div>
                 </div>
 
-                <Icon.ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover/car:translate-x-0.5 group-hover/car:text-indigo-500" />
-              </Link>
+                <Icon.ChevronDown
+                  className={`h-3.5 w-3.5 shrink-0 transition ${isOpen ? 'rotate-180 text-indigo-500' : 'text-slate-300 group-hover/car:text-indigo-500'}`}
+                />
+              </button>
+
+              {/* The records themselves — dated, sourced, each with its contract. The car's profile
+                  stays reachable from here, so opening the records costs nothing. */}
+              {isOpen && (
+                <>
+                  <FaultCarRecords detail={records[c.id]} car={c} />
+                  <div className="flex justify-end border-t border-slate-100 bg-slate-50/70 px-3 pb-2">
+                    <Link to={`/vehicles/${c.id}`} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">
+                      {t('dash.faultRecords.openCar')} →
+                    </Link>
+                  </div>
+                </>
+              )}
             </li>
           );
         })}
@@ -1268,10 +1436,9 @@ export default function Dashboard() {
             on each card. Same source list as the notification bell; every card opens its ticket. */}
         <ProactiveFlags data={proactive} loading={loading} onReload={reload} />
 
-        {/* Recently Fixed — the cars that came back working: the problem, the fix, the garage and the
-            downtime. The good-news counterpart to the pipeline cards above; the full ledger (with the
-            date filter and the per-fault story) lives on /completed-repairs. */}
-        <RecentlyFixedCard limit={3} />
+        {/* Recently Fixed used to sit here — removed from the Dashboard. The full ledger of cars that
+            came back working (the problem, the fix, the garage and the downtime) still lives on
+            /completed-repairs, which is where that story is read in full. */}
 
         {/* What Keeps Coming Back — the repeat leaderboard: the fault that returned after its repair,
             the part that went on the same car twice, the service that was done again too soon. Sits

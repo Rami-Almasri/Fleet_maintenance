@@ -5925,6 +5925,10 @@ const phrasesAr = {
   '{n} finished': '{n} انتهى عمرها',
   '{n} still running': '{n} ما زالت تعمل',
   'too few to rely on': 'أقل من أن يُعتمد عليها',
+  // Dashboard pipeline — the two things a stage tile can do when it is clicked.
+  'Show the cars in this stage': 'اعرض السيارات في هذه المرحلة',
+  'Take me to this stage': 'انقلني إلى هذه المرحلة',
+  'Back': 'رجوع',
 };
 
 export default phrasesAr;

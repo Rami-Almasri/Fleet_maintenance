@@ -346,6 +346,28 @@ class DashboardController extends Controller
     }
 
     /**
+     * One level below faultCars(): for ONE car and ONE fault category, the individual records behind
+     * its count — each with the date, the wording, the garage, the source, and the maintenance CONTRACT
+     * it happened under (number + id, so the UI can link straight to it).
+     */
+    public function faultCarRecords(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $fault   = trim((string) $request->query('fault', ''));
+            $vehicle = (int) $request->query('vehicle_id', 0);
+            $limit   = min(50, max(1, (int) $request->query('limit', 25)));
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->faultCarRecords($fault, $vehicle, $limit),
+                "Fault records retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * The FULL "Most in Maintenance" list behind the homepage column's "All →" link — every in-fleet car
      * that saw the workshop over a trailing window (?days=N, default 90), with how often (visits) and how
      * long (total days in the shop). Powers the Maintenance History page.

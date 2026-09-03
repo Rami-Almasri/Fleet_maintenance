@@ -1553,6 +1553,8 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 // Maintenance Progress: the workshop monitoring centre (cars in maintenance + checkpoint status + ETA)
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-progress', [DashboardController::class, 'maintenanceProgress']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/fault-cars', [DashboardController::class, 'faultCars']);
+// And one car on that list, opened: the individual fault records + the contract each happened under.
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/fault-car-records', [DashboardController::class, 'faultCarRecords']);
 // Damage dashboard — externally-caused damage, the events deliberately excluded from every fault figure.
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/damage', [DashboardController::class, 'damage']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history', [DashboardController::class, 'maintenanceHistory']);

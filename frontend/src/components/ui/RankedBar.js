@@ -38,6 +38,8 @@ export default function RankedBar({
   diverging = false,
   valueLabel = 'Value',
   tooltip,                    // optional (item) => node, an extra tooltip line
+  onSelect,                   // optional (item) => void — makes the label a button instead of a link
+  selectedKey,                // the item key currently picked, so the row can mark itself open
   showRank = false,
   labelWidth = 132,
   valueWidth = 104,
@@ -102,6 +104,21 @@ export default function RankedBar({
                 <span className="min-w-0 flex-1 truncate">
                   {r.to ? (
                     <Link to={r.to} className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">{r.label}</Link>
+                  ) : onSelect ? (
+                    // No single destination — picking the row asks the caller what to do with it
+                    // (the caller then offers the choices), so it is a button, not a link.
+                    <button
+                      type="button"
+                      onClick={() => onSelect(r)}
+                      aria-expanded={selectedKey != null && selectedKey === r.key}
+                      className={`focus-ring-self max-w-full truncate rounded text-start text-sm font-semibold transition ${
+                        selectedKey != null && selectedKey === r.key
+                          ? 'text-indigo-600'
+                          : 'text-slate-700 hover:text-indigo-600'
+                      }`}
+                    >
+                      {r.label}
+                    </button>
                   ) : (
                     <span className="text-sm font-semibold text-slate-700">{r.label}</span>
                   )}
