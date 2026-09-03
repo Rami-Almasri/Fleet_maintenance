@@ -86,11 +86,11 @@ function FaultCard({ fault, t }) {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-slate-900">{fault.name || fault.symptom || t('journey.fault.unnamed')}</span>
+            <span className="font-semibold text-slate-900">{fault.name || fault.symptom || t('workflow.journey.fault.unnamed')}</span>
             {fault.quantity > 1 && <span className="text-xs text-slate-500">×{fault.quantity}</span>}
-            <Badge tone={STATUS_TONE[fault.status] || 'slate'}>{t(`journey.faultStatus.${fault.status}`)}</Badge>
+            <Badge tone={STATUS_TONE[fault.status] || 'slate'}>{t(`workflow.journey.faultStatus.${fault.status}`)}</Badge>
             {fault.reinspection_failures > 0 && (
-              <Badge tone="red">{t('journey.fault.cameBack', { n: fault.reinspection_failures })}</Badge>
+              <Badge tone="red">{t('workflow.journey.fault.cameBack', { n: fault.reinspection_failures })}</Badge>
             )}
           </div>
           {/* The free-text the reporter typed, kept only when it says something the catalog name doesn't. */}
@@ -99,37 +99,37 @@ function FaultCard({ fault, t }) {
           )}
         </div>
         <Badge tone={SOURCE_TONE[fault.source] || 'slate'}>
-          {t(`journey.source.${fault.source || 'unknown'}`)}
+          {t(`workflow.journey.source.${fault.source || 'unknown'}`)}
         </Badge>
       </div>
 
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
         <div>
-          <dt className="text-xs text-slate-400">{t('journey.fault.foundBy')}</dt>
+          <dt className="text-xs text-slate-400">{t('workflow.journey.fault.foundBy')}</dt>
           <dd className="text-slate-800">{fault.found_by || '—'}</dd>
           {fault.found_at && <dd className="text-[11px] text-slate-400">{stamp(fault.found_at)}</dd>}
         </div>
         <div>
-          <dt className="text-xs text-slate-400">{t('journey.fault.fixedAt')}</dt>
+          <dt className="text-xs text-slate-400">{t('workflow.journey.fault.fixedAt')}</dt>
           <dd className="text-slate-800">{fault.fixed_at_garage || '—'}</dd>
           {fault.resolved_at && <dd className="text-[11px] text-slate-400">{stamp(fault.resolved_at)}</dd>}
         </div>
         <div>
           <dt className="text-xs text-slate-400">
-            {worked ? t('journey.fault.worked') : t('journey.fault.atGarage')}
+            {worked ? t('workflow.journey.fault.worked') : t('workflow.journey.fault.atGarage')}
           </dt>
           <dd className="text-slate-800">{worked || custody || '—'}</dd>
           {/* Say plainly when the number is custody rather than hands-on time, instead of letting the
               bigger figure read as effort. */}
-          {!worked && custody && <dd className="text-[11px] text-slate-400">{t('journey.fault.custodyOnly')}</dd>}
+          {!worked && custody && <dd className="text-[11px] text-slate-400">{t('workflow.journey.fault.custodyOnly')}</dd>}
         </div>
         <div>
-          <dt className="text-xs text-slate-400">{t('journey.fault.attempts')}</dt>
+          <dt className="text-xs text-slate-400">{t('workflow.journey.fault.attempts')}</dt>
           <dd className="text-slate-800">
             {fault.timing.attempts || '—'}
             {fault.timing.labor_hours != null && (
               <span className="ml-1 text-[11px] text-slate-400">
-                {t('journey.fault.laborHours', { n: fault.timing.labor_hours })}
+                {t('workflow.journey.fault.laborHours', { n: fault.timing.labor_hours })}
               </span>
             )}
           </dd>
@@ -140,13 +140,13 @@ function FaultCard({ fault, t }) {
           everything under "fixed at". */}
       {moved && (
         <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2">
-          <div className="text-xs font-medium text-slate-500">{t('journey.fault.travelled')}</div>
+          <div className="text-xs font-medium text-slate-500">{t('workflow.journey.fault.travelled')}</div>
           <ol className="mt-1 flex flex-wrap items-center gap-1 text-sm text-slate-700">
             {fault.garages.map((g, i) => (
               <li key={i} className="flex items-center gap-1">
                 {i > 0 && <span className="text-slate-300">→</span>}
-                <span>{g.garage || t('journey.fault.unknownGarage')}</span>
-                {g.outcome && <span className="text-[11px] text-slate-400">({t(`journey.outcome.${g.outcome}`)})</span>}
+                <span>{g.garage || t('workflow.journey.fault.unknownGarage')}</span>
+                {g.outcome && <span className="text-[11px] text-slate-400">({t(`workflow.journey.outcome.${g.outcome}`)})</span>}
               </li>
             ))}
           </ol>
@@ -155,7 +155,7 @@ function FaultCard({ fault, t }) {
 
       {fault.resolution_note && (
         <p className="mt-2 text-sm text-slate-600">
-          <span className="text-xs text-slate-400">{t('journey.fault.note')}: </span>
+          <span className="text-xs text-slate-400">{t('workflow.journey.fault.note')}: </span>
           {fault.resolution_note}
         </p>
       )}
@@ -170,12 +170,12 @@ function Stages({ stages, t }) {
     <ol className="space-y-1">
       {stages.map((s) => (
         <li key={s.key} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-l-2 border-slate-200 py-1 pl-3">
-          <span className="min-w-[10rem] font-medium text-slate-800">{t(`journey.stage.${s.key}`)}</span>
+          <span className="min-w-[10rem] font-medium text-slate-800">{t(`workflow.journey.stage.${s.key}`)}</span>
           <span className="text-sm text-slate-500">{stamp(s.at)}</span>
           {s.by && <span className="text-sm text-slate-600">· {s.by}</span>}
           {s.odometer != null && <span className="text-sm tabular-nums text-slate-500">· {num(s.odometer)} km</span>}
           {s.since_previous_seconds != null && (
-            <span className="text-[11px] text-slate-400">({t('journey.stage.after', { d: dur(s.since_previous_seconds) })})</span>
+            <span className="text-[11px] text-slate-400">({t('workflow.journey.stage.after', { d: dur(s.since_previous_seconds) })})</span>
           )}
         </li>
       ))}
@@ -206,31 +206,31 @@ export default function VisitJourneyPanel({ contractId }) {
   return (
     <Card className="p-6">
       <div className="mb-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('journey.title')}</h3>
-        <p className="mt-0.5 text-sm text-slate-500">{t('journey.subtitle')}</p>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('workflow.journey.title')}</h3>
+        <p className="mt-0.5 text-sm text-slate-500">{t('workflow.journey.subtitle')}</p>
       </div>
 
       {totals && (
         <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Stat label={t('journey.totals.faults')} value={totals.faults} />
+          <Stat label={t('workflow.journey.totals.faults')} value={totals.faults} />
           <Stat
-            label={t('journey.totals.foundByInspector')}
+            label={t('workflow.journey.totals.foundByInspector')}
             value={totals.found_by_inspector}
-            sub={t('journey.totals.beforeItLeft')}
-            tone="purple"
+            sub={t('workflow.journey.totals.beforeItLeft')}
+            tone="violet"
           />
           <Stat
-            label={t('journey.totals.foundByGarage')}
+            label={t('workflow.journey.totals.foundByGarage')}
             value={totals.found_by_garage}
-            sub={t('journey.totals.onTheLift')}
+            sub={t('workflow.journey.totals.onTheLift')}
             tone="orange"
           />
           <Stat
-            label={t('journey.totals.repaired')}
+            label={t('workflow.journey.totals.repaired')}
             value={totals.repaired}
             // Closed-without-a-repair is called out rather than folded into the gap, so "6 faults,
             // 4 repaired" doesn't read as two failures when two were simply ruled non-issues.
-            sub={totals.closed_unrepaired > 0 ? t('journey.totals.closedUnrepaired', { n: totals.closed_unrepaired }) : null}
+            sub={totals.closed_unrepaired > 0 ? t('workflow.journey.totals.closedUnrepaired', { n: totals.closed_unrepaired }) : null}
             tone="green"
           />
         </div>
@@ -240,34 +240,34 @@ export default function VisitJourneyPanel({ contractId }) {
         <div key={v.ticket.id} className="mb-6 last:mb-0">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <Link to={`/maintenance-workflow?ticket=${v.ticket.id}`} className="text-sm font-semibold text-indigo-600 hover:underline">
-              {t('journey.ticket', { id: v.ticket.id })}
+              {t('workflow.journey.ticket', { id: v.ticket.id })}
             </Link>
             {v.ticket.garage && <span className="text-sm text-slate-600">· {v.ticket.garage}</span>}
-            {v.ticket.is_open && <Badge tone="amber">{t('journey.stillOpen')}</Badge>}
+            {v.ticket.is_open && <Badge tone="amber">{t('workflow.journey.stillOpen')}</Badge>}
             {v.ticket.ticket_seconds != null && (
-              <span className="text-sm text-slate-500">· {t('journey.tookTotal', { d: dur(v.ticket.ticket_seconds) })}</span>
+              <span className="text-sm text-slate-500">· {t('workflow.journey.tookTotal', { d: dur(v.ticket.ticket_seconds) })}</span>
             )}
           </div>
 
           <div className="space-y-3">
             {v.faults.map((f) => <FaultCard key={f.id} fault={f} t={t} />)}
-            {!v.faults.length && <p className="text-sm text-slate-400">{t('journey.noFaults')}</p>}
+            {!v.faults.length && <p className="text-sm text-slate-400">{t('workflow.journey.noFaults')}</p>}
           </div>
 
           {v.stages.length > 0 && (
             <div className="mt-5">
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('journey.stagesTitle')}</h4>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('workflow.journey.stagesTitle')}</h4>
               <Stages stages={v.stages} t={t} />
             </div>
           )}
 
           {v.odometer.length > 0 && (
             <div className="mt-5">
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('journey.odometerTitle')}</h4>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('workflow.journey.odometerTitle')}</h4>
               <div className="flex flex-wrap gap-2">
                 {v.odometer.map((o) => (
                   <div key={o.key} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm">
-                    <span className="text-xs text-slate-400">{t(`journey.odo.${o.key}`)} </span>
+                    <span className="text-xs text-slate-400">{t(`workflow.journey.odo.${o.key}`)} </span>
                     <span className="font-mono font-medium text-slate-800">{num(o.reading)}</span>
                     {o.delta != null && o.delta !== 0 && (
                       <span className="ml-1 text-[11px] text-slate-400">({o.delta > 0 ? '+' : ''}{num(o.delta)})</span>
@@ -285,7 +285,7 @@ export default function VisitJourneyPanel({ contractId }) {
                 onClick={() => setShowEvents((s) => !s)}
                 className="text-xs font-semibold uppercase tracking-wide text-indigo-600 hover:underline"
               >
-                {showEvents ? t('journey.hideEvents') : t('journey.showEvents', { n: v.events.total })}
+                {showEvents ? t('workflow.journey.hideEvents') : t('workflow.journey.showEvents', { n: v.events.total })}
               </button>
               {showEvents && (
                 <ol className="mt-2 space-y-1">
@@ -298,7 +298,7 @@ export default function VisitJourneyPanel({ contractId }) {
                   ))}
                   {/* Never let a cap masquerade as the whole trail. */}
                   {v.events.truncated && (
-                    <li className="text-xs text-slate-400">{t('journey.eventsTruncated', { n: v.events.items.length, total: v.events.total })}</li>
+                    <li className="text-xs text-slate-400">{t('workflow.journey.eventsTruncated', { n: v.events.items.length, total: v.events.total })}</li>
                   )}
                 </ol>
               )}
