@@ -930,12 +930,28 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // to the pickup, ready to the garage intake; the test-drive steps compare to the car's live odometer.
   const [odoConfirmed, setOdoConfirmed] = useState(false);
   const [odoNote, setOdoNote] = useState(''); // mandatory explanation when the reading is >10 km off the previous
+  // The car's live authoritative odometer — the anchor of last resort for a ticket that carries no
+  // reading of its own. A ticket born on the "straight to the garage" door skips the test drive
+  // entirely, so it has neither a start-of-drive nor an end-of-drive reading: without this fallback the
+  // pickup screen showed NO "Previous Odometer" at all, while the server still measured the driver's
+  // entry against the vehicle's live reading and could hard-block a pickup the screen called fine.
+  // `vehicle_odometer` (on the ticket resource) first, since the drivers' queue doesn't pass `vehicles`.
+  const liveOdometer = useMemo(() => {
+    if (ticket?.vehicle_odometer != null) return Number(ticket.vehicle_odometer);
+    const v = vehicles.find((x) => String(x.id) === String(ticket?.vehicle_id));
+    return v?.odometer ?? null;
+  }, [ticket, vehicles]);
+
   const prevOdometer = useMemo(() => {
     // Dispatch (pickup FROM our park): compare against the end-of-test-drive reading when the inspector
     // logged one — using the pre-drive anchor here would wrongly hard-block every pickup after a real
-    // test drive moved the car more than the ±5 km buffer.
-    if (action === 'dispatch') return ticket?.report_odometer ?? ticket?.test_odometer ?? null;
-    if (action === 'recovery') return ticket?.test_odometer ?? null;
+    // test drive moved the car more than the ±5 km buffer. No test drive happened at all on a
+    // direct-dispatch ticket, so we fall through to the car's live reading — same chain the backend's
+    // dispatch() strict-match gate walks; keep the two in step.
+    if (action === 'dispatch') return ticket?.report_odometer ?? ticket?.test_odometer ?? liveOdometer;
+    // A tow can't change the mileage, so the field is LOCKED to this value — which means an absent
+    // anchor didn't just hide the hint, it unlocked the field. Mirrors dispatchRecovery()'s chain.
+    if (action === 'recovery') return ticket?.test_odometer ?? liveOdometer;
     // Decide (end-of-test-drive reading) — compared to the inspector's start-of-drive anchor, so a normal
     // short test reads as clean forward travel; a big loop trips the >10 km note.
     if (action === 'decide') return ticket?.test_odometer ?? null;
@@ -949,10 +965,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // Re-inspection sign-off — the QC reading is compared to the last one on the chain (the garage-out
     // return reading, else the earlier captures), so it reads as clean forward continuity by default.
     if (action === 'reinspect') return ticket?.park_odometer ?? ticket?.return_odometer ?? ticket?.receive_odometer ?? ticket?.dispatch_odometer ?? ticket?.test_odometer ?? null;
-    if (action === 'start') return vehicles.find((v) => String(v.id) === String(ticket?.vehicle_id))?.odometer ?? null;
+    if (action === 'start') return liveOdometer;
+    // 'open' anchors on the car being PICKED in this form, not the ticket's — so it reads the dropdown.
     if (action === 'open') return vehicles.find((v) => String(v.id) === String(vehicleId))?.odometer ?? null;
     return null;
-  }, [action, ticket, vehicles, vehicleId]);
+  }, [action, ticket, vehicles, vehicleId, liveOdometer]);
 
   const contStage = useMemo(() => {
     switch (action) {
