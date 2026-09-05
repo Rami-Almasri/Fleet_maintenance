@@ -30,7 +30,11 @@ import { useI18n } from '../../i18n/I18nContext';
 // Reason CODE → the sentence, composed here from the engine's measured params so it reads natively in
 // either language. The engine emits `not_needed` + {summary} and never an English clause
 // ([[reason-code-contract]]).
-function reasonText(t, reason, params = {}) {
+//
+// Exported because the hold has to be readable from the screens that RUN INTO it, not just the panel
+// that resolves it: TicketActionModal says "this ticket is held, and here is why" in the same words,
+// rather than leaving the reason to be discovered by closing the modal and scrolling the drawer.
+export function reasonText(t, reason, params = {}) {
   if (reason === 'not_needed') {
     return params.summary
       ? t('findingApproval.reason.notNeededWith', { summary: params.summary })
