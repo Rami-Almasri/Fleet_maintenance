@@ -5464,6 +5464,8 @@ const phrasesAr = {
   'Maximum days between the two': 'أقصى عدد أيام بين المرّتين',
   '{n} cars': '{n} سيارة',
   'fastest {n}d': 'أسرع عودة {n} يوم',
+  'Already in the workshop': 'في الورشة بالفعل',
+  'This car already has an open ticket — it’s being handled, so it can’t be sent in again.': 'هذه السيارة لديها تذكرة مفتوحة بالفعل — يجري التعامل معها، لذا لا يمكن إرسالها مرة أخرى.',
   'A car back for the same fault in a separate workshop visit, counted across the workshop log and this system': 'سيارة عادت بالعطل نفسه في زيارة ورشة منفصلة، محسوبة من سجل الورشة ومن هذا النظام معًا',
   // Which ledger proved a repeat fault: the imported workshop log, this system's own records, or both.
   Sheet: 'السجل',

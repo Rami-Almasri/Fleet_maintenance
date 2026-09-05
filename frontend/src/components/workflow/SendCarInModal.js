@@ -297,6 +297,10 @@ function WorkPicker({ groups, isPicked, onToggle, t, tp, lang }) {
 }
 
 
+// "This car is already in the shop" — the one test, so the pickable list and the greyed-out list can
+// never disagree about which side a car falls on.
+const inShop = (v) => !!(v.under_maintenance || v.operational_status === 'maintenance');
+
 export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   const { t, tf, tp, lang } = useI18n();
   const { user } = useAuth();
@@ -334,6 +338,12 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   // client's own permission cache so the form is never briefly blank.
   const canDispatch = options ? !!options.can_dispatch : (canInitiate || canManage);
   const canRequest  = options ? !!options.can_request  : (can('maintenance.logistics') || canManage);
+
+  // The fleet, split once at the door: cars that can be sent in, and cars that are already in the shop.
+  // The second half is not thrown away — the picker lists it greyed out so a plate search gets an
+  // answer ("it's already in") instead of silence ("No matches").
+  const pickableVehicles = useMemo(() => vehicles.filter((v) => !inShop(v)), [vehicles]);
+  const inShopVehicles   = useMemo(() => vehicles.filter(inShop), [vehicles]);
 
   // ── loads ──────────────────────────────────────────────────────────────────────────────────────
   // The vocabulary, the reason lists and the filer's name: one call, once, car-independent.
@@ -675,14 +685,16 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
             )}
           </div>
 
-          {/* A car already in maintenance is being handled — hide it so nobody opens a duplicate for it.
-              Rented cars stay selectable. An observation opens nothing, so every car stays notable. */}
+          {/* A car already in maintenance is being handled — it can't be picked, so nobody opens a
+              duplicate for it. It is NOT dropped from the list, though: searching its plate used to
+              answer "No matches", which reads as "this car isn't in the fleet" rather than "it's
+              already in the shop". It is listed greyed out, saying so. Rented cars stay selectable.
+              An observation opens nothing, so for that path every car stays pickable. */}
           <VehicleStatusSelect
             value={vehicleId}
             onChange={setVehicleId}
-            vehicles={isObservation
-              ? vehicles
-              : vehicles.filter((v) => !(v.under_maintenance || v.operational_status === 'maintenance'))}
+            vehicles={isObservation ? vehicles : pickableVehicles}
+            blocked={isObservation ? [] : inShopVehicles}
             placeholder={t('workflow.ph.searchVehicle')}
           />
           {!isObservation && <p className="mt-1 text-xs text-slate-400">{t('workflow.hint.requestHideMaintenance')}</p>}

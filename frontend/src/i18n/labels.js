@@ -2731,7 +2731,7 @@ const en = {
       inFlightObservationRaise: 'A request is already open for this car, so this note can’t raise a new one.',
       inFlightLink: 'Open the request',
       requestBanner: 'Flag a car you think needs a look — the inspector is notified to test-drive it and decide.',
-      requestHideMaintenance: 'Cars already in maintenance are hidden — they’re being handled, so you can’t flag them again here.',
+      requestHideMaintenance: 'A car that’s already in the workshop can’t be sent in again — search its plate and the list will tell you it’s already there.',
       // Advisory eligibility line (not a hard block — the Controller still reviews every request).
       requestEligibility: 'Only log a car you’ve actually been in — you drove it, tried it, or rode in it. If you only saw it from the outside, please don’t submit here.',
       // Shown in place of the eligibility line when the office choice is picked: it says what changes,
@@ -8588,7 +8588,7 @@ const ar = {
       inFlightObservationRaise: 'يوجد طلب مفتوح لهذه السيارة، لذا لا يمكن لهذه الملاحظة أن ترفع طلبًا جديدًا.',
       inFlightLink: 'افتح الطلب',
       requestBanner: 'أبلغ عن سيارة تظن أنها تحتاج فحصًا — يُشعَر المفتش ليجرّبها ويقرّر.',
-      requestHideMaintenance: 'السيارات التي في الصيانة أصلًا مخفيّة — يجري التعامل معها، فلا يمكنك الإبلاغ عنها مرة أخرى من هنا.',
+      requestHideMaintenance: 'السيارة الموجودة في الورشة أصلًا لا يمكن إرسالها مرة أخرى — ابحث برقم لوحتها وستخبرك القائمة أنها هناك بالفعل.',
       // سطر إرشادي للأهلية (ليس منعًا صارمًا — يراجع المشرف كل طلب).
       requestEligibility: 'سجّل فقط عن سيارة كنت فيها فعلًا — قدتها أو جرّبتها أو ركبت فيها. إن كنت رأيتها من الخارج فقط، فالرجاء عدم الإرسال من هنا.',
       officeRequest: 'هذا قرارك أنت، لذلك لا ينتظر المراجعة — يذهب مباشرةً إلى المفتش ويُشعَر به الآن.',

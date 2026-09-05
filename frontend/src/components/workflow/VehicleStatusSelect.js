@@ -16,6 +16,10 @@ import { useI18n } from '../../i18n/I18nContext';
  * clipped by an ancestor's `overflow-hidden`.
  *
  * vehicles: raw Vehicle resources (need operational_status / under_maintenance / rented).
+ * blocked:  raw Vehicle resources the caller has EXCLUDED from picking (e.g. cars already in the
+ *           shop). They are still listed — greyed and unclickable, under their own heading — because
+ *           dropping them from the list silently is what produced "No matches" for a plate the
+ *           searcher can see parked in the yard. A car that cannot be picked has to say WHY.
  */
 
 // Order matters: groups render top-to-bottom in this sequence.
@@ -61,7 +65,17 @@ function groupOf(v) {
   return 'available';
 }
 
-export default function VehicleStatusSelect({ value, onChange, vehicles = [], placeholder, loading = false }) {
+// One car → one display row. Shared by the pickable list and the blocked list so both search on
+// exactly the same text (a plate that finds a car in one must find it in the other).
+const toRow = (v) => ({
+  id: v.id,
+  label: v.plate_no || `#${v.id}`,
+  sub: [v.make, v.model].filter(Boolean).join(' '),
+  group: groupOf(v),
+  search: `${v.plate_no || ''} ${v.make || ''} ${v.model || ''} ${v.id}`.toLowerCase(),
+});
+
+export default function VehicleStatusSelect({ value, onChange, vehicles = [], blocked = [], placeholder, loading = false }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -70,16 +84,10 @@ export default function VehicleStatusSelect({ value, onChange, vehicles = [], pl
   const inputRef = useRef(null);
 
   // Normalise each car into a display row once, tagged with its status group.
-  const options = useMemo(
-    () => vehicles.map((v) => ({
-      id: v.id,
-      label: v.plate_no || `#${v.id}`,
-      sub: [v.make, v.model].filter(Boolean).join(' '),
-      group: groupOf(v),
-      search: `${v.plate_no || ''} ${v.make || ''} ${v.model || ''} ${v.id}`.toLowerCase(),
-    })),
-    [vehicles],
-  );
+  const options = useMemo(() => vehicles.map(toRow), [vehicles]);
+
+  // The cars the caller has ruled out. Same shape, kept apart so they can never be picked.
+  const blockedOptions = useMemo(() => blocked.map(toRow), [blocked]);
 
   const selected = options.find((o) => String(o.id) === String(value));
 
@@ -125,6 +133,14 @@ export default function VehicleStatusSelect({ value, onChange, vehicles = [], pl
 
   const total = grouped.reduce((n, b) => n + b.items.length, 0);
 
+  // Blocked cars are only worth showing once the searcher has actually asked for one — an unfiltered
+  // list of everything they can't pick is noise. Typing the plate is the moment the answer is owed.
+  const blockedMatches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q || blockedOptions.length === 0) return [];
+    return blockedOptions.filter((o) => o.search.includes(q)).slice(0, 10);
+  }, [query, blockedOptions]);
+
   const pick = (o) => { onChange(o.id); setOpen(false); setQuery(''); };
 
   const menu = open && rect ? createPortal(
@@ -133,7 +149,9 @@ export default function VehicleStatusSelect({ value, onChange, vehicles = [], pl
       style={{ position: 'fixed', top: rect.top + 4, left: rect.left, width: rect.width }}
       className="z-50 max-h-72 overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
     >
-      {total === 0 && <div className="px-3 py-2 text-sm text-slate-400">{loading ? t('Loading…') : t('No matches')}</div>}
+      {total === 0 && blockedMatches.length === 0 && (
+        <div className="px-3 py-2 text-sm text-slate-400">{loading ? t('Loading…') : t('No matches')}</div>
+      )}
       {grouped.map(({ group, items }) => {
         const meta = STATUS[group];
         return (
@@ -161,6 +179,30 @@ export default function VehicleStatusSelect({ value, onChange, vehicles = [], pl
           </div>
         );
       })}
+
+      {/* ALREADY IN THE SHOP — searched for, found, and told why it can't be picked. These rows are
+          deliberately not buttons: there is nothing to click, and the sentence under the plate is the
+          whole point of showing the car at all. */}
+      {blockedMatches.length > 0 && (
+        <div className={total > 0 ? 'mt-1 border-t border-slate-100 pt-1' : ''}>
+          <div className="flex items-center gap-1.5 px-3 pb-1 pt-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('Already in the workshop')}</span>
+            <span className="text-[11px] font-medium text-slate-300">{blockedMatches.length}</span>
+          </div>
+          {blockedMatches.map((o) => (
+            <div key={`blocked-${o.id}`} className="flex w-full items-start gap-2.5 px-3 py-2 opacity-70">
+              <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-slate-300" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-slate-500 line-through">{o.label}</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-400">
+                  {t('This car already has an open ticket — it’s being handled, so it can’t be sent in again.')}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>,
     document.body,
   ) : null;
