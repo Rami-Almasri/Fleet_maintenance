@@ -6,6 +6,7 @@ use App\Models\Contract;
 use App\Models\Maintenance;
 use App\Models\MaintenanceReason;
 use App\Models\MaintenanceTask;
+use App\Support\FaultVocabulary;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -397,6 +398,93 @@ class MaintenanceAnalyticsService
     public function sheetIssueTagsByKind(?Maintenance $sheet): array
     {
         return app(EventClassificationService::class)->splitLabels($this->sheetIssueTags($sheet));
+    }
+
+    /**
+     * A VISIT'S FAULTS, at the right grain, each carrying the system it belongs to.
+     *
+     * `sheetIssueTags()` flattens MAIN and SUP into one list, which is correct for a "what was this
+     * visit about" blob and wrong for anything that COUNTS. The bare system word survives on its own,
+     * so a visit written as MAIN="Engine" / SUP="Oil & Fillter Change" contributed an `engine` fault —
+     * and on the dossier donut that word then sat as a peer of its own children, "Engine" ranked beside
+     * "Engine Oil leak". FaultVocabulary::sheetFaultLabels() applies the column-grain rule; this merges
+     * its output ACROSS the several rows that make up one visit.
+     *
+     * Merged per visit, not per row, for the same reason the rule exists at all: if any row of the visit
+     * named a fault specifically, the sibling row that only wrote the system word adds nothing and must
+     * not survive beside it.
+     *
+     * @param  iterable<int,Maintenance>  $events  the workshop rows behind ONE visit
+     * @return array<int,array{label:string,key:string,category_key:string,category_label:string,grain:string}>
+     */
+    public function faultFindings(iterable $events): array
+    {
+        $found = [];
+        foreach ($events as $e) {
+            foreach (FaultVocabulary::sheetFaultLabels($e->service_main ?? null, $e->service_sup ?? null) as $f) {
+                // Keyed by identity, so the same fault written on the OUT row and the IN row is one fault.
+                $found[$f['key']] ??= $f;
+            }
+        }
+
+        $namedSystems = [];
+        foreach ($found as $f) {
+            if ($f['grain'] === FaultVocabulary::GRAIN_SPECIFIC) {
+                $namedSystems[$f['category_key']] = true;
+            }
+        }
+
+        return array_values(array_filter(
+            $found,
+            fn ($f) => $f['grain'] === FaultVocabulary::GRAIN_SPECIFIC || ! isset($namedSystems[$f['category_key']]),
+        ));
+    }
+
+    /**
+     * The same findings rolled up BY SYSTEM — what the dossier donut needs to show "Engine · 3" and,
+     * underneath it, the three engine faults that actually happened.
+     *
+     * Also the shape for hand-entered `maintenance_tags`, which have no MAIN/SUP columns to reason
+     * about: every one of those is treated as specific, since a human typed the fault itself.
+     *
+     * @param  array<int,array<string,mixed>>  $findings  from faultFindings(), or [] with $labels set
+     * @param  array<int,string>  $labels  raw fault labels to group instead (hand-entered tags)
+     * @return array<int,array{key:string,label:string,faults:array<int,string>}>
+     */
+    public function faultSystems(array $findings, array $labels = []): array
+    {
+        if ($labels) {
+            $findings = [];
+            foreach ($labels as $label) {
+                $category = FaultVocabulary::resolveCategory($label);
+                $findings[] = [
+                    'label'          => $label,
+                    'category_key'   => $category['key'] ?? FaultVocabulary::normalise($label),
+                    'category_label' => $category['label'] ?? $label,
+                ];
+            }
+        }
+
+        $systems = [];
+        foreach ($findings as $f) {
+            $systems[$f['category_key']] ??= [
+                'key'    => $f['category_key'],
+                'label'  => $f['category_label'],
+                'faults' => [],
+            ];
+            // A system whose only evidence is its own name has no children to list — the donut renders
+            // it as a leaf rather than inventing "Engine › Engine".
+            if ($f['label'] !== $f['category_label']) {
+                $systems[$f['category_key']]['faults'][$f['label']] = true;
+            }
+        }
+
+        // array_merge, NOT the `+` union: `+` keeps the LEFT operand's key, so `$s + ['faults' => …]`
+        // silently preserved the label=>true dedupe map and every child rendered as `1`.
+        return array_values(array_map(
+            fn ($s) => array_merge($s, ['faults' => array_keys($s['faults'])]),
+            $systems,
+        ));
     }
 
     /**

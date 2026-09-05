@@ -180,7 +180,10 @@ export default function RecurringFaultsAnalytics({
 
         <SectionCard
           title={t('Faults that keep coming back')}
-          subtitle={t('By fault category')}
+          // Was "By fault category" — and it was, which was the bug: every bar said "engine" or
+          // "brakes" while the table below said "Engine overheating". The ranking now names the exact
+          // fault the workshop recorded, so it can be acted on.
+          subtitle={t('By the exact fault recorded')}
           bodyClass="p-5"
           // Which faults dominate goes stale fastest: a batch of brake jobs replaced in March keeps
           // topping the all-time list long after it stopped recurring, so this ranking gets a window of
@@ -210,6 +213,16 @@ export default function RecurringFaultsAnalytics({
             tooltip={(f) => (
               <>
                 <div>{f.cars === 1 ? t('Across 1 car') : t('Across {n} cars', { n: num(f.cars) })}</div>
+                {/* WHEN IT LAST CAME BACK. A fault topping the list because of a batch fixed in March
+                    reads very differently from one that returned last week, and a rank cannot say
+                    which. */}
+                {f.last_seen && <div className="text-slate-300">{t('Last came back {date}', { date: f.last_seen })}</div>}
+                {/* The distinct wordings folded into this bar — the proof behind the merge, so a
+                    reader can see "Engine Oil leak" and "Engine Oil Leak" were counted as one fault
+                    rather than wonder why a fault they know of is missing. */}
+                {Array.isArray(f.variants) && f.variants.length > 1 && (
+                  <div className="text-slate-300">{t('Recorded as: {list}', { list: f.variants.join(', ') })}</div>
+                )}
                 <Breakdown items={f.top_cars} more={f.cars_more} unit="car" />
               </>
             )}

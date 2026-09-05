@@ -566,9 +566,20 @@ class EventClassificationService
     {
         if ($this->serviceMap === null) {
             $this->serviceMap = [];
-            foreach (ServiceCatalog::query()->get(['id', 'slug', 'name']) as $row) {
-                $this->serviceMap[$this->norm($row->name)] = $row->id;
-                $this->serviceMap[$this->norm($row->slug)] = $row->id;
+
+            // Guarded exactly as damageMap() is, and for the same reason: labelKind() consults this map
+            // LAST, so on a database without `service_catalog` an unrecognised label took a hard
+            // QueryException instead of falling through to its correct default of `fault`. That made the
+            // whole sheet vocabulary — which labelMap() already answers from config alone, deliberately
+            // (see its note about a fresh database) — undecidable without a seeded catalog, and every
+            // DB-free test of it impossible to write.
+            try {
+                foreach (ServiceCatalog::query()->get(['id', 'slug', 'name']) as $row) {
+                    $this->serviceMap[$this->norm($row->name)] = $row->id;
+                    $this->serviceMap[$this->norm($row->slug)] = $row->id;
+                }
+            } catch (\Throwable $e) {
+                // table not migrated yet (fresh test DB) — config already types the labels that matter
             }
         }
 

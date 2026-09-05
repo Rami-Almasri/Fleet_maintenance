@@ -184,15 +184,30 @@ class VehicleFaultRecurrenceService
         foreach ($rows as $r) {
             $key = $day($r->out_date) ?? '';
             $visits[$key] ??= ['date' => $day($r->out_date), 'ret' => null, 'labels' => [], 'cost' => 0.0,
-                               'garages' => [], 'vendor_id' => null, 'vendor' => null, 'ref_ids' => []];
+                               'garages' => [], 'vendor_id' => null, 'vendor' => null, 'ref_ids' => [],
+                               // label => the row ids that actually carried it, see the fan-out below
+                               'label_rows' => []];
             $vi = &$visits[$key];
 
             $in = $day($r->actual_in_date);
             if ($in && (! $vi['ret'] || $in > $vi['ret'])) {
                 $vi['ret'] = $in;               // the visit ends when the LAST of its rows came back
             }
-            foreach (FaultVocabulary::splitIssues($r->service_main, $r->service_sup) as $t) {
-                $vi['labels'][$t] = true;
+            // GRAIN, not just text. splitIssues() flattens MAIN and SUP into one list, which is right for
+            // display and wrong here: the bare MAIN word "Engine" survives on its own, types as a fault,
+            // and turns a row whose only content is "Oil & Fillter Change" into an engine failure. Two
+            // oil changes then read as "Engine broke again 2 separate times". sheetFaultLabels() emits
+            // the category word ONLY when the row recorded nothing more specific. See the method's own
+            // docblock for the measured scale (2,640 rows).
+            foreach (FaultVocabulary::sheetFaultLabels($r->service_main, $r->service_sup) as $found) {
+                $vi['labels'][$found['label']] = $found['grain'];
+                // WHICH ROW SAID SO. One visit is several `maintenances` rows, and they do not all name
+                // the same thing — a car in for tyres on Monday also has an oil-change row and a
+                // scratch row under the same out_date. Attributing the whole visit's ids to every label
+                // it carried made a "Tyres & Wheels" record link to the oil-change row, which reads as
+                // the engine being wrong about what it counted. Kept per label so a link can open the
+                // row that actually evidenced the fault.
+                $vi['label_rows'][$found['label']][] = (int) $r->id;
             }
             $vi['cost'] += (float) $r->cost;
             $vi['ref_ids'][] = (int) $r->id;
@@ -216,7 +231,11 @@ class VehicleFaultRecurrenceService
             if (! $vi['date']) {
                 continue;
             }
-            foreach (array_keys($vi['labels']) as $label) {
+            // A visit is one event in the workshop's eyes, so grain is settled ACROSS its rows, not per
+            // row: if any row of the visit named the fault specifically, the sibling row that only wrote
+            // the system word adds nothing and must not become a second event.
+            $specific = array_keys(array_filter($vi['labels'], fn ($g) => $g === FaultVocabulary::GRAIN_SPECIFIC));
+            foreach ($specific ?: array_keys($vi['labels']) as $label) {
                 $events[] = [
                     'source'    => self::SOURCE_LOG,
                     'label'     => $label,
@@ -226,7 +245,9 @@ class VehicleFaultRecurrenceService
                     'garages'   => array_keys($vi['garages']),
                     'vendor_id' => $vi['vendor_id'],
                     'vendor'    => $vi['vendor'],
-                    'ref_ids'   => $vi['ref_ids'],
+                    // The rows that named THIS label, not every row of the visit. Falls back to the whole
+                    // visit only if the attribution is somehow missing, so a link always has a target.
+                    'ref_ids'   => $vi['label_rows'][$label] ?? $vi['ref_ids'],
                     'ticket_id' => null,
                     'pending'   => false,
                 ];
@@ -323,7 +344,11 @@ class VehicleFaultRecurrenceService
             return null;
         }
 
-        if ($category = FaultVocabulary::categoryOf($label)) {
+        // resolveCategory(), not categoryOf(): the curated sheet→catalog bridge answers first. Without it
+        // the 26 sheet labels the keyword resolver cannot place ("Dashboard Warning Lights",
+        // "Headlights / Taillights Fault", "Thermostat Failure") each became their own isolated bucket
+        // and could never join the ticket fault they name. See config/sheet_fault_bridge.php.
+        if ($category = FaultVocabulary::resolveCategory($label)) {
             return FaultVocabulary::isFailureCategory($category['key']) ? $category : null;
         }
 
@@ -503,6 +528,18 @@ class VehicleFaultRecurrenceService
                 // Reported through a ticket but not yet sent to a garage — the newest, most urgent case.
                 'pending'     => (bool) array_filter($ep['events'], fn ($e) => $e['pending']),
                 'ref_ids'     => array_merge(...array_map(fn ($e) => $e['ref_ids'], $ep['events'])),
+                // `ref_ids` merges the two ledgers' primary keys into one list, which is fine for counting
+                // and useless for LINKING: a sheet id addresses a `maintenances` row and a ticket id
+                // addresses a `maintenance_tasks` row, and nothing downstream could tell which was which.
+                // Split out so a caller can build a URL that actually resolves.
+                'log_ids'     => array_values(array_unique(array_merge(...array_map(
+                    fn ($e) => $e['source'] === self::SOURCE_LOG ? $e['ref_ids'] : [],
+                    $ep['events'],
+                )))),
+                'task_ids'    => array_values(array_unique(array_merge(...array_map(
+                    fn ($e) => $e['source'] === self::SOURCE_TICKET ? $e['ref_ids'] : [],
+                    $ep['events'],
+                )))),
             ];
         }
 

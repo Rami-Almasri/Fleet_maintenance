@@ -8369,7 +8369,7 @@ class MaintenanceWorkflowService
      * @param  array<int,string> $tags
      * @return array<int,array{tag:string, occurrences:int, last:?array, history:array}>
      */
-    public function faultHistory(Vehicle $vehicle, array $tags, ?int $excludeTicketId = null): array
+    public function faultHistory(Vehicle $vehicle, array $tags, ?int $excludeTicketId = null, bool $includeClean = false): array
     {
         $tags = collect($tags)
             ->map(fn ($t) => $this->clean($t))
@@ -8388,49 +8388,71 @@ class MaintenanceWorkflowService
             return [];
         }
 
-        // Only CLOSED tickets count as "repaired before" — newest first so the first match is the last repair.
-        $closed = Maintenance::where('vehicle_id', $vehicle->id)
-            ->where('workflow_status', Maintenance::WF_CLOSED)
-            ->when($excludeTicketId, fn ($q) => $q->where('id', '!=', $excludeTicketId))
-            ->with('vendor:id,name')
-            ->orderByDesc('wf_closed_at')
-            ->orderByDesc('id')
-            ->limit(200)
-            ->get();
+        // BOTH LEDGERS. This used to read closed TICKETS only, and compare finding text with `===`. On a
+        // fleet whose fault history is 21,928 sheet rows against 167 tasks, that meant a car with nine
+        // logged battery failures answered "no history" the moment a technician tapped Battery at the
+        // test-drive bench — and the exact-string test could not have matched them anyway, because the
+        // sheet says "Battery Weak or Dead" where the catalog says "Battery / won't start".
+        //
+        // VehicleFaultHistoryService reads the workshop log AND the ticket workflow, resolves both
+        // vocabularies through the sheet→catalog bridge, and keeps each occurrence's provenance. It is
+        // the same service the dashboard's repeat leaderboard reads, so the bench and the board can no
+        // longer disagree about whether a car has had a fault before.
+        $history = app(\App\Services\VehicleFaultHistoryService::class)
+            ->lookup($vehicle->id, $tags->all(), $excludeTicketId);
 
-        return $tags->map(function (string $tag) use ($closed) {
-            $low = mb_strtolower($tag);
-            $occurrences = [];
+        // A NEAR MISS IS STILL AN ANSWER. This used to keep only exact matches, so a technician tapping
+        // "Engine noise" on a car with three logged "Engine mechanical issue" visits and an oil leak was
+        // told nothing at all. The two claims stay separate and differently worded — `occurrences` is
+        // "this exact fault came back", `related` is "a different fault in the same system" — but
+        // withholding the second because the first is zero hides the most useful thing on the bench.
+        //
+        // `related` names the ACTUAL faults ("Engine mechanical issue", "Engine Oil Leak"), never the
+        // system word: "this car has had engine trouble" is not information a technician can act on.
+        //
+        // $includeClean keeps faults with NO history at all. The findings tray wants them — "first time"
+        // is a real answer and a reassuring one, and a tray that shows a line for two of three picks
+        // leaves the third ambiguous between "clean" and "not checked". The Diagnosis-step watchdog
+        // does NOT: it is a warning panel, and a warning that fires on everything warns about nothing.
+        return collect($history)
+            ->filter(fn ($h) => $includeClean || $h['seen'] > 0 || $h['related_count'] > 0)
+            ->map(fn ($h) => [
+                'tag'         => $h['label'],
+                'occurrences' => $h['seen'],
 
-            foreach ($closed as $tk) {
-                $match = collect($tk->findings ?? [])
-                    ->first(fn ($f) => mb_strtolower(trim((string) ($f['text'] ?? ''))) === $low);
-                if (! $match) {
-                    continue;
-                }
+                // Provenance, carried all the way to the bench: a technician must be able to see whether
+                // "seen 3 times" rests on the imported log, on this system's own records, or on both.
+                'sheet_count'  => $h['sheet_count'],
+                'system_count' => $h['system_count'],
+                'sources'      => $h['sources'],
+                'source_code'  => $h['source_code'],
 
-                $downtime = ($tk->test_started_at && $tk->returned_at)
-                    ? max(0, $tk->returned_at->getTimestamp() - $tk->test_started_at->getTimestamp())
-                    : null;
+                'first_seen'      => $h['first_seen'],
+                'last_seen'       => $h['last_seen'],
+                'days_since_last' => $h['days_since_last'],
 
-                $occurrences[] = [
-                    'ticket_id'        => $tk->id,
-                    'date'             => optional($tk->wf_closed_at ?: $tk->actual_in_date ?: $tk->returned_at)->toIso8601String(),
-                    'garage'           => $tk->vendor?->name ?: $tk->garage,
-                    'downtime_seconds' => $downtime,
-                    'repair_hours'     => isset($match['repair_hours']) && is_numeric($match['repair_hours'])
-                        ? (float) $match['repair_hours'] : null,
-                    'source'           => $match['source'] ?? null,
-                ];
-            }
+                // The latest occurrence, in the shape the panel has always rendered. `downtime_seconds`
+                // and `repair_hours` stay null for a sheet-sourced hit and say so by being absent rather
+                // than zero: the imported log records neither, and a fabricated 0 would read as "back the
+                // same day". See [[treat-data-as-source-of-truth]].
+                'last' => isset($h['occurrences'][0]) ? [
+                    'date'             => $h['occurrences'][0]['at'],
+                    'garage'           => $h['occurrences'][0]['garage'],
+                    'source'           => $h['occurrences'][0]['source'],
+                    'ticket_id'        => $h['occurrences'][0]['ticket_id'],
+                    'downtime_seconds' => null,
+                    'repair_hours'     => null,
+                ] : null,
 
-            return [
-                'tag'         => $tag,
-                'occurrences' => count($occurrences),
-                'last'        => $occurrences[0] ?? null,   // $closed is newest-first → first hit is the latest repair
-                'history'     => $occurrences,
-            ];
-        })->filter(fn ($i) => $i['occurrences'] > 0)->values()->all();
+                'history' => $h['occurrences'],
+
+                // Same system, different fault — reported separately and never added to `occurrences`,
+                // so "seen 3 times" can never be inflated by a neighbouring fault.
+                'related_count' => $h['related_count'],
+                'related'       => $h['related'],
+            ])
+            ->values()
+            ->all();
     }
 
     /**

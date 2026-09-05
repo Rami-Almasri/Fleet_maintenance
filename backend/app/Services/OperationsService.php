@@ -227,7 +227,7 @@ class OperationsService
             ->whereNotNull('out_date')
             ->orderByDesc('out_date')->orderByDesc('id')->first();
 
-        return $m ? ($m->service_main ?: $m->maintenance_type) : null;
+        return $m ? (FleetUtilizationService::workLabel($m) ?: $m->maintenance_type) : null;
     }
 
     /**

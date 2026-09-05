@@ -27,6 +27,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Icon from '../ui/Icon';
 import FindingsAiSuggestion from './FindingsAiSuggestion';
+import useFaultHistory from '../../hooks/useFaultHistory';
 import { useI18n } from '../../i18n/I18nContext';
 
 // Degrade gracefully if the catalog request fails: a small built-in set keeps the modal usable
@@ -223,6 +224,21 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
   // Causes + repairs for each SELECTED finding, read from the catalog payload rather than fetched.
   // A custom tag the inspector typed has no concept behind it and is skipped — an empty "usually
   // caused by:" would read as missing data rather than as a fault we have nothing curated for.
+  // The picked faults' history on THIS car, from both ledgers. Shares its fetch shape with the
+  // Diagnosis-step watchdog through useFaultHistory, so step 2 and step 3 cannot disagree.
+  const { byTag: faultHistory } = useFaultHistory(vehicleId, value, ticketId, true);
+
+  // Only FAULTS get a history line. A planned service repeating is normal — telling an inspector that
+  // "Oil Change" has happened four times before is noise dressed as a warning, and is the same audit
+  // ruling (M2) that keeps services out of the chronic-fault watchdog.
+  const faultHistoryRows = useMemo(
+    () => value
+      .filter((k) => kwKind(k) === 'fault' && faultHistory[k])
+      .map((k) => ({ keyword: k, it: faultHistory[k] })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [value, faultHistory],
+  );
+
   const knowledgeForSelected = useMemo(
     () => value
       .map((k) => {
@@ -459,6 +475,58 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
               </span>
             ))}
           </div>
+
+          {/* HAS THIS CAR HAD THIS BEFORE? — answered the moment the chip is tapped, not two steps
+              later at Diagnosis. The watchdog panel lives there and stays; this is the same answer at
+              the moment of the decision, because "is this new?" is what the inspector is asking
+              himself while picking, and a car that has had the same fault four times is the single
+              most useful thing to know before naming a cause.
+
+              Read from BOTH ledgers. `history` is the exact fault; `related` is a different fault in
+              the same system — a weaker, separate claim, named and dated so it can be judged rather
+              than merely hinted at. */}
+          {faultHistoryRows.length > 0 && (
+            <div className="mt-2 space-y-1 border-t border-indigo-200/70 pt-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
+                {t('On this car before')}
+              </p>
+              {faultHistoryRows.map(({ keyword, it }) => (
+                <div key={`hist-${keyword}`} className="rounded-lg bg-white/80 px-2 py-1.5 text-[11px] ring-1 ring-indigo-200/60">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="min-w-0 truncate font-medium text-slate-700">{kwLabel(keyword)}</span>
+                    {it.occurrences > 0 ? (
+                      <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-px font-bold text-amber-700">
+                        {t('Seen {n}× before', { n: it.occurrences })}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-px font-semibold text-slate-500">
+                        {t('First time')}
+                      </span>
+                    )}
+                  </div>
+                  {it.occurrences > 0 && it.last_seen && (
+                    <p className="mt-0.5 text-slate-500">
+                      {t('Last {date}', { date: it.last_seen })}
+                      {it.days_since_last != null && ` · ${t('{n} days ago', { n: it.days_since_last })}`}
+                      {it.source_code === 'BOTH'
+                        ? ` · ${t('Seen in both sources')}`
+                        : it.source_code === 'SHEET'
+                          ? ` · ${t('Source: Sheet history')}`
+                          : ` · ${t('Source: System records')}`}
+                    </p>
+                  )}
+                  {/* Named and dated, never "this car has had engine trouble" — a system word is not
+                      something anyone can act on. */}
+                  {it.related_count > 0 && (
+                    <p className="mt-0.5 text-slate-400">
+                      {t('Same system:')}{' '}
+                      {it.related.map((r) => `${r.label} ${r.count}× (${r.last})`).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* WHAT EACH PICKED FAULT USUALLY MEANS.
               This used to appear only when the matcher had to FIND the fault — so an inspector who

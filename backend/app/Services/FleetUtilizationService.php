@@ -402,10 +402,10 @@ class FleetUtilizationService
             ->whereDate('out_date', '<=', $dayStr)
             ->whereDate('actual_in_date', '>=', $dayStr)
             ->orderByDesc('out_date')
-            ->first(['id', 'out_date', 'actual_in_date', 'garage', 'service_main', 'maintenance_type', 'cost']);
+            ->first(['id', 'out_date', 'actual_in_date', 'garage', 'service_main', 'service_sup', 'maintenance_type', 'cost']);
 
         if ($visit) {
-            $issue = $visit->service_main ?: $visit->maintenance_type;
+            $issue = self::workLabel($visit) ?: $visit->maintenance_type;
             return $car + [
                 'state'       => 'maintenance',
                 'label'       => 'In the workshop',
@@ -897,7 +897,7 @@ class FleetUtilizationService
             ->whereIn('vehicle_id', $vehIds)->whereNotNull('out_date')
             ->whereDate('out_date', '<=', $todayStr)
             ->orderBy('out_date')->orderBy('id')   // ascending → last write per vehicle is its latest event
-            ->get(['vehicle_id', 'out_date', 'actual_in_date', 'event_status', 'service_main', 'maintenance_type', 'garage']) as $s) {
+            ->get(['vehicle_id', 'out_date', 'actual_in_date', 'event_status', 'service_main', 'service_sup', 'maintenance_type', 'garage']) as $s) {
             $latestEvent[(int) $s->vehicle_id] = $s;
         }
         $sheetByVeh = [];
@@ -946,7 +946,7 @@ class FleetUtilizationService
                 'shop_in'        => $shopIn,
                 'shop_open'      => $shopIn === null,
                 'shop_days'      => $shopDays,
-                'issue'          => $sheet ? ($sheet->service_main ?: $sheet->maintenance_type) : null,
+                'issue'          => $sheet ? (self::workLabel($sheet) ?: $sheet->maintenance_type) : null,
                 'garage'         => $sheet->garage ?? null,
             ];
         }
@@ -1063,7 +1063,8 @@ class FleetUtilizationService
             ->get(['id', 'code', 'plate_no', 'make', 'model', 'year', 'day_rent_value'])->keyBy('id');
 
         // The 'U' contract carries no reason, so we read WHY the car went in from the sheet workshop
-        // log (service_main / type / garage), matched by vehicle + OUT-date proximity (the same visit).
+        // log (service_main + service_sup / type / garage), matched by vehicle + OUT-date proximity
+        // (the same visit).
         // A sheet row is only consulted when it falls within ±3 days of a 'U' out date, and every
         // 'U' here opened on/after $floor — so rows older than $floor (with a 7-day safety margin)
         // can never match and only cost Carbon::parse() time below. Bounding the scan is exact.
@@ -1072,10 +1073,10 @@ class FleetUtilizationService
         foreach (DB::table('maintenances')->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
             ->whereIn('vehicle_id', $vehIds)->whereNotNull('out_date')
             ->whereDate('out_date', '>=', $sheetFloor)
-            ->get(['vehicle_id', 'out_date', 'service_main', 'maintenance_type', 'garage']) as $m) {
+            ->get(['vehicle_id', 'out_date', 'service_main', 'service_sup', 'maintenance_type', 'garage']) as $m) {
             $sheetByVeh[(int) $m->vehicle_id][] = [
                 'a'      => self::dayNum(Carbon::parse($m->out_date)),
-                'reason' => $m->service_main ?: $m->maintenance_type,
+                'reason' => self::workLabel($m) ?: $m->maintenance_type,
                 'garage' => $m->garage,
             ];
         }

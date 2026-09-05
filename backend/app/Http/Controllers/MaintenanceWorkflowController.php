@@ -4181,7 +4181,16 @@ class MaintenanceWorkflowController extends Controller
                 $tags = collect($open?->findings ?? [])->pluck('text')->filter()->values()->all();
             }
 
-            $insights = $this->workflow->faultHistory($vehicle, $tags, $exclude);
+            // ?include_clean=1 — keep faults with no history at all, so the findings tray can say
+            // "first time" rather than leaving a pick with no line ambiguous between "clean" and
+            // "not checked". The Diagnosis watchdog omits it: it warns, and it must not warn on
+            // everything.
+            $insights = $this->workflow->faultHistory(
+                $vehicle,
+                $tags,
+                $exclude,
+                $request->boolean('include_clean'),
+            );
             return ResponseHelper::SuccessResponse(['insights' => $insights], 'Fault history retrieved', 200);
         });
     }

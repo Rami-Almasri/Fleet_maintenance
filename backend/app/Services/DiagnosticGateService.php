@@ -1278,7 +1278,7 @@ class DiagnosticGateService
             'label'        => trim((string) $event->garage) ?: null,
             'contract_no'  => null,
             'garage'       => trim((string) $event->garage) ?: null,
-            'work'         => trim((string) $event->service_main) ?: null,
+            'work'         => FleetUtilizationService::workLabel($event),
             'started_at'   => $since,
             'days_in_shop' => $since ? (int) $since->diffInDays(Carbon::now()->startOfDay()) : null,
             'customer'     => null,
@@ -1322,7 +1322,7 @@ class DiagnosticGateService
             ->whereNotNull('out_date')
             ->whereDate('out_date', '<=', $today->toDateString())
             ->orderBy('out_date')->orderBy('id')
-            ->get(['id', 'vehicle_id', 'origin', 'out_date', 'actual_in_date', 'event_status', 'garage', 'service_main']) as $e) {
+            ->get(['id', 'vehicle_id', 'origin', 'out_date', 'actual_in_date', 'event_status', 'garage', 'service_main', 'service_sup', 'maintenance_type']) as $e) {
             $latest[(int) $e->vehicle_id] = $e;
         }
 

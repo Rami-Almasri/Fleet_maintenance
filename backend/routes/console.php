@@ -15,6 +15,11 @@ Schedule::command('fleet:check-expiry')->dailyAt('02:00');
 // ~3s Google Sheets read happens off the request path and page loads stay instant.
 Schedule::command('trips:warm')->everyTenMinutes()->withoutOverlapping();
 
+// Every 15 min: pre-warm the fleet-wide repeat-fault sweep behind the dashboard's "What Keeps Coming
+// Back" card. The card reads every car's merged workshop-log + ticket fault history (~40-50s cold) and
+// caches it for 30 minutes; warming it here keeps that cost off the request path entirely.
+Schedule::command('dashboard:warm-repeats')->everyFifteenMinutes()->withoutOverlapping();
+
 // Nightly: refresh the N-Maintenance & Repair Google Sheet (the SOLE source of garage
 // stage / IN-OUT / notes for maintenance contracts). Without this the /maintenance board
 // and Return Check page go stale even though om:sync keeps contracts current. Runs before

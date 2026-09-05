@@ -120,6 +120,67 @@ export function visitsForFault(visits = [], keys = []) {
   return visits.filter((v) => faultLabelsOf(v).some((l) => want.has(l)));
 }
 
+// The flat per-label tally — one count per fault label per visit. The pre-`fault_systems` behaviour,
+// kept as the fallback for older payloads.
+function flatTotals(visits) {
+  const totals = {};
+  visits.forEach((v) => {
+    faultLabelsOf(v).forEach((label) => {
+      totals[label] = (totals[label] || 0) + 1;
+    });
+  });
+  return totals;
+}
+
+// Tally per SYSTEM, carrying the individual faults recorded under it.
+//
+// A system's `value` counts the VISITS that recorded a fault in it, not the faults — a visit that
+// logged two engine faults is one engine visit, and counting it twice would make the shares sum past
+// the visit count. The children carry their own per-visit counts so the expanded row still shows which
+// specific fault dominates.
+//
+// A visit with no fault at all still contributes "Unspecified" exactly as before, so a car whose log is
+// mostly blank still reads as mostly blank rather than quietly shrinking.
+function systemTotals(visits) {
+  const bySystem = {};
+
+  visits.forEach((v) => {
+    const systems = Array.isArray(v?.fault_systems) ? v.fault_systems : [];
+
+    if (!systems.length) {
+      // Same rule as faultLabelsOf: planned-work / damage-only visits contribute nothing, everything
+      // else with no fault recorded is Unspecified.
+      const fallback = faultLabelsOf(v);
+      fallback.forEach((label) => {
+        bySystem[label] ??= { key: label, label, value: 0, kids: {} };
+        bySystem[label].value += 1;
+      });
+      return;
+    }
+
+    systems.forEach((s) => {
+      bySystem[s.key] ??= { key: s.key, label: s.label, value: 0, kids: {} };
+      bySystem[s.key].value += 1;
+      // No child faults means the visit recorded only the system's own name — surfaced as a child in
+      // its own right, because "logged as Engine, nothing more" is a finding about the RECORD worth
+      // seeing rather than an empty expander.
+      const faults = Array.isArray(s.faults) && s.faults.length ? s.faults : [s.label];
+      faults.forEach((f) => { bySystem[s.key].kids[f] = (bySystem[s.key].kids[f] || 0) + 1; });
+    });
+  });
+
+  return Object.values(bySystem)
+    .map((s) => ({
+      key: s.key,
+      label: s.label,
+      value: s.value,
+      children: Object.entries(s.kids)
+        .map(([label, value]) => ({ key: label, label, value }))
+        .sort((a, b) => b.value - a.value),
+    }))
+    .sort((a, b) => b.value - a.value);
+}
+
 // Per-FAULT distribution — instead of bucketing each visit into one broad mechanical category,
 // this tallies the INDIVIDUAL fault tags recorded across all visits, so a car's donut shows each
 // distinct fault and its share of every fault logged (the slices sum to 100%). Services are excluded
@@ -128,16 +189,21 @@ export function visitsForFault(visits = [], keys = []) {
 // legible. Returns [{ key, label, color, value }] sorted big → small.
 export function faultTagSegments(visits = [], { top = 10, tf = null, tp = null } = {}) {
   const loc = (key, en, vars) => (tf ? tf(key, en, vars) : en);
-  const totals = {};
-  visits.forEach((v) => {
-    faultLabelsOf(v).forEach((label) => {
-      totals[label] = (totals[label] || 0) + 1;
-    });
-  });
 
-  const sorted = Object.keys(totals)
-    .map((label) => ({ key: label, label, value: totals[label] }))
-    .sort((a, b) => b.value - a.value);
+  // BY SYSTEM when the payload says which system each fault belongs to (`fault_systems`), because a
+  // flat tally puts a category beside its own children: "Engine" ranked as a peer of "Engine Oil leak",
+  // and one visit was counted at both grains. Grouping answers the question the reader actually has —
+  // "what is wrong with the engine on this car" — and the donut's existing expand-on-click turns each
+  // system row into the list of faults underneath it, with no chart changes at all.
+  //
+  // Falls back to the flat tally for payloads that predate the field, where the old undifferentiated
+  // behaviour is still the best available.
+  const grouped = visits.some((v) => Array.isArray(v?.fault_systems));
+  const sorted = grouped
+    ? systemTotals(visits)
+    : Object.entries(flatTotals(visits))
+      .map(([label, value]) => ({ key: label, label, value }))
+      .sort((a, b) => b.value - a.value);
 
   // Never show more distinct slices than the palette has hues — the excess folds into "Other".
   const limit = Math.min(top, FAULT_PALETTE.length);

@@ -44,7 +44,7 @@ class CostCaptureController extends Controller
                 ->orderByDesc('m.out_date')
                 ->get([
                     'm.id', 'm.vehicle_id', 'm.out_date', 'm.actual_in_date', 'm.event_status',
-                    'm.service_main', 'm.maintenance_type', 'm.cost', 'm.garage',
+                    'm.service_main', 'm.service_sup', 'm.maintenance_type', 'm.cost', 'm.garage',
                     'v.plate_no', 'v.make', 'v.model', 'v.code', 'vd.name as vendor',
                 ]);
 
@@ -74,10 +74,16 @@ class CostCaptureController extends Controller
                 $rep = $vis['rep'];
 
                 $problems = [];
+                // Both columns: MAIN names the system ("Engine"), SUP the fault itself ("Oil &
+                // Fillter Change"). Listing only MAIN told whoever prices the visit the area of the
+                // car and not the job, which is the half they need to recognise the bill.
                 foreach ($vis['rows'] as $r) {
-                    foreach (preg_split('/\s*,\s*/', (string) $r->service_main, -1, PREG_SPLIT_NO_EMPTY) as $p) {
-                        if (! in_array($p, $problems, true)) {
-                            $problems[] = $p;
+                    foreach ([$r->service_main, $r->service_sup] as $field) {
+                        foreach (preg_split('/\s*,\s*/', (string) $field, -1, PREG_SPLIT_NO_EMPTY) as $p) {
+                            $p = trim($p);
+                            if ($p !== '' && ! in_array($p, $problems, true)) {
+                                $problems[] = $p;
+                            }
                         }
                     }
                 }

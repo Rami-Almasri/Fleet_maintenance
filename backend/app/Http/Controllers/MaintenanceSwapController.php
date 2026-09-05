@@ -122,8 +122,10 @@ class MaintenanceSwapController extends Controller
                     ->whereNull('deleted_at')
                     ->whereIn('vehicle_id', $workshopRows->pluck('id')->all())->whereNotNull('out_date')
                     ->orderBy('out_date')->orderBy('id')
-                    ->get(['vehicle_id', 'service_main', 'maintenance_type']) as $m) {
-                    $reasonByVeh[(int) $m->vehicle_id] = $m->service_main ?: $m->maintenance_type;   // last = latest
+                    ->get(['vehicle_id', 'service_main', 'service_sup', 'maintenance_type']) as $m) {
+                    // MAIN alone is only the system word ("Engine"); the fault lives in SUP.
+                    $reasonByVeh[(int) $m->vehicle_id] = \App\Services\FleetUtilizationService::workLabel($m)
+                        ?: $m->maintenance_type;   // last = latest
                 }
             }
             $workshop = $workshopRows->map(fn ($v) => [

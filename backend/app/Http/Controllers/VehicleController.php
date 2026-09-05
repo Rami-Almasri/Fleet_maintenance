@@ -572,6 +572,18 @@ class VehicleController extends Controller
                 // union every existing reader expects; the three typed lists are the honest ones.
                 $byKind = $classifier->splitLabels($tags);
 
+                // FAULTS AT THE RIGHT GRAIN, plus the system each belongs to. splitLabels() types the
+                // flat MAIN+SUP union, which leaves the bare system word standing beside its own
+                // children — on the dossier donut "Engine" ranked as a peer of "Engine Oil leak", and a
+                // visit whose only engine content was an oil change was counted as an engine fault.
+                // Hand-entered header tags have no MAIN/SUP to reason about, so each is taken as the
+                // specific fault a human typed; only the sheet rows go through the column-grain rule.
+                $findings = ! empty($c->maintenance?->maintenance_tags)
+                    ? []
+                    : $analytics->faultFindings($events);
+                $faultSystems = $analytics->faultSystems($findings, $findings ? [] : $byKind['fault']);
+                $faultTags = $findings ? array_column($findings, 'label') : $byKind['fault'];
+
                 // Garage: header vendor; else the first garage seen across the visit's events.
                 $garage = $c->maintenance?->vendor?->name
                     ?: $events->map(fn ($e) => $e->vendor?->name ?: $e->garage)->filter()->first();
@@ -604,7 +616,10 @@ class VehicleController extends Controller
                     'priority'     => $priority,
                     'reason'       => $c->maintenance?->reason?->reason_en,
                     'tags'         => $tags,
-                    'fault_tags'   => $byKind['fault'],
+                    'fault_tags'   => $faultTags,
+                    // The same faults grouped by system, so a chart can show "Engine · 3" and open it
+                    // onto the three engine faults instead of ranking the word "Engine" against them.
+                    'fault_systems' => $faultSystems,
                     'service_tags' => $byKind['service'],
                     'damage_tags'  => $byKind['damage'],
                     'context_tags' => $byKind['context'],

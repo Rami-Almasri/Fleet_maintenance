@@ -884,7 +884,7 @@ class NotificationScanner
                 'title'    => $this->costHeadline($m) . ' · AED ' . number_format((float) $m->cost),
                 'body'     => trim(($m->vehicle ? trim($m->vehicle->make . ' ' . $m->vehicle->model) : 'Vehicle')
                                 . ($m->vehicle?->plate_no ? ' (' . $m->vehicle->plate_no . ')' : '')
-                                . ' — ' . ($m->service_main ?: 'repair')
+                                . ' — ' . (FleetUtilizationService::workLabel($m) ?: 'repair')
                                 . ' on ' . optional($m->out_date)->toDateString()
                                 . ' cost AED ' . number_format((float) $m->cost)
                                 . ' (over the AED ' . number_format($threshold) . ' threshold).'),

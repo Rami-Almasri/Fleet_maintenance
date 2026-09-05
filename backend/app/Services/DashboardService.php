@@ -11,6 +11,7 @@ use App\Models\MaintenanceTask;
 use App\Models\RecurringFaultReview;
 use App\Models\Vehicle;
 use App\Models\VehicleRegistration;
+use App\Support\FaultVocabulary;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -33,6 +34,13 @@ class DashboardService
 
     /** TTL (seconds) for the month-by-month trend series — historical, changes very slowly. */
     private const CACHE_TTL_TRENDS = 600;
+
+    /**
+     * The fleet-wide repeat-fault sweep reads every car's merged fault history through the per-car
+     * recurrence engine — ~40s of work. Cached for half an hour because that is how fast the answer can
+     * actually change: a fault "comes back" when a car returns to a workshop, not when a page reloads.
+     */
+    private const CACHE_TTL_REPEAT_SWEEP = 1800;
 
     /** Versioned cache namespace — bumping the version (flushCache) orphans every prior entry. */
     private const CACHE_VERSION_KEY = 'dashboard:cache_version';
@@ -731,7 +739,7 @@ class DashboardService
             ->whereNotNull('vehicle_id')
             ->with([
                 'vehicle:id,plate_no,make,model',
-                'maintenance:id,contract_id,garage,vendor_id,workflow_status,expected_return_date,maintenance_reason_id,maintenance_type,customer_complaint,service_main,maintenance_notes,findings',
+                'maintenance:id,contract_id,garage,vendor_id,workflow_status,expected_return_date,maintenance_reason_id,maintenance_type,customer_complaint,service_main,service_sup,maintenance_notes,findings',
                 'maintenance.vendor:id,name',
                 'maintenance.checkpoints',
                 // The fault(s)/reason behind the visit — so each card can say WHY the car is in the shop.
@@ -1070,10 +1078,17 @@ class DashboardService
         }
 
         // 3) Free-text fallbacks — customer complaint, the classified sheet reason, or the service text.
+        // The service text is MAIN · SUP, not MAIN alone: MAIN is the system word ("Engine") and SUP
+        // is the job ("Oil & Fillter Change"). Joined here rather than via workLabel() so the chain
+        // keeps falling through to the notes instead of stopping on the generic maintenance_type.
         if (! $items) {
+            $service = implode(' · ', array_unique(array_filter([
+                trim((string) $m->service_main),
+                trim((string) $m->service_sup),
+            ])));
             $fallback = $m->customer_complaint
                 ?: ($m->relationLoaded('reason') ? $m->reason?->reason_en : null)
-                ?: $m->service_main
+                ?: ($service ?: null)
                 ?: $m->maintenance_notes;
             if ($fallback) {
                 $items = [trim((string) $fallback)];
@@ -1152,7 +1167,7 @@ class DashboardService
             ->whereNotNull('vehicle_id')
             ->with([
                 'vehicle:id,plate_no,make,model',
-                'maintenance:id,contract_id,vehicle_id,garage,vendor_id,workflow_status,expected_return_date,expected_completion_date,expected_duration_days,last_checkpoint_at,out_date,repair_started_at,dispatched_at,maintenance_reason_id,maintenance_type,customer_complaint,service_main,maintenance_notes,findings',
+                'maintenance:id,contract_id,vehicle_id,garage,vendor_id,workflow_status,expected_return_date,expected_completion_date,expected_duration_days,last_checkpoint_at,out_date,repair_started_at,dispatched_at,maintenance_reason_id,maintenance_type,customer_complaint,service_main,service_sup,maintenance_notes,findings',
                 'maintenance.vendor:id,name',
                 'maintenance.checkpoints',
                 'maintenance.responsibles:id,name',
@@ -1533,17 +1548,27 @@ class DashboardService
      * @param  array<int,string>  $only  any of: faults, parts, services
      * @return array{window_days:int, sections:array<string,array<string,mixed>>}
      */
-    public function repeats(int $windowDays = self::REPEAT_WINDOW_DAYS, int $limit = 6, array $only = ['faults', 'parts', 'services']): array
-    {
+    public function repeats(
+        int $windowDays = self::REPEAT_WINDOW_DAYS,
+        int $limit = 6,
+        array $only = ['faults', 'parts', 'services'],
+        array $faultWindow = [],
+    ): array {
         $windowDays = max(1, min(365, $windowDays));
         $limit      = max(1, min(20, $limit));
-        $key        = 'repeats:v1:' . $windowDays . ':' . $limit . ':' . implode(',', $only);
+        // The faults tab carries its OWN date filter, independent of the parts/services "again within"
+        // gap: those two ask "did this repeat inside N days of each other", this one asks "which returns
+        // happened between these dates". Folding them into one control would make a single picker mean
+        // two different things depending on which tab was open.
+        $fw  = $this->resolveRepeatWindow($faultWindow);
+        $key = 'repeats:v2:' . $windowDays . ':' . $limit . ':' . implode(',', $only)
+             . ':' . $fw['days'] . ':' . ($fw['from'] ?? '') . ':' . ($fw['to'] ?? '');
 
-        return $this->remember($key, self::CACHE_TTL, function () use ($windowDays, $limit, $only) {
+        return $this->remember($key, self::CACHE_TTL, function () use ($windowDays, $limit, $only, $faultWindow) {
             $sections = [];
 
             if (in_array('faults', $only, true)) {
-                $sections['faults'] = $this->faultsComingBack($limit);
+                $sections['faults'] = $this->faultsComingBack($limit, $faultWindow);
             }
             if (in_array('parts', $only, true)) {
                 $sections['parts'] = $this->partsComingBack($windowDays, $limit);
@@ -1562,28 +1587,275 @@ class DashboardService
      * `value` is cases (a fault that returned), `cars` the distinct vehicles behind them. Deliberately
      * NOT recomputed here: see the contract note above the constant block.
      */
-    private function faultsComingBack(int $limit): array
+    private function faultsComingBack(int $limit, array $faultWindow = []): array
     {
         $stats = app(RecurringFaultService::class)->stats();
+        $observed = $this->observedRepeatFaults($faultWindow);
 
-        $items = collect($stats['faults'] ?? [])->take($limit)->map(fn ($f) => [
+        // Ranked on OBSERVED returns — the fault chains actually present in the two ledgers — with the
+        // management-review count carried alongside per fault rather than replaced by it. The two answer
+        // different questions and the card now says which is which: `value` is how many times the fleet
+        // came back with this fault, `reviews` is how many of those a human has been asked to rule on.
+        $items = collect($observed['faults'])->take($limit)->map(fn ($f) => [
             'label'        => (string) $f['label'],
-            'value'        => (int) $f['value'],
-            'cars'         => (int) ($f['cars'] ?? 0),
-            'fastest_days' => null,   // per-fault speed lives on the review page's histogram, not here
+            'value'        => (int) $f['returns'],
+            'cars'         => (int) $f['cars'],
+            'fastest_days' => $f['fastest_days'],
+            // Provenance, per row. A fault whose evidence is wholly imported reads differently from one
+            // this system watched happen, and the card must not flatten the two into one bar.
+            'sheet_cars'   => (int) $f['sheet_cars'],
+            'system_cars'  => (int) $f['system_cars'],
+            'source_code'  => $f['source_code'],
+            'reviews'      => (int) ($observed['reviewsByCategory'][$f['key']] ?? 0),
         ])->all();
 
         return [
             'items'       => $items,
-            'total'       => (int) ($stats['kpi']['total'] ?? 0),
+            'total'       => $observed['returns'],
+            'cars'        => $observed['cars'],
             'open'        => (int) ($stats['kpi']['open'] ?? 0),
+            'reviews'     => (int) ($stats['kpi']['total'] ?? 0),
             'median_days' => $stats['kpi']['median_days'] ?? null,
             // A CODE, not a sentence — the UI owns the wording in both languages.
             'rule'        => 'REPEAT_FAULT_AFTER_REPAIR',
-            'origin'      => 'recurring_fault_reviews',
+            // Was 'recurring_fault_reviews'. That table only fills when a technician confirms a fault
+            // INSIDE the ticket workflow against a prior fix marked Fixed within 90 days — so on a fleet
+            // whose fault history is 21,928 imported sheet rows against 167 tasks, the card could only
+            // ever report what the workflow itself had witnessed. Measured at the time of the change: 0
+            // of the fleet's 207 repeat-fault chains had produced a review.
+            'origin'      => 'workshop_log_and_tickets',
             'window_days' => $stats['kpi']['window_days'] ?? null,
             'route'       => '/recurring-fault-reviews',
+            // What each ledger contributed, so the footer can state the mix rather than assert a merge.
+            'sources'     => $observed['sources'],
+            // The slice being ranked, echoed back. `total_returns` is the all-time figure, so the card
+            // can say "84 of 354 returns" instead of letting a filtered number read as the whole fleet.
+            'window'      => $observed['window'],
         ];
+    }
+
+    /**
+     * FLEET-WIDE OBSERVED REPEAT FAULTS, read from both ledgers through the per-car recurrence engine.
+     *
+     * VehicleFaultRecurrenceService already merges the workshop log and the ticket workflow, applies the
+     * episode rules (one repair is one episode however many times the car moved between garages) and
+     * keeps each chain's `sources`. It was only ever asked about ONE car at a time; this rolls it across
+     * the fleet so the dashboard and the vehicle profile can never contradict each other about what came
+     * back — they are now literally the same computation.
+     *
+     * A chain of N episodes is N−1 RETURNS: the first time is the original fault, every episode after it
+     * is the car coming back. Counting episodes would report a fault that happened once as a repeat.
+     *
+     * Cached hard: this walks every vehicle. The dashboard's own TTL governs the card.
+     *
+     * @return array{faults:array<int,array<string,mixed>>, returns:int, cars:int,
+     *               sources:array<string,int>, reviewsByCategory:array<string,int>}
+     */
+    private function observedRepeatFaults(array $window = []): array
+    {
+        // The SWEEP is cached all-time; the WINDOW is applied to its output. Walking 443 cars costs ~40s
+        // and the answer does not depend on the window — a return that happened in March happened in
+        // March whichever range you ask about — so caching per window would pay that cost again for every
+        // preset a user tries. One cached walk, cheap in-memory filters.
+        //
+        // Ranked AFTER the window, never by filtering an all-time top-6: a fault that is 9th over two
+        // years can be the worst thing in the fleet this month, and truncating first would hide it. Same
+        // rule RecurringFaultService::stats() already follows for its own panels.
+        $sweep = $this->remember('repeat_faults_sweep:v2', self::CACHE_TTL_REPEAT_SWEEP, function () {
+            return $this->sweepRepeatFaults();
+        });
+
+        return $this->aggregateRepeatFaults($sweep, $this->resolveRepeatWindow($window));
+    }
+
+    /**
+     * Resolve the faults tab's date filter into concrete bounds.
+     *
+     * An explicit from/to beats the trailing-days preset — the picker can send both, and a stale `days`
+     * must not silently clip a range drawn by hand. Dates are inclusive of their whole day. Mirrors
+     * RecurringFaultService::resolveWindow() deliberately, so the dashboard and the review page cannot
+     * disagree about what "last 90 days" means.
+     *
+     * @param  array{days?:?int, from?:?string, to?:?string}  $in
+     * @return array{days:int, from:?string, to:?string}
+     */
+    private function resolveRepeatWindow(array $in): array
+    {
+        $from = ($in['from'] ?? null) ? Carbon::parse($in['from'])->toDateString() : null;
+        $to   = ($in['to'] ?? null) ? Carbon::parse($in['to'])->toDateString() : null;
+
+        if ($from && $to && $from > $to) {
+            [$from, $to] = [$to, $from];
+        }
+
+        if ($from || $to) {
+            return ['days' => 0, 'from' => $from, 'to' => $to];
+        }
+
+        $days = max(0, (int) ($in['days'] ?? 0));
+
+        return [
+            'days' => $days,
+            'from' => $days > 0 ? Carbon::now()->subDays($days)->toDateString() : null,
+            'to'   => null,
+        ];
+    }
+
+    /**
+     * Rank the sweep's RETURN records inside one window.
+     *
+     * The unit is the RETURN, dated by when the car came back — not the fault chain. That is what makes
+     * a date filter meaningful: a chain that started in 2025 and returned again last week belongs in
+     * "last 30 days" for the return it just had, and its 2025 returns do not.
+     *
+     * @param  array{returns:array<int,array<string,mixed>>}  $sweep
+     * @param  array{days:int, from:?string, to:?string}  $w
+     * @return array<string,mixed>
+     */
+    private function aggregateRepeatFaults(array $sweep, array $w): array
+    {
+        $rows = array_filter($sweep['returns'] ?? [], fn ($r) => (! $w['from'] || $r['at'] >= $w['from'])
+            && (! $w['to'] || $r['at'] <= $w['to']));
+
+        $byFault = [];
+        $cars = [];
+        $sources = ['sheet' => 0, 'system' => 0, 'both' => 0];
+
+        foreach ($rows as $r) {
+            $cars[$r['vehicle_id']] = true;
+            $sources[strtolower($r['source_code'])] = ($sources[strtolower($r['source_code'])] ?? 0) + 1;
+
+            $key = $r['fault_key'];
+            $byFault[$key] ??= ['key' => $key, 'label' => $r['fault_label'], 'returns' => 0,
+                                'cars' => [], 'sheet_cars' => [], 'system_cars' => [],
+                                'fastest_days' => null, 'byCar' => []];
+            $f = &$byFault[$key];
+            $f['returns']++;
+            $f['cars'][$r['vehicle_id']] = true;
+            if ($r['source_code'] === 'SHEET' || $r['source_code'] === 'BOTH') {
+                $f['sheet_cars'][$r['vehicle_id']] = true;
+            }
+            if ($r['source_code'] === 'SYSTEM' || $r['source_code'] === 'BOTH') {
+                $f['system_cars'][$r['vehicle_id']] = true;
+            }
+            if ($r['gap_days'] !== null && ($f['fastest_days'] === null || $r['gap_days'] < $f['fastest_days'])) {
+                $f['fastest_days'] = (int) $r['gap_days'];
+            }
+
+            $car = &$f['byCar'][$r['vehicle_id']];
+            $car ??= ['id' => (int) $r['vehicle_id'], 'plate' => $r['plate'], 'car' => $r['car'],
+                      'count' => 0, 'fastest_days' => null, 'source_code' => $r['source_code'],
+                      'last_seen' => null];
+            $car['count']++;
+            if ($r['gap_days'] !== null && ($car['fastest_days'] === null || $r['gap_days'] < $car['fastest_days'])) {
+                $car['fastest_days'] = (int) $r['gap_days'];
+            }
+            if ($car['last_seen'] === null || $r['at'] > $car['last_seen']) {
+                $car['last_seen'] = $r['at'];
+            }
+            // One car can return for one fault from both ledgers across different visits.
+            if ($car['source_code'] !== $r['source_code']) {
+                $car['source_code'] = 'BOTH';
+            }
+            unset($car, $f);
+        }
+
+        $faults = collect($byFault)
+            ->map(fn ($f) => [
+                'key'          => $f['key'],
+                'label'        => $f['label'],
+                'returns'      => $f['returns'],
+                'cars'         => count($f['cars']),
+                'sheet_cars'   => count($f['sheet_cars']),
+                'system_cars'  => count($f['system_cars']),
+                'source_code'  => $f['sheet_cars'] && $f['system_cars'] ? 'BOTH' : ($f['system_cars'] ? 'SYSTEM' : 'SHEET'),
+                'fastest_days' => $f['fastest_days'],
+            ])
+            ->sortByDesc(fn ($f) => [$f['returns'], $f['cars']])
+            ->values()
+            ->all();
+
+        $reviewsByCategory = DB::table('recurring_fault_reviews')
+            ->selectRaw('category_key, symptom, count(*) as c')
+            ->when($w['from'], fn ($q) => $q->whereDate('opened_at', '>=', $w['from']))
+            ->when($w['to'], fn ($q) => $q->whereDate('opened_at', '<=', $w['to']))
+            ->groupBy('category_key', 'symptom')
+            ->get()
+            ->reduce(function (array $carry, $r) {
+                $key = $r->category_key
+                    ?: (FaultVocabulary::resolveCategory((string) $r->symptom)['key'] ?? null);
+                if ($key) {
+                    $carry[$key] = ($carry[$key] ?? 0) + (int) $r->c;
+                }
+
+                return $carry;
+            }, []);
+
+        return [
+            'faults'            => $faults,
+            'returns'           => count($rows),
+            'cars'              => count($cars),
+            'sources'           => $sources,
+            'reviewsByCategory' => $reviewsByCategory,
+            'carsByLabel'       => collect($byFault)
+                ->mapWithKeys(fn ($f) => [mb_strtolower($f['label']) => collect($f['byCar'])
+                    ->sortByDesc(fn ($c) => [$c['count'], $c['last_seen']])->values()->all()])
+                ->all(),
+            // Echoed back so the card can state the slice it is ranking rather than silently showing one.
+            'window'            => $w + ['total_returns' => count($sweep['returns'] ?? [])],
+        ];
+    }
+
+    /**
+     * THE EXPENSIVE WALK, done once. Emits one record per RETURN — the atom every window, ranking and
+     * drill-down is derived from — rather than a pre-aggregated ranking, so a date filter costs an array
+     * filter over this instead of a second 40-second sweep.
+     *
+     * A chain of N episodes is N−1 returns: the first episode is the fault happening, every episode
+     * after it is the car coming back. Each return is dated by when that later episode STARTED — the day
+     * the car actually came back — and carries ITS OWN episode's sources, which is more precise than the
+     * whole chain's: one chain can hold sheet episodes and ticket episodes.
+     *
+     * @return array{returns:array<int,array<string,mixed>>, swept_cars:int}
+     */
+    private function sweepRepeatFaults(): array
+    {
+        $engine = app(VehicleFaultRecurrenceService::class);
+
+        $returns = [];
+        $swept = 0;
+
+        foreach (Vehicle::query()->orderBy('id')->get(['id', 'plate_no', 'make', 'model']) as $vehicle) {
+            $report = $engine->forVehicle($vehicle);
+            if (empty($report['faults'])) {
+                continue;
+            }
+            $swept++;
+
+            $plate = $vehicle->plate_no ?: '#' . $vehicle->id;
+            $car   = trim(($vehicle->make ?? '') . ' ' . ($vehicle->model ?? '')) ?: null;
+
+            foreach ($report['faults'] as $fault) {
+                foreach (array_slice($fault['chain'], 1) as $link) {   // skip episode 1 — the original
+                    $sources  = $link['sources'] ?? [];
+                    $onSheet  = in_array(VehicleFaultRecurrenceService::SOURCE_LOG, $sources, true);
+                    $onTicket = in_array(VehicleFaultRecurrenceService::SOURCE_TICKET, $sources, true);
+
+                    $returns[] = [
+                        'fault_key'   => $fault['key'],
+                        'fault_label' => $fault['issue'],
+                        'vehicle_id'  => (int) $vehicle->id,
+                        'plate'       => $plate,
+                        'car'         => $car,
+                        'at'          => $link['first'],
+                        'gap_days'    => $link['gap_days'],
+                        'source_code' => $onSheet && $onTicket ? 'BOTH' : ($onTicket ? 'SYSTEM' : 'SHEET'),
+                    ];
+                }
+            }
+        }
+
+        return ['returns' => $returns, 'swept_cars' => $swept];
     }
 
     /**
@@ -1773,7 +2045,7 @@ class DashboardService
      *
      * @return array{label:string, total:int, cars:int, items:array<int,array<string,mixed>>}
      */
-    public function repeatCars(string $section, string $label, int $windowDays, int $limit = 10): array
+    public function repeatCars(string $section, string $label, int $windowDays, int $limit = 10, array $faultWindow = []): array
     {
         $windowDays = max(1, min(365, $windowDays));
         $limit      = max(1, min(50, $limit));
@@ -1784,11 +2056,13 @@ class DashboardService
             return $empty;
         }
 
-        $key = 'repeat-cars:v1:' . $section . ':' . mb_strtolower($label) . ':' . $windowDays . ':' . $limit;
+        $fw  = $this->resolveRepeatWindow($faultWindow);
+        $key = 'repeat-cars:v2:' . $section . ':' . mb_strtolower($label) . ':' . $windowDays . ':' . $limit
+             . ':' . $fw['days'] . ':' . ($fw['from'] ?? '') . ':' . ($fw['to'] ?? '');
 
-        return $this->remember($key, self::CACHE_TTL, function () use ($section, $label, $windowDays, $limit, $empty) {
+        return $this->remember($key, self::CACHE_TTL, function () use ($section, $label, $windowDays, $limit, $empty, $faultWindow) {
             $by = match ($section) {
-                'faults'   => $this->faultRepeatCars($label),
+                'faults'   => $this->faultRepeatCars($label, $faultWindow),
                 'parts'    => $this->partRepeatCars($label, $windowDays),
                 'services' => $this->serviceRepeatCars($label, $windowDays),
                 default    => null,
@@ -1818,41 +2092,17 @@ class DashboardService
      * Cars behind one recurring FAULT. Mirrors the key/label rule RecurringFaultService ranks by — the
      * ontology category when it tagged the fault, else the raw symptom — so the labels match the card.
      */
-    private function faultRepeatCars(string $label): array
+    private function faultRepeatCars(string $label, array $faultWindow = []): array
     {
-        $rows = RecurringFaultReview::query()
-            ->select(['id', 'vehicle_id', 'symptom', 'category_key', 'days_since_repair', 'opened_at'])
-            ->with(['vehicle:id,plate_no,make,model'])
-            ->whereNotNull('vehicle_id')
-            ->get()
-            ->filter(function ($r) use ($label) {
-                $name = $r->category_key
-                    ? str_replace('_', ' ', (string) $r->category_key)
-                    : trim((string) $r->symptom);
+        // Read straight out of the sweep the bar was ranked from, so the row and the panel it opens can
+        // never disagree. Previously this re-derived the answer from `recurring_fault_reviews` and
+        // matched on the label it was handed — which worked only while the card was ALSO ranking that
+        // table. Now the card ranks observed chains, whose labels are canonical category names
+        // ("Tyres & Wheels", "Climate / A/C") that no review row has ever carried, so the old lookup
+        // would have opened every row onto an empty panel.
+        $cars = $this->observedRepeatFaults($faultWindow)['carsByLabel'][mb_strtolower(trim($label))] ?? [];
 
-                return strcasecmp($name, $label) === 0;
-            });
-
-        $by = [];
-        foreach ($rows as $r) {
-            $vid = (int) $r->vehicle_id;
-            $by[$vid] ??= [
-                'id'           => $vid,
-                'plate'        => $r->vehicle?->plate_no ?: '#' . $vid,
-                'car'          => trim(($r->vehicle?->make ?? '') . ' ' . ($r->vehicle?->model ?? '')) ?: null,
-                'count'        => 0,
-                'fastest_days' => null,
-            ];
-            $by[$vid]['count']++;
-            // For a fault, "fastest" is how quickly it returned after the repair — the recurrence engine
-            // already measured that, so it is read rather than recomputed.
-            $d = $r->days_since_repair;
-            if ($d !== null && ($by[$vid]['fastest_days'] === null || $d < $by[$vid]['fastest_days'])) {
-                $by[$vid]['fastest_days'] = (int) $d;
-            }
-        }
-
-        return $by;
+        return collect($cars)->keyBy('id')->all();
     }
 
     /**
@@ -1954,7 +2204,7 @@ class DashboardService
      *
      * @return array{label:string, vehicle:array|null, counted:int, items:array<int,array<string,mixed>>}
      */
-    public function repeatEvents(string $section, string $label, int $vehicleId, int $windowDays): array
+    public function repeatEvents(string $section, string $label, int $vehicleId, int $windowDays, array $faultWindow = []): array
     {
         $windowDays = max(1, min(365, $windowDays));
         $label      = trim($label);
@@ -1964,16 +2214,18 @@ class DashboardService
             return $empty;
         }
 
-        $key = 'repeat-events:v1:' . $section . ':' . mb_strtolower($label) . ':' . $vehicleId . ':' . $windowDays;
+        $fw  = $this->resolveRepeatWindow($faultWindow);
+        $key = 'repeat-events:v2:' . $section . ':' . mb_strtolower($label) . ':' . $vehicleId . ':' . $windowDays
+             . ':' . $fw['days'] . ':' . ($fw['from'] ?? '') . ':' . ($fw['to'] ?? '');
 
-        return $this->remember($key, self::CACHE_TTL, function () use ($section, $label, $vehicleId, $windowDays, $empty) {
+        return $this->remember($key, self::CACHE_TTL, function () use ($section, $label, $vehicleId, $windowDays, $empty, $faultWindow) {
             $v = DB::table('vehicles')->where('id', $vehicleId)->select('id', 'plate_no', 'make', 'model')->first();
             if (! $v) {
                 return $empty;
             }
 
             $items = match ($section) {
-                'faults'   => $this->faultRepeatEvents($label, $vehicleId),
+                'faults'   => $this->faultRepeatEvents($label, $vehicleId, $faultWindow),
                 'parts'    => $this->partRepeatEvents($label, $vehicleId, $windowDays),
                 'services' => $this->serviceRepeatEvents($label, $vehicleId, $windowDays),
                 default    => null,
@@ -2095,34 +2347,87 @@ class DashboardService
     }
 
     /** Each recorded recurrence of this fault on this car, with how long the previous repair held. */
-    private function faultRepeatEvents(string $label, int $vehicleId): array
+    private function faultRepeatEvents(string $label, int $vehicleId, array $faultWindow = []): array
     {
-        $rows = RecurringFaultReview::query()
-            ->select(['id', 'vehicle_id', 'symptom', 'category_key', 'status', 'decision',
-                'days_since_repair', 'previous_garage_name', 'opened_at'])
-            ->where('vehicle_id', $vehicleId)
-            ->get()
-            ->filter(function ($r) use ($label) {
-                $name = $r->category_key
-                    ? str_replace('_', ' ', (string) $r->category_key)
-                    : trim((string) $r->symptom);
+        // The window narrows what COUNTS, not what is shown. The full chain stays visible because the
+        // earlier episodes are the context that makes a gap readable — "31d after" is meaningless
+        // without the visit it came after. Only the `counted` badge respects the filter, which is what
+        // keeps the level-2 count and the level-3 badges reconciling under any window.
+        $w = $this->resolveRepeatWindow($faultWindow);
+        // THE EPISODE CHAIN, not the review table. This is the third level of the same drill-down whose
+        // first two levels now read observed history, and it had the same defect they did: it filtered
+        // `recurring_fault_reviews` by the label it was handed. The card ranks canonical category names
+        // ("Tyres & Wheels") that no review row has ever carried, and the sheet-sourced cars behind those
+        // bars have no reviews at all — so every car opened onto "No records to show."
+        //
+        // One event per EPISODE, which is what a "return" means here: the car going back in for a fault
+        // it had already been in for. Episode 1 is the original (`counted` false, no gap — the UI renders
+        // it as "first on record"); every episode after it is a return.
+        $vehicle = Vehicle::find($vehicleId);
+        if (! $vehicle) {
+            return [];
+        }
 
-                return strcasecmp($name, $label) === 0;
-            })
-            ->sortBy(fn ($r) => optional($r->opened_at)->toDateString() ?? '');
+        $report = app(VehicleFaultRecurrenceService::class)->forVehicle($vehicle);
+
+        $fault = collect($report['faults'] ?? [])
+            ->first(fn ($f) => strcasecmp((string) $f['issue'], $label) === 0);
+        if (! $fault) {
+            return [];
+        }
 
         $out = [];
-        foreach ($rows as $r) {
+        foreach ($fault['chain'] as $i => $link) {
+            // 'log' is this engine's word for the imported sheet; the card's vocabulary is 'sheet'. An
+            // episode evidenced by both ledgers says so rather than picking a winner.
+            $sources = $link['sources'] ?? [];
+            $onSheet = in_array(VehicleFaultRecurrenceService::SOURCE_LOG, $sources, true);
+            $onTicket = in_array(VehicleFaultRecurrenceService::SOURCE_TICKET, $sources, true);
+
+            // WHERE THE RECORD LIVES. A count is only auditable if the reader can open the thing it was
+            // counted from, and the two ledgers live on different screens:
+            //   · a ticket episode → the ticket itself
+            //   · a sheet episode  → the car's Timeline, deep-linked to that exact log row. VehicleProfile
+            //     already honours ?event=<maintenances.id> (highlight + scroll into view), so this reuses
+            //     the anchor Foresight and Fleet Utilization established rather than inventing one.
+            $ticketId = $link['ticket_ids'][0] ?? null;
+            $logId    = $link['log_ids'][0] ?? null;
+
+            [$href, $linkKind] = match (true) {
+                $ticketId !== null => ['/maintenance-workflow/' . $ticketId, 'ticket'],
+                $logId !== null    => ['/vehicles/' . $vehicleId . '?event=' . $logId, 'log'],
+                default            => [null, null],
+            };
+
             $out[] = [
-                'at'       => optional($r->opened_at)->toDateString(),
-                'detail'   => trim((string) $r->symptom) ?: $label,
-                'source'   => 'review',
-                // For a fault the gap that matters is how long the previous repair lasted.
-                'gap_days' => $r->days_since_repair === null ? null : (int) $r->days_since_repair,
-                'counted'  => true,
-                'garage'   => $r->previous_garage_name,
-                'status'   => $r->status,
-                'decision' => $r->decision,
+                'at'       => $link['first'],
+                // What the workshop actually wrote, else where the car was — never the bar's own label,
+                // which would just echo the row the reader already clicked.
+                'detail'   => $link['garages'] ? implode(', ', $link['garages']) : null,
+                'source'   => $onSheet && $onTicket ? 'both' : ($onTicket ? 'ticket' : 'sheet'),
+                'gap_days' => $link['gap_days'],
+                // The first episode is the fault happening, not the fault coming back — and a return
+                // outside the active date filter is still history, just not history this view counted.
+                'counted'  => $i > 0
+                    && (! $w['from'] || $link['first'] >= $w['from'])
+                    && (! $w['to'] || $link['first'] <= $w['to']),
+                'in_window' => (! $w['from'] || $link['first'] >= $w['from'])
+                    && (! $w['to'] || $link['first'] <= $w['to']),
+                'garage'   => $link['garages'][0] ?? null,
+                'visits'   => $link['visits'],
+                'shop_days' => $link['shop_days'],
+                'ticket_ids' => $link['ticket_ids'],
+
+                'href'      => $href,
+                'link_kind' => $linkKind,
+
+                // The Type-U maintenance contract covering this episode, when one does. Offered as a
+                // SECOND link rather than folded into the first: "show me the repair record" and "show me
+                // the contract it went out on" are different questions. Null is common and honest — a
+                // sheet-logged visit with no maintenance contract raised is the normal case here, not a
+                // data error ([[contract-is-not-a-garage-trip]]).
+                'contract_id' => $link['contract_id'],
+                'contract_no' => $link['contract_no'],
             ];
         }
 

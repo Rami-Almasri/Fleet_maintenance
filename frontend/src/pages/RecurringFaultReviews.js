@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import RecurringFaultsAnalytics from '../components/analytics/RecurringFaultsAnalytics';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
@@ -14,10 +15,54 @@ import { useI18n } from '../i18n/I18nContext';
 
 const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
 
-const STATUS_TONE = { open: 'amber', decided: 'gray' };
+/**
+ * WHERE ONE OCCURRENCE ACTUALLY LIVES — the record, and the contract it happened under.
+ *
+ * A case this page cannot open back to its evidence is an assertion, not a finding. It matters more here
+ * than anywhere else because most cases are sheet-sourced: their "Ticket" row is legitimately empty, and
+ * with nothing to click that reads as missing data rather than as a visit recorded before the ticket
+ * workflow existed.
+ *
+ * Two targets on purpose. The RECORD is the workshop row (or the ticket, when the workflow owned the
+ * visit); the CONTRACT is the paperwork the car went out on. "Show me the repair" and "show me the
+ * contract" are different questions, and a contract is often absent — most sheet-logged visits never had
+ * a Type-U raised, so the chip simply does not render rather than showing a dead "—".
+ */
+function RecordLinks({ href, contract, t }) {
+  if (!href && !contract) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-slate-200/70 pt-2">
+      {href && (
+        <Link
+          to={href}
+          className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-[11px] font-medium text-indigo-600 ring-1 ring-indigo-200 transition hover:bg-indigo-50"
+        >
+          {t('Open the record')}
+        </Link>
+      )}
+      {contract && (
+        <Link
+          to={`/contracts/${contract.id}`}
+          className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 transition hover:text-indigo-600 hover:ring-indigo-200"
+        >
+          {t('Contract')} #{contract.no || contract.id}
+        </Link>
+      )}
+    </div>
+  );
+}
+
+const STATUS_TONE = { open: 'amber', decided: 'gray', detected: 'slate' };
 const STATUS_FILTERS = ['open', 'decided'];
 // Module-level word helper: the translator is threaded in from the component that renders it.
-const statusLabel = (t, s) => (s === 'open' ? t('Open') : s === 'decided' ? t('Decided') : s);
+// 'detected' is not a stored status — it is the ABSENCE of one. The page now lists recurrences read
+// from the records themselves, so a case exists the moment the fault came back; the review row is
+// created only when a human rules on it. Naming that state stops an unruled case reading as an
+// oversight when it is simply a fact nobody has been asked about yet.
+const statusLabel = (t, s) => (s === 'open' ? t('Open')
+  : s === 'decided' ? t('Decided')
+    : s === 'detected' ? t('Detected') : s);
 
 // Decisions are no longer recorded from this page — cases are ruled on by clearing or rejecting the
 // repair gate. Rulings stored before that change still render, so the tones stay. Wording lives in the
@@ -99,6 +144,7 @@ function DetailModal({ open, review, onClose }) {
               <Row label={t('recurringFaults.result')} value={tf(`recurringFaults.prevResult.${review.previous_result}`, '—')} />
               <Row label={t('Odometer')} value={km(review.previous_odometer)} />
             </dl>
+            <RecordLinks href={review.previous_href} contract={review.previous_contract} t={t} />
             {parts.length > 0 && (
               <div className="mt-2">
                 <p className="text-xs font-medium text-slate-500">{t('Parts replaced')}</p>
@@ -121,8 +167,10 @@ function DetailModal({ open, review, onClose }) {
               <Row label={t('Current odometer')} value={km(review.current_odometer)} />
               <Row label={t('Distance since repair')} value={km(review.distance_since_repair)} />
               <Row label={t('Days since repair')} value={days(t, review.days_since_repair)} />
+              <Row label={t('Came back')} value={fmtDate(review.last_seen) || '—'} />
               <Row label={t('Times fixed before')} value={num(Math.max(0, (review.occurrence_count || 1) - 1))} />
             </dl>
+            <RecordLinks href={review.latest_href} contract={review.latest_contract} t={t} />
           </div>
         </div>
 
@@ -273,14 +321,32 @@ export default function RecurringFaultReviews() {
                 <tbody>
                   {reviews.map((r) => (
 
-                    <tr key={r.id} className="cursor-pointer bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40" onClick={() => setDetail(r)}>
+                    <tr key={r.detected_key || r.id} className="cursor-pointer bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40" onClick={() => setDetail(r)}>
                       <td className="border-b border-slate-100 px-5 py-3.5">
                         <div className="font-medium text-slate-900">{plate(r.vehicle)}</div>
                         <div className="text-xs text-slate-400">{carLine(r.vehicle)}</div>
                       </td>
                       <td className="border-b border-slate-100 px-5 py-3.5 max-w-xs">
+                        {/* The EXACT fault, and the day it came back. Both were missing: the page named
+                            the system and dated the case, so a reader learned neither what broke nor
+                            when it broke again. */}
                         <div className="truncate font-medium text-slate-800">{r.symptom}</div>
-                        <div className="text-xs text-slate-400">{r.previous_result === 'verified_fixed' ? t('Previously verified fixed') : t('Previously fixed')}</div>
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
+                          {r.last_seen && <span>{t('Came back {date}', { date: fmtDate(r.last_seen) || r.last_seen })}</span>}
+                          {/* Where the evidence came from, and how strong it is. A case resting on the
+                              sheet's bare system word is real history but thin — a ruling must be made
+                              knowing that, not discover it afterwards. */}
+                          {r.source_code && (
+                            <span className="rounded bg-slate-100 px-1 py-px text-[10px] text-slate-500">
+                              {r.source_code === 'BOTH' ? t('Both sources') : r.source_code === 'SHEET' ? t('Sheet') : t('System')}
+                            </span>
+                          )}
+                          {r.evidence === 'system_word' && (
+                            <span className="rounded bg-amber-50 px-1 py-px text-[10px] font-medium text-amber-700 ring-1 ring-amber-200" title={t('One side of this case recorded only the system, not a named fault.')}>
+                              {t('system word only')}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">
                         <div>{r.previous_garage || '—'}</div>

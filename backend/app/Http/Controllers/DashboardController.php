@@ -185,6 +185,24 @@ class DashboardController extends Controller
      * but no `parts.view` therefore gets the faults and services tabs and no parts tab at all — rather
      * than a parts tab that 403s, or worse, one that renders the parts ledger to someone without it.
      */
+    /**
+     * The faults tab's date filter, as the card sends it: a trailing-days preset (0 / absent = all time)
+     * or an explicit from/to range, which wins when either end is set.
+     *
+     * Read once, here, so all THREE levels of the drill-down are scoped by the same rule. A bar filtered
+     * to 90 days whose car list and record list were not would contradict the number the reader clicked.
+     *
+     * @return array{days:int, from:?string, to:?string}
+     */
+    private function faultWindow(Request $request): array
+    {
+        return [
+            'days' => max(0, (int) $request->query('fault_days', 0)),
+            'from' => $request->query('fault_from') ?: null,
+            'to'   => $request->query('fault_to') ?: null,
+        ];
+    }
+
     public function repeats(Request $request, DashboardService $dashboard)
     {
         try {
@@ -209,7 +227,7 @@ class DashboardController extends Controller
             }
 
             return ResponseHelper::SuccessResponse(
-                $dashboard->repeats($windowDays, $limit, $only),
+                $dashboard->repeats($windowDays, $limit, $only, $this->faultWindow($request)),
                 'Repeat leaderboards retrieved successfully',
                 200
             );
@@ -251,7 +269,7 @@ class DashboardController extends Controller
             $limit      = min(50, max(1, (int) $request->query('limit', 10)));
 
             return ResponseHelper::SuccessResponse(
-                $dashboard->repeatCars($section, $label, $windowDays, $limit),
+                $dashboard->repeatCars($section, $label, $windowDays, $limit, $this->faultWindow($request)),
                 'Repeat drill-down retrieved successfully',
                 200
             );
@@ -290,7 +308,7 @@ class DashboardController extends Controller
             $vehicleId  = (int) $request->query('vehicle_id', 0);
 
             return ResponseHelper::SuccessResponse(
-                $dashboard->repeatEvents($section, $label, $vehicleId, $windowDays),
+                $dashboard->repeatEvents($section, $label, $vehicleId, $windowDays, $this->faultWindow($request)),
                 'Repeat records retrieved successfully',
                 200
             );

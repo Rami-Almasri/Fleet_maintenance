@@ -8,8 +8,11 @@ use App\Models\RecurringFaultReview;
 use App\Models\RepairInspection;
 use App\Models\User;
 use App\Models\Vehicle;
+use App\Support\FaultVocabulary;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Recurring-Fault Intelligence — detects a vehicle returning with the SAME confirmed problem after a
@@ -233,6 +236,159 @@ class RecurringFaultService
         return $review->fresh();
     }
 
+    /** The fleet sweep walks every car's merged history — cached like the dashboard's, for the same reason. */
+    private const DETECTED_TTL = 1800;
+
+    /**
+     * EVERY RECURRENCE THE RECORDS ACTUALLY SHOW — read from both ledgers, joined to any management
+     * ruling that exists for it.
+     *
+     * This page used to read `recurring_fault_reviews` alone. That table only fills when a technician
+     * confirms a fault inside the ticket workflow against a prior fix marked Fixed within 90 days, so on
+     * a fleet whose fault history is 21,928 imported sheet rows it had never held a single real row —
+     * only 39 seeded by RecurringFaultDemoSeeder. The page reported four fake faults and called it
+     * management information.
+     *
+     * So the page now works the way the dashboard card and the test-drive bench do: DETECTION is read
+     * from the merged history ([[fault-history-both-sources]]), and the review table holds only what it
+     * is actually for — a human's RULING on a case. A detected case with no ruling is `status: detected`;
+     * once someone decides it, the row exists and carries its decision.
+     *
+     * Nothing here writes. A case is opened only when a person rules on it.
+     *
+     * @return \Illuminate\Support\Collection<int,object>
+     */
+    public function detectedCases(): Collection
+    {
+        $cases = Cache::remember('recurring:detected:v1', self::DETECTED_TTL, function () {
+            $history = app(VehicleFaultHistoryService::class);
+            $out = [];
+
+            foreach (Vehicle::query()->orderBy('id')->get(['id', 'plate_no', 'make', 'model']) as $vehicle) {
+                foreach ($history->recurrenceCandidates($vehicle->id, $this->windowDays()) as $c) {
+                    if (! $c['qualifies']) {
+                        continue;
+                    }
+                    $sources = array_values(array_unique(array_merge(
+                        $c['previous']['sources'],
+                        $c['latest']['sources'],
+                    )));
+                    sort($sources);
+
+                    $out[] = [
+                        'key'           => $vehicle->id . '|' . $c['key'] . '|' . $c['latest']['at'],
+                        'vehicle_id'    => (int) $vehicle->id,
+                        'plate'         => $vehicle->plate_no,
+                        'make'          => $vehicle->make,
+                        'model'         => $vehicle->model,
+                        // THE EXACT FAULT, as the workshop wrote it — never the system word.
+                        'symptom'       => $c['latest']['label'],
+                        'fault_key'     => $c['key'],
+                        'previous_at'   => $c['previous']['at'],
+                        'latest_at'     => $c['latest']['at'],
+                        'gap_days'      => $c['gap_days'],
+                        'occurrence'    => $c['occurrence'],
+                        'garage'        => $c['previous']['garage'],
+                        'latest_garage' => $c['latest']['garage'],
+                        'sources'       => $sources,
+                        'source_code'   => count($sources) > 1 ? 'BOTH' : (strtoupper($sources[0] ?? 'SHEET')),
+                        'match'         => $c['match'],
+                        // 'system_word' = one side of this case is only the sheet's category word. Real
+                        // history, thinner evidence — said out loud so a ruling is made knowing it.
+                        'evidence'      => ($c['previous']['grain'] === 'category' || $c['latest']['grain'] === 'category')
+                            ? 'system_word' : 'named_fault',
+                        'ticket_id'     => $c['latest']['ticket_id'],
+                        'prev_ticket_id' => $c['previous']['ticket_id'],
+                        // Both sides' rows, so EACH occurrence can be opened, not just the latest.
+                        'ref_ids'       => $c['latest']['ref_ids'],
+                        'prev_ref_ids'  => $c['previous']['ref_ids'],
+                    ];
+                }
+            }
+
+            return $this->attachContracts($out);
+        });
+
+        // Rulings are joined live, never cached: a decision must show the moment it is made.
+        $reviews = RecurringFaultReview::query()
+            ->get(['id', 'vehicle_id', 'symptom', 'category_key', 'status', 'decision', 'decision_note',
+                   'decided_by_name', 'decided_at', 'opened_by_name', 'opened_at'])
+            ->keyBy(fn ($r) => $r->vehicle_id . '|' . FaultVocabulary::normalise((string) $r->symptom));
+
+        return collect($cases)->map(function (array $c) use ($reviews) {
+            $ruling = $reviews->get($c['vehicle_id'] . '|' . FaultVocabulary::normalise($c['symptom']));
+
+            return (object) ($c + [
+                'review_id'     => $ruling?->id,
+                'status'        => $ruling?->status ?? 'detected',
+                'decision'      => $ruling?->decision,
+                'decision_note' => $ruling?->decision_note,
+                'decided_by'    => $ruling?->decided_by_name,
+                'decided_at'    => $ruling?->decided_at,
+                'opened_by'     => $ruling?->opened_by_name,
+            ]);
+        });
+    }
+
+    /**
+     * Resolve the Type-U maintenance CONTRACT covering each occurrence, so a case can be opened back to
+     * the paperwork it happened under.
+     *
+     * `maintenances.contract_id` cannot answer this — it is populated on 6 of 28,594 rows. The link has
+     * to be derived the way VehicleFaultRecurrenceService derives it: the latest Type-U contract whose
+     * window (out_date − 2 days … in_date) covers the visit date. Batched per vehicle rather than
+     * per occurrence; the sweep already walks the whole fleet and this must not add a query per case.
+     *
+     * Null is the normal answer, not a gap: most sheet-logged visits never had a maintenance contract
+     * raised ([[contract-is-not-a-garage-trip]]). The UI shows the link only when one exists.
+     *
+     * @param  array<int,array<string,mixed>>  $cases
+     * @return array<int,array<string,mixed>>
+     */
+    private function attachContracts(array $cases): array
+    {
+        $vehicleIds = array_values(array_unique(array_column($cases, 'vehicle_id')));
+        if (! $vehicleIds) {
+            return $cases;
+        }
+
+        $byVehicle = [];
+        foreach (DB::table('contracts')
+            ->where('contract_type', 'U')
+            ->whereIn('vehicle_id', $vehicleIds)
+            ->whereNotNull('out_date')
+            ->orderBy('out_date')
+            ->get(['id', 'contract_no', 'vehicle_id', 'out_date', 'in_date']) as $k) {
+            $byVehicle[(int) $k->vehicle_id][] = $k;
+        }
+
+        $cover = function (int $vehicleId, ?string $date) use ($byVehicle) {
+            if (! $date) {
+                return [null, null];
+            }
+            $best = null;
+            foreach ($byVehicle[$vehicleId] ?? [] as $k) {
+                $from = Carbon::parse($k->out_date)->subDays(2)->toDateString();
+                $to   = $k->in_date ? Carbon::parse($k->in_date)->toDateString() : null;
+                if ($date < $from || ($to && $date > $to)) {
+                    continue;
+                }
+                if (! $best || $k->out_date > $best->out_date) {
+                    $best = $k;   // the latest covering contract wins
+                }
+            }
+
+            return $best ? [(int) $best->id, $best->contract_no] : [null, null];
+        };
+
+        foreach ($cases as &$c) {
+            [$c['contract_id'], $c['contract_no']] = $cover($c['vehicle_id'], $c['latest_at']);
+            [$c['prev_contract_id'], $c['prev_contract_no']] = $cover($c['vehicle_id'], $c['previous_at']);
+        }
+
+        return $cases;
+    }
+
     /**
      * The Recurring Fault Reviews list, filtered for the management page.
      *
@@ -281,16 +437,30 @@ class RecurringFaultService
         $now         = Carbon::now();
         $windowStart = $now->copy()->startOfMonth()->subMonths(11); // 12 calendar months inclusive
 
-        // One pass over the columns the charts need; the table is small (one row per recurrence) and this
-        // keeps the month/bucket/garage roll-ups consistent with each other.
-        $rows = RecurringFaultReview::query()
-            ->select([
-                'id', 'status', 'decision', 'vehicle_id', 'symptom', 'category_key',
-                'previous_garage_id', 'previous_garage_name', 'previous_result',
-                'days_since_repair', 'distance_since_repair', 'occurrence_count', 'opened_at',
-            ])
-            ->with(['vehicle:id,plate_no,make,model'])
-            ->get();
+        // DETECTED CASES, not review rows. The charts used to run off `recurring_fault_reviews`, which
+        // held nothing but demo data — so every panel on this page described a fleet that did not exist.
+        // Reshaped to the fields the roll-ups below already expect, so the charts are unchanged:
+        //   opened_at         → when the fault came BACK (the event the page is about)
+        //   days_since_repair → the gap between the two occurrences
+        //   previous_result   → whether the earlier visit closed as verified, or merely closed
+        $rows = $this->detectedCases()->map(fn ($c) => (object) [
+            'id'                    => $c->review_id,
+            'status'                => $c->status === 'detected' ? RecurringFaultReview::STATUS_OPEN : $c->status,
+            'decision'              => $c->decision,
+            'vehicle_id'            => $c->vehicle_id,
+            'symptom'               => $c->symptom,
+            'category_key'          => null,
+            'previous_garage_id'    => null,
+            'previous_garage_name'  => $c->garage,
+            'previous_result'       => RecurringFaultReview::RESULT_FIXED,
+            'days_since_repair'     => $c->gap_days,
+            'distance_since_repair' => null,
+            'occurrence_count'      => $c->occurrence,
+            'opened_at'             => Carbon::parse($c->latest_at),
+            'vehicle'               => (object) [
+                'plate_no' => $c->plate, 'make' => $c->make, 'model' => $c->model,
+            ],
+        ]);
 
         $total   = $rows->count();
         $open    = $rows->where('status', RecurringFaultReview::STATUS_OPEN)->count();
@@ -333,13 +503,26 @@ class RecurringFaultService
             ->values()
             ->all();
 
-        // How a recurrence is named on the charts: the ontology category when it tagged the fault,
-        // otherwise the raw symptom the workshop typed. Keyed case-insensitively so "AC not cooling"
-        // and "ac not cooling" are one fault, not two.
-        $faultKey   = fn ($r) => $r->category_key ?: mb_strtolower(trim((string) $r->symptom));
-        $faultLabel = fn ($r) => $r->category_key
-            ? str_replace('_', ' ', (string) $r->category_key)
-            : (trim((string) $r->symptom) ?: 'Unspecified');
+        // How a recurrence is named on the charts: THE EXACT FAULT the workshop recorded, falling back
+        // to its system only when nothing specific was typed.
+        //
+        // This used to prefer `category_key`, so every chart on the page said "engine" and "brakes" —
+        // the system word — while the table beside it said "Engine overheating". A reader cannot act on
+        // "engine": the whole point of the page is which repair did not hold.
+        //
+        // Keyed through FaultVocabulary, the same identity ladder the merged history uses, so one fault
+        // written two ways ("Engine Oil leak" / "Engine Oil Leak", or a sheet label against its catalog
+        // twin) is one bar rather than three that each look rarer than the fault really is.
+        $faultKey = function ($r) {
+            $symptom = trim((string) $r->symptom);
+            if ($symptom !== '') {
+                return FaultVocabulary::catalogSlugOf($symptom) ?: FaultVocabulary::normalise($symptom);
+            }
+
+            return $r->category_key ?: 'unspecified';
+        };
+        $faultLabel = fn ($r) => trim((string) $r->symptom)
+            ?: ($r->category_key ? FaultVocabulary::categoryLabel((string) $r->category_key) : 'Unspecified');
 
         // A rank is a number until you can see what it is made of. Both "keeps coming back" rankings
         // carry a breakdown of the OTHER dimension — the cars behind a fault, the faults behind a car —
@@ -450,6 +633,14 @@ class RecurringFaultService
                     'cars'      => $g->pluck('vehicle_id')->filter()->unique()->count(),
                     'top_cars'  => $cars,
                     'cars_more' => $more,
+                    // WHEN IT LAST CAME BACK. A fault ranked 1st because of a batch fixed in March
+                    // reads very differently from one that returned last week, and the rank alone
+                    // cannot tell them apart.
+                    'last_seen' => optional($g->pluck('opened_at')->filter()->max())->toDateString(),
+                    // The distinct wordings folded into this one bar — the proof behind the merge, the
+                    // same way the vehicle profile's repeat chains show their variants.
+                    'variants'  => $g->pluck('symptom')->filter()->map(fn ($s) => trim($s))
+                        ->unique()->values()->take(4)->all(),
                 ];
             })
             ->sortByDesc('value')
