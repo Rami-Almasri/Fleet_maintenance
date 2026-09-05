@@ -5040,6 +5040,7 @@ const phrasesAr = {
   'Vehicle profile sections': 'أقسام ملف المركبة',
   'Vehicle Readiness': 'جاهزية المركبة',
   'Vehicle Report': 'تقرير المركبة',
+  'Download dossier': 'تنزيل الملف',
   'Vehicle sold': 'بيعت المركبة',
   'Vehicle status': 'حالة المركبة',
   'Vehicles': 'المركبات',

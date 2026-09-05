@@ -88,21 +88,41 @@ class VehicleSystemPeriodService
     /**
      * ONE ENTRY PER NAMED FAULT, not one per visit.
      *
-     * Grouped on `fault_key` — the identity the evidence layer already computed (lowercased, stripped
-     * of punctuation and of parenthetical asides). Two spellings of one fault therefore group; two
-     * genuinely different faults never do, because nothing here merges beyond an exact key match. If
-     * the platform's own vocabulary cannot say two descriptions are the same fault, they stay apart:
+     * Grouped on the identities the evidence layer already computed for the incident (lowercased,
+     * stripped of punctuation and of parenthetical asides). Two spellings of one fault therefore group;
+     * two genuinely different faults never do, because nothing here merges beyond an exact key match.
+     * If the platform's own vocabulary cannot say two descriptions are the same fault, they stay apart:
      * an over-merged report claims a recurrence that never happened, which is the more expensive error.
+     *
+     * ONE INCIDENT CAN APPEAR UNDER SEVERAL PROBLEMS, and must. A visit that found a rim scratch and a
+     * paint fault named two faults, so it is one visit and two entries here — which is why the summary
+     * counts visits separately from problems and never adds these rows up as trips.
+     * @see VehicleSystemEvidenceService::faultParts for why identity is taken phrase by phrase.
      *
      * @param  Collection<int, array>  $incidents
      */
     private function problems(Collection $incidents): array
     {
-        $confirmed = $incidents->where('is_confirmed', true)->values();
+        // One (fault, incident) pair per named fault. `faults` is the evidence layer's list; an
+        // incident from an older payload that carries none falls back to its single identity, so the
+        // grouping degrades to exactly what it was rather than to nothing.
+        $expanded = $incidents
+            ->where('is_confirmed', true)
+            ->values()
+            ->flatMap(fn (array $i) => collect($i['faults'] ?? [])
+                ->whenEmpty(fn () => collect(array_filter([
+                    $i['fault_key'] ? ['text' => $i['fault'], 'key' => $i['fault_key']] : null,
+                ])))
+                // array_merge, NOT `+`: the union operator keeps the LEFT operand's key, so the
+                // incident's own composite fault would survive and every group would be labelled with
+                // the whole string it was split out of.
+                ->map(fn (array $f) => array_merge($i, ['fault' => $f['text'], 'fault_key' => $f['key']])));
 
-        return $confirmed
+        return $expanded
             ->groupBy('fault_key')
-            ->map(function (Collection $group) use ($incidents) {
+            // "What came next" is asked of the EXPANDED list too: the next thing that happened to this
+            // car is a fault it named, not the composite string a row happened to be written as.
+            ->map(function (Collection $group) use ($expanded) {
                 $ordered     = $group->sortBy('start')->values();
                 $occurrences = $this->occurrences($ordered);
                 $dates       = $ordered->pluck('start')->filter()->values();
@@ -129,7 +149,7 @@ class VehicleSystemPeriodService
                     'returned'    => $this->returned($ordered, $occurrences),
                     // §"the next event is a different fault" — stated so the reader can see that the
                     // car came back for something else and that this is NOT a recurrence of this fault.
-                    'followed_by' => $this->followedByDifferentFault($ordered->last(), $incidents),
+                    'followed_by' => $this->followedByDifferentFault($ordered->last(), $expanded),
                 ];
             })
             // Most-repeated first, then most recent: the thing that keeps happening leads the page.

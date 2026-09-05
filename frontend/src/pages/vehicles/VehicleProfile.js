@@ -31,7 +31,6 @@ import { aed2, fmtDate, fmtClock, fmtSeconds, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
 import { faultTagSegments, isServiceOnlyVisit, visitsForFault } from '../../lib/faultCategories';
 import { useI18n } from '../../i18n/I18nContext';
-import { openVehicleProfileReport } from '../../lib/vehicleProfileReport';
 import { SHOW_FINANCIALS } from '../../config/features';
 import ReadinessChecklist from './ReadinessChecklist';
 import PlateHistory from './PlateHistory';
@@ -377,7 +376,7 @@ function HeroLed({ label, status, detail }) {
 }
 
 export default function VehicleProfile() {
-  const { t, tf, tp, lang } = useI18n();
+  const { t, tf, tp } = useI18n();
   const { id } = useParams();
   // Stating what a car takes is a claim about the vehicle, so it sits behind the same permission
   // as any other change to it. Everyone else still SEES the spec sheet — knowing which oil the car
@@ -795,21 +794,18 @@ export default function VehicleProfile() {
               {faultSegments.length > 0 && (
                 <p className="mt-3 text-[11px] text-slate-400">{t('vehicleProfile.faults.drillHint')}</p>
               )}
-              {/* Always-available: generate the printable Vehicle Report (Save-as-PDF) from this dossier. */}
-              <div className="mt-5 space-y-2">
-                <Button variant="secondary" className="w-full justify-center" onClick={() => openVehicleProfileReport(data, t, lang)}>
-                  <Icon.Download className="h-4 w-4" /> {t('Vehicle Report')}
-                </Button>
-                {/* The donut above says WHICH systems fail on this car; this opens the one that answers
-                    whether any of them was ever actually fixed — the full history of a single system,
-                    with what was replaced and whether it failed again after. Engine is the default
-                    because it is the question that gets asked; the page has a picker for the rest. */}
-                <Link
-                  to={`/reports/vehicle-system/${v.id}?system=engine`}
-                  className="block"
-                >
+              {/*
+                ONE DOOR. This card used to offer three ways out — a printable dossier of what the car
+                IS, a system dashboard of what it has SUFFERED (which opened on the engine, so a reader
+                had to choose a system before the page would tell them anything), and later both at
+                once. The Vehicle Report is all of it: the ranked problem list first, the per-system
+                evidence one click in, and the dossier PDF as a button ON that page — which is where a
+                reader deciding what to print already is.
+              */}
+              <div className="mt-5">
+                <Link to={`/reports/vehicle/${v.id}`} className="block">
                   <Button variant="secondary" className="w-full justify-center">
-                    <Icon.Activity className="h-4 w-4" /> {t('System Dashboard')}
+                    <Icon.Activity className="h-4 w-4" /> {t('Vehicle Report')}
                   </Button>
                 </Link>
               </div>

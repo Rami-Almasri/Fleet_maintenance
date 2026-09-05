@@ -49,6 +49,7 @@ import DamageAccidents from './pages/DamageAccidents';
 import RecommendationIntelligence from './pages/RecommendationIntelligence';
 import DailyMaintenanceIntelligence from './pages/reports/DailyMaintenanceIntelligence';
 import VehicleSystemDashboard from './pages/reports/VehicleSystemDashboard';
+import VehicleReport from './pages/reports/VehicleReport';
 import EventClassificationReview from './pages/EventClassificationReview';
 import ConceptBridgeReview from './pages/ConceptBridgeReview';
 import MileageCenter from './pages/MileageCenter';
@@ -284,6 +285,10 @@ export default function App() {
                       surface and print straight to PDF, because they are made to be read on the office wall
                       screen and sent on. Reads only, over the same log the boards read. */}
                   <Route path="/reports/daily-maintenance" element={<DailyMaintenanceIntelligence />} />
+                  {/* One car, everything wrong with it: the ranked problem list, the contracts and
+                      garages behind each fault, and the whole record underneath. This is the entry
+                      point; the per-system page below is its deep dive. */}
+                  <Route path="/reports/vehicle/:vehicleId" element={<VehicleReport />} />
                   <Route path="/reports/vehicle-system/:vehicleId" element={<VehicleSystemDashboard />} />
                   {/* Old Maintenance Operations control center — the Dashboard now carries the pipeline. */}
                   <Route path="/maintenance-operations" element={<Navigate to="/maintenance-workflow" replace />} />

@@ -199,11 +199,104 @@ class VehicleSystemDashboardService
      */
     private function events(Vehicle $vehicle, string $system, ?ReportDateRange $range = null): Collection
     {
+        return $this->eventsBySystem($vehicle, [$system], $range)[$system] ?? collect();
+    }
+
+    /**
+     * The same reading, for SEVERAL systems at once — three queries instead of three per system.
+     *
+     * The whole-car report asks every system the question the single-system dashboard asks one of
+     * them, and doing that by calling events() nine times re-reads the car's workshop history nine
+     * times. So the rows are read ONCE and dispatched, and each system's answer is assembled from the
+     * same rows the single-system report would have loaded for it.
+     *
+     * IT IS NOT A DIFFERENT READING. Two things make that true and both are easy to get wrong:
+     *   • the covered-maintenance exclusion stays PER SYSTEM. A workshop row is represented by its
+     *     tasks only for the system those tasks were filed under — an engine task does not silence
+     *     that row's brake finding.
+     *   • a row's categories are computed once and reused, because extractCategories() is the single
+     *     sanctioned reader and asking it twice for the same text must not be able to answer twice.
+     *
+     * @param  array<int, string>  $systems
+     * @return array<string, Collection<int, array>>  keyed by system, each oldest-first
+     */
+    public function eventsBySystem(Vehicle $vehicle, array $systems, ?ReportDateRange $range = null): array
+    {
+        $systems = array_values(array_filter($systems, fn ($s) => isset(self::SYSTEMS[$s])));
+
+        if ($systems === []) {
+            return [];
+        }
+
         $range = $range ?: ReportDateRange::allHistory();
 
-        $tasks = MaintenanceTask::query()
+        $tasks = $this->tasksFor($vehicle, $systems, $range);
+
+        // Which workshop rows each system's tasks already represent. Grouped, never flattened: the
+        // exclusion is a statement about one system's record, not about the row as a whole.
+        $covered = MaintenanceTask::query()
             ->where('vehicle_id', $vehicle->id)
-            ->where('category_key', $system)
+            ->whereIn('category_key', $systems)
+            ->whereNotNull('maintenance_id')
+            ->get(['maintenance_id', 'category_key'])
+            ->groupBy('category_key')
+            ->map(fn (Collection $rows) => $rows->pluck('maintenance_id')->unique()->all());
+
+        $sheetRows = Maintenance::query()
+            ->where('vehicle_id', $vehicle->id)
+            ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+            ->when($range->isActive(), fn ($q) => $range->applyToColumn($q, 'maintenances.out_date'))
+            ->with('vendor:id,name')
+            ->get();
+
+        /*
+         * WHICH SYSTEMS DOES EACH WORKSHOP ROW BELONG TO — asked once, shared by every system.
+         *
+         * The sheet writes its OWN vocabulary in service_main / service_sup — "Body & Exterior",
+         * "Tires", "Air Conditioning" — as a comma-separated list, and one row can name several
+         * systems at once. GarageRecommendationService::extractCategories is the platform's single
+         * sanctioned reader of that text (config/fault_extraction.php), already used by the cost
+         * estimator and the extraction audit: a row this report counts under Engine is the same row
+         * the estimator counts under Engine. It is deliberately conservative — text it does not
+         * recognise yields NO category, so such a row appears under no system rather than the wrong one.
+         */
+        $rowSystems = $sheetRows->mapWithKeys(fn (Maintenance $m) => [
+            $m->id => $this->categories->extractCategories($m->service_main, $m->service_sup, $m->findings),
+        ]);
+
+        $out = [];
+
+        foreach ($systems as $system) {
+            $coveredIds = $covered->get($system, []);
+
+            $out[$system] = $tasks->where('category_key', $system)
+                ->map(fn (MaintenanceTask $t) => $this->fromTask($t))
+                ->concat(
+                    $sheetRows
+                        ->filter(fn (Maintenance $m) => in_array($system, $rowSystems[$m->id] ?? [], true)
+                            && ! in_array($m->id, $coveredIds, true))
+                        ->map(fn (Maintenance $m) => $this->fromSheetRow($m, $system))
+                )
+                ->filter(fn (array $e) => $e['date'] !== null && $range->contains($e['date']))
+                ->pipe(fn (Collection $all) => $this->collapseVisits($all))
+                ->sortBy('date')
+                ->values();
+        }
+
+        return $out;
+    }
+
+    /**
+     * The per-fault ticket rows for these systems, with the period applied exactly as it always was.
+     *
+     * @param  array<int, string>  $systems
+     * @return Collection<int, MaintenanceTask>
+     */
+    private function tasksFor(Vehicle $vehicle, array $systems, ReportDateRange $range): Collection
+    {
+        return MaintenanceTask::query()
+            ->where('vehicle_id', $vehicle->id)
+            ->whereIn('category_key', $systems)
             ->when($range->isActive(), fn ($q) => $q->where(
                 fn ($w) => $w
                     // The date a task is reported under. A row where both columns are null compares as
@@ -218,33 +311,6 @@ class VehicleSystemDashboardService
             ))
             ->with(['maintenance:id,garage,vendor_id,out_date,actual_in_date,maintenance_notes,event_status', 'maintenance.vendor:id,name'])
             ->get();
-
-        // Deliberately NOT filtered by the period: a workshop row is represented by its tasks whether
-        // or not those tasks fall inside the selected window. Narrowing this would let a row reappear
-        // as a second, unattributed event the moment a filter is applied.
-        $coveredMaintenanceIds = MaintenanceTask::query()
-            ->where('vehicle_id', $vehicle->id)
-            ->where('category_key', $system)
-            ->whereNotNull('maintenance_id')
-            ->distinct()
-            ->pluck('maintenance_id')
-            ->all();
-
-        $sheetRows = Maintenance::query()
-            ->where('vehicle_id', $vehicle->id)
-            ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
-            ->whereNotIn('id', $coveredMaintenanceIds ?: [0])
-            ->when($range->isActive(), fn ($q) => $range->applyToColumn($q, 'maintenances.out_date'))
-            ->with('vendor:id,name')
-            ->get()
-            ->filter(fn (Maintenance $m) => $this->matchesSystem($m, $system));
-
-        return $tasks->map(fn (MaintenanceTask $t) => $this->fromTask($t))
-            ->concat($sheetRows->map(fn (Maintenance $m) => $this->fromSheetRow($m, $system)))
-            ->filter(fn (array $e) => $e['date'] !== null && $range->contains($e['date']))
-            ->pipe(fn (Collection $all) => $this->collapseVisits($all))
-            ->sortBy('date')
-            ->values();
     }
 
     /**
@@ -509,24 +575,6 @@ class VehicleSystemDashboardService
         $value = $value ? mb_strtolower(trim($value)) : null;
 
         return in_array($value, Maintenance::FAULT_SEVERITIES, true) ? $value : null;
-    }
-
-    /**
-     * Does this workshop row belong to the given system?
-     *
-     * The sheet writes its OWN vocabulary in service_main / service_sup — "Body & Exterior", "Tires",
-     * "Air Conditioning" — as a comma-separated list, and one row can name several systems at once.
-     * GarageRecommendationService::extractCategories is the platform's single sanctioned reader of
-     * that text (config/fault_extraction.php), already used by the cost estimator and the extraction
-     * audit. Using it here rather than a second keyword map is the whole point: a row that this
-     * dashboard counts under Engine is the same row the estimator counts under Engine.
-     *
-     * It is deliberately conservative — text it does not recognise yields NO category, so such a row
-     * appears on no dashboard rather than on the wrong one.
-     */
-    private function matchesSystem(Maintenance $m, string $system): bool
-    {
-        return in_array($system, $this->categories->extractCategories($m->service_main, $m->service_sup, $m->findings), true);
     }
 
     // ── Translatable text ───────────────────────────────────────────────────────────────────────
@@ -1599,7 +1647,7 @@ class VehicleSystemDashboardService
 
     // ── Header + Data Origin ────────────────────────────────────────────────────────────────────
 
-    private function vehicleHeader(Vehicle $vehicle): array
+    public function vehicleHeader(Vehicle $vehicle): array
     {
         return [
             'id'    => $vehicle->id,
@@ -1626,7 +1674,7 @@ class VehicleSystemDashboardService
      * column and the highest reading wins, so a reading with no provenance is not checkable — see
      * [[odometer-source-race]].
      */
-    private function vehicleBrief(Vehicle $vehicle): array
+    public function vehicleBrief(Vehicle $vehicle): array
     {
         $spec = collect([
             $vehicle->cylinders ? $vehicle->cylinders . ' cyl' : null,

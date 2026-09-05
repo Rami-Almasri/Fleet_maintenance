@@ -1406,6 +1406,9 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->prefix('repo
     Route::get('/daily-maintenance', 'dailyMaintenance');
     Route::get('/systems', 'systems');
     Route::get('/vehicle-system/{vehicle}', 'vehicleSystem');
+    // The whole car: every system ranked against every other, with the contracts and garages behind
+    // each fault. The single-system endpoint above is the drill-down, not the entry point.
+    Route::get('/vehicle-overview/{vehicle}', 'vehicleOverview');
 });
 
 // Event Type layer — Classification Review queue: the human-in-the-loop for maintenance events the resolver
