@@ -3945,7 +3945,22 @@ const en = {
     colVerdict: 'Status now',
     colActions: 'Actions',
 
-    kind: { part: 'Supplier (part)', repair: 'Garage (repair)' },
+    kind: { vehicle: 'Manufacturer / dealer (whole car)', part: 'Supplier (part)', repair: 'Garage (repair)' },
+    defaultVehicleSubject: 'Manufacturer warranty',
+    anchorHintVehicle: 'A manufacturer or dealer warranty covers the CAR, so it needs no part or repair to point at. This is the promise the car arrived with — the one that can stop us paying for something somebody else owes.',
+
+    providerSection: 'Who owes it, and how to reach them',
+    fieldProviderKind: 'Type of provider',
+    fieldProviderName: 'Provider name',
+    fieldContactName: 'Contact person',
+    fieldContactPhone: 'Phone',
+    fieldContactEmail: 'Email',
+
+    coverageSection: 'What this warranty does and does not cover',
+    coverageHint: 'Pick the part types the document actually names. Hold Ctrl (or ⌘) to select several. Leave both empty if nobody has read the booklet line by line yet — that is an honest answer, and the system will ask a person rather than guess.',
+    fieldCovered: 'Covered parts',
+    fieldExcluded: 'Excluded parts',
+    notItemisedHint: 'Nothing itemised yet. Every part on this car will come back as “coverage unknown”, which holds any purchase until somebody decides — deliberately, so nothing is bought that the manufacturer owed us.',
     state: { active: 'Covered', expired: 'Ended', void: 'Voided' },
     endedBy: { time: 'on time', distance: 'on distance' },
     noOdometer: 'No odometer reading — distance cover cannot be judged',
@@ -7313,6 +7328,10 @@ const ar = {
         name: 'قطع الغيار',
         desc: 'كل ما يخصّ القطعة في ثلاثة تبويبات. الطلبات والمشتريات: اطلب قطعة (من العميل أو الورشة)، ووافق، واشترِ (من الورشة أو المورّد)، وركّبها — مع كشف الشراء المكرّر وسجل الإصلاحات. فواتير الموردين: ما تقاضاه المورّد ثمناً للقطعة، برقم الفاتورة وتاريخها وصورة الورقة. أسماء القطع: الكتالوج الذي يختار منه التطبيق كله، بالعربية والإنجليزية، مع الضمان الافتراضي لكل قطعة.',
       },
+      warranty: {
+        name: 'الضمان',
+        desc: 'قبل أن نصرف على سيارة: هل يمكن أن تكون الشركة الصانعة أو الوكيل أو المورّد هو من يدفع بدلاً منّا؟ تُظهر البطاقات كم من الأسطول ما زال مغطّى، وكم تغطية توشك على الانتهاء (بالأشهر أو بالكيلومترات، أيهما ينتهي أولاً)، وكم استُرد أو وُفِّر. وأسفلها قائمة العمل: مراجعات تغطية يجب حسمها قبل السماح بالشراء، وحالات تنتظر ردّ وكيل صمت، ومطالبات يجب تقديمها. طلب الشراء على سيارة عليها تغطية سارية يُوقَف هنا بدل أن يُدفع بصمت — وكل تجاوز يُسجَّل باسم صاحبه وسببه.',
+      },
       garages: { name: 'الورش', desc: 'الورش التي تُصان فيها سيارات الأسطول، مع الأعمال المحوّلة إلى كل منها.' },
       'damage-accidents': {
         name: 'الأضرار والحوادث',
@@ -9745,7 +9764,22 @@ const ar = {
     colVerdict: 'الحالة الآن',
     colActions: 'إجراءات',
 
-    kind: { part: 'المورّد (قطعة)', repair: 'الورشة (إصلاح)' },
+    kind: { vehicle: 'الشركة الصانعة / الوكيل (السيارة كاملة)', part: 'المورّد (قطعة)', repair: 'الورشة (إصلاح)' },
+    defaultVehicleSubject: 'ضمان الشركة الصانعة',
+    anchorHintVehicle: 'ضمان الشركة الصانعة أو الوكيل يغطي السيارة نفسها، فلا يحتاج إلى قطعة أو إصلاح يشير إليه. هذا هو الوعد الذي جاءت به السيارة — وهو الوحيد القادر على منعنا من دفع ثمن شيء يتحمّله غيرنا.',
+
+    providerSection: 'من يتحمّله، وكيف نصل إليه',
+    fieldProviderKind: 'نوع الجهة الضامنة',
+    fieldProviderName: 'اسم الجهة',
+    fieldContactName: 'الشخص المسؤول',
+    fieldContactPhone: 'الهاتف',
+    fieldContactEmail: 'البريد الإلكتروني',
+
+    coverageSection: 'ما يغطيه هذا الضمان وما لا يغطيه',
+    coverageHint: 'اختر أنواع القطع التي تذكرها الوثيقة فعلاً. اضغط Ctrl (أو ⌘) لاختيار أكثر من واحدة. اترك الحقلين فارغين إذا لم يقرأ أحد الكتيّب سطراً سطراً بعد — فهذه إجابة صادقة، وسيسأل النظام شخصاً بدل أن يخمّن.',
+    fieldCovered: 'القطع المغطّاة',
+    fieldExcluded: 'القطع المستثناة',
+    notItemisedHint: 'لم يُفصَّل شيء بعد. كل قطعة في هذه السيارة ستعود بنتيجة «التغطية غير محسومة»، ما يوقف أي شراء حتى يقرّر شخص — عن قصد، حتى لا نشتري شيئاً كانت الشركة الصانعة تتحمّله.',
     state: { active: 'مغطّى', expired: 'انتهى', void: 'مُبطَل' },
     endedBy: { time: 'بانتهاء المدة', distance: 'بانتهاء المسافة' },
     noOdometer: 'لا توجد قراءة عدّاد — لا يمكن الحكم على تغطية المسافة',
