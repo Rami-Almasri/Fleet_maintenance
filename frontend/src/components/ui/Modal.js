@@ -75,6 +75,9 @@ export default function Modal({ open, onClose, title, subtitle, size = 'md', chi
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
         tabIndex={-1}
+        // Marks the fields and the footer button as one form, so the button can
+        // say on hover what is still empty above it — see lib/formGuide.js.
+        data-form-scope=""
         className={`relative my-8 w-full ${SIZES[size]} rounded-2xl bg-white shadow-xl ring-1 ring-slate-900/5 focus:outline-none`}
       >
         <div className="flex items-start justify-between gap-3 rounded-t-2xl border-b border-slate-100 bg-slate-50/60 px-6 py-4">

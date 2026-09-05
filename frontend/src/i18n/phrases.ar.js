@@ -5976,6 +5976,9 @@ const phrasesAr = {
   'Show the cars in this stage': 'اعرض السيارات في هذه المرحلة',
   'Take me to this stage': 'انقلني إلى هذه المرحلة',
   'Back': 'رجوع',
+  // Form guidance — what a Save button says on hover when fields are still empty.
+  'Still needed: {fields}': 'ما زال مطلوباً: {fields}',
+  'and': 'و',
 };
 
 export default phrasesAr;

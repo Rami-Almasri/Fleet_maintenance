@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../i18n/I18nContext';
+import { LABEL_ATTR, REQUIRED_ATTR, VALUE_ATTR } from '../../lib/formGuide';
 
 /**
  * Searchable single-select combobox.
@@ -10,7 +11,17 @@ import { useI18n } from '../../i18n/I18nContext';
  * `fixed` coords measured from the input, so it never gets clipped by an
  * ancestor with `overflow-hidden` (e.g. our Card wrapper).
  */
-export default function SearchSelect({ value, onChange, options = [], placeholder = null, loading = false }) {
+export default function SearchSelect({
+  value,
+  onChange,
+  options = [],
+  placeholder = null,
+  loading = false,
+  // Callers wrap this in their own label, so `label` here is only the name the
+  // form's Save button uses when it reports the field as still empty on hover.
+  label = null,
+  required = false,
+}) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -90,6 +101,11 @@ export default function SearchSelect({ value, onChange, options = [], placeholde
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => { setOpen(true); setQuery(''); }}
         placeholder={loading ? t('Loading…') : (placeholder ?? t('Search…'))}
+        // The box shows the search text; the SELECTION is what the form needs.
+        {...(required
+          ? { [REQUIRED_ATTR]: '1', [LABEL_ATTR]: label || undefined, [VALUE_ATTR]: value == null ? '' : String(value) }
+          : null)}
+        aria-required={required || undefined}
         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
       />
       {value && !open && (

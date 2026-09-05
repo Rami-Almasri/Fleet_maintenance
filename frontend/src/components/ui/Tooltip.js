@@ -13,21 +13,36 @@
 import { useCallback, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-export function Tooltip({ content, children, side = 'top', className = '', maxWidth = 260 }) {
+export function Tooltip({
+  content,
+  children,
+  side = 'top',
+  className = '',
+  maxWidth = 260,
+  tabIndex = 0,
+}) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
+  // What to render once open. For a static `content` this is just that value; a
+  // FUNCTION content is resolved at show() time instead, which is what lets a
+  // tooltip report live state (which fields are still empty) rather than
+  // whatever was true on the render that happened to be last.
+  const [resolved, setResolved] = useState(null);
   const ref = useRef(null);
   const tipId = useId();
 
   const show = useCallback(() => {
     const el = ref.current;
     if (!el) return;
+    const value = typeof content === 'function' ? content() : content;
+    if (value == null || value === '') return;
+    setResolved(value);
     const r = el.getBoundingClientRect();
     const gap = 8;
     if (side === 'bottom') setPos({ top: r.bottom + gap, left: r.left + r.width / 2 });
     else setPos({ top: r.top - gap, left: r.left + r.width / 2 });
     setOpen(true);
-  }, [side]);
+  }, [side, content]);
 
   const hide = useCallback(() => setOpen(false), []);
 
@@ -39,7 +54,10 @@ export function Tooltip({ content, children, side = 'top', className = '', maxWi
     <span
       ref={ref}
       className={`inline-flex items-center ${className}`}
-      tabIndex={0}
+      // A wrapper around an already-focusable child (a Button) must not add a
+      // second tab stop — focus events bubble, so the child's own focus still
+      // opens the tip. Callers pass tabIndex={-1} for that case.
+      tabIndex={tabIndex}
       aria-describedby={open ? tipId : undefined}
       onMouseEnter={show}
       onMouseLeave={hide}
@@ -56,7 +74,7 @@ export function Tooltip({ content, children, side = 'top', className = '', maxWi
             style={{ position: 'fixed', top: pos.top, left: pos.left, transform: translate, maxWidth }}
             className="pointer-events-none z-[80] rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium leading-snug text-white shadow-xl shadow-slate-900/25 ring-1 ring-white/10 animate-fade-in-up"
           >
-            {content}
+            {resolved}
             <span
               className="absolute left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-slate-900"
               style={side === 'bottom' ? { top: -3 } : { bottom: -3 }}

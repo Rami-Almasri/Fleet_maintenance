@@ -41,6 +41,8 @@ export default function Drawer({ open, onClose, title, subtitle, eyebrow, width 
         className={`absolute inset-y-0 end-0 flex w-full ${WIDTHS[width] || WIDTHS.half} flex-col bg-slate-50 shadow-2xl ring-1 ring-slate-900/10 animate-slide-in-right rtl:animate-slide-in-left`}
         role="dialog"
         aria-modal="true"
+        // See lib/formGuide.js — binds the fields to the footer button that saves them.
+        data-form-scope=""
       >
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4">
           <div className="min-w-0">
