@@ -6,19 +6,22 @@ use App\Helpers\ResponseHelper;
 use App\Models\Vehicle;
 use App\Services\Reports\DailyMaintenanceIntelligenceService;
 use App\Services\Reports\ReportDateRange;
+use App\Services\Reports\VehicleReportOverviewService;
 use App\Services\Reports\VehicleSystemDashboardService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
 /**
- * The two management reports: the day's workshop picture, and one car's history on one system.
- * Both are read-only views over records a person already entered — all logic lives in the services.
+ * The management reports: the day's workshop picture, one car's whole record, and one car's history on
+ * a single system. All read-only views over records a person already entered — the logic lives in the
+ * services, and this class only validates the query string and hands it over.
  */
 class FleetIntelligenceReportController extends Controller
 {
     public function __construct(
         private DailyMaintenanceIntelligenceService $daily,
         private VehicleSystemDashboardService $systemDashboard,
+        private VehicleReportOverviewService $overview,
     ) {
     }
 
@@ -72,6 +75,36 @@ class FleetIntelligenceReportController extends Controller
                     ReportDateRange::of($validated['from'] ?? null, $validated['to'] ?? null),
                 ),
                 'Vehicle system dashboard retrieved successfully',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * GET /reports/vehicle-overview/{vehicle}?from=YYYY-MM-DD&to=YYYY-MM-DD
+     *
+     * The whole car — every system at once, ranked. Same period rules as the single-system report.
+     *
+     * `system` is OPTIONAL here and means something different from the other endpoint's: it narrows
+     * this report to one system while still listing every system the car has a record against, so the
+     * picker keeps working. Absent means the whole car, which is what this page is for.
+     */
+    public function vehicleOverview(Request $request, Vehicle $vehicle)
+    {
+        try {
+            $validated = $request->validate(self::vehicleSystemRules(), [
+                'to.after_or_equal' => 'The end of the period must not be earlier than its start.',
+            ]);
+
+            return ResponseHelper::SuccessResponse(
+                $this->overview->build(
+                    $vehicle,
+                    ReportDateRange::of($validated['from'] ?? null, $validated['to'] ?? null),
+                    $validated['system'] ?? null,
+                ),
+                'Vehicle report retrieved successfully',
                 200
             );
         } catch (\Exception $e) {

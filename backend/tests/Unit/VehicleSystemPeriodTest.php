@@ -529,6 +529,79 @@ class VehicleSystemPeriodTest extends TestCase
         }
     }
 
+    // ── 4. One record, several faults ───────────────────────────────────────────────────────────
+
+    /**
+     * THE COMPOSITE LABEL, which is how the sheet actually writes a visit that found two things.
+     *
+     * "Rim Scratch, Paint Peeling / Fading" is not a fault; it is two faults in one cell. Counted
+     * whole, it becomes a third identity that shares nothing with either — so a rim scratch logged
+     * once alone and once beside a paint fault reads as two unrelated one-offs, and the recurrence
+     * the report exists to find is exactly the thing it hides.
+     */
+    public function test_a_record_naming_two_faults_is_two_problems(): void
+    {
+        $report = $this->report([
+            $this->ev([
+                'ref' => 201, 'refs' => [201], 'date' => '2026-03-02', 'garage' => 'GPT GARRAGE',
+                'finding' => 'Engine Oil Leak, Engine Overheating', 'finding_specificity' => 'specific',
+                'detail'  => 'Engine oil leak from the valve cover. Engine overheating under load.',
+            ]),
+        ]);
+
+        $faults = collect($report['problems'])->pluck('fault')->all();
+
+        $this->assertSame(2, $report['summary']['named_faults'], 'two faults were named, not one composite');
+        $this->assertContains('Engine Oil Leak', $faults);
+        $this->assertContains('Engine Overheating', $faults);
+        // ONE visit, however many faults it found. The counts must not move together.
+        $this->assertSame(1, $report['summary']['system_visits']);
+    }
+
+    /** A slash is part of a label, never a separator — cutting it would mint faults nobody recorded. */
+    public function test_a_slash_inside_a_label_is_not_a_second_fault(): void
+    {
+        $report = $this->report([
+            $this->ev([
+                'ref' => 202, 'refs' => [202], 'date' => '2026-03-02',
+                'finding' => 'Engine Oil / Filter Leak', 'finding_specificity' => 'specific',
+                'detail'  => 'Engine oil leak from the filter housing.',
+            ]),
+        ]);
+
+        $this->assertSame(1, $report['summary']['named_faults']);
+        $this->assertSame('Engine Oil / Filter Leak', $report['problems'][0]['fault']);
+    }
+
+    /**
+     * And the point of all of it: the same fault, written once alone and once inside a composite, is
+     * ONE problem that happened twice — which is what makes it a repeat.
+     */
+    public function test_the_same_fault_groups_across_a_composite_and_a_bare_record(): void
+    {
+        $report = $this->report([
+            $this->ev([
+                'ref' => 203, 'refs' => [203], 'date' => '2026-03-02', 'garage' => 'GARAGE ONE',
+                'finding' => 'Engine Oil Leak', 'finding_specificity' => 'specific',
+                'detail'  => 'Engine oil leak from the valve cover.',
+            ]),
+            $this->ev([
+                'ref' => 204, 'refs' => [204], 'date' => '2026-06-02', 'garage' => 'GARAGE TWO',
+                'finding' => 'Engine Oil Leak, Engine Overheating', 'finding_specificity' => 'specific',
+                'detail'  => 'Engine oil leak again. Engine overheating under load.',
+            ]),
+        ]);
+
+        $leak = collect($report['problems'])->firstWhere('fault', 'Engine Oil Leak');
+
+        $this->assertNotNull($leak);
+        $this->assertSame(2, $leak['occurrences']);
+        $this->assertTrue($leak['repeated']);
+        $this->assertSame('yes', $leak['returned']['status']);
+        $this->assertSame(['GARAGE ONE', 'GARAGE TWO'], $leak['garages']);
+        $this->assertSame(1, $report['summary']['repeated_faults'], 'only the leak repeated');
+    }
+
     /** The period service is a view over incidents, so it must not mutate what it was given. */
     public function test_the_period_view_does_not_alter_the_analysis_it_reads(): void
     {

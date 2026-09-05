@@ -803,6 +803,157 @@
 .intel-report a.ir-link { color: var(--ir-accent); text-decoration: none; }
 .intel-report a.ir-link:hover { text-decoration: underline; }
 
+/* ── The whole-car report: ranked problems, the month chart, the filters ─────────────────────
+ *
+ * This page is SCANNED, where the per-system report is read. Everything below is built for the eye
+ * finding the biggest thing first: a ranked row is one grid line with the count set beside the bar,
+ * the month chart is a plain column field with no gridlines to compete with it, and the filters look
+ * like what they are — pressable chips that say which one is on.
+ *
+ * Every number these blocks draw is also printed as text beside the mark. Nothing here is the only
+ * place a figure appears, which is what lets the whole page survive being printed in black and white.
+ */
+
+.intel-report .ir-stack { display: flex; flex-direction: column; gap: 20px; }
+.intel-report .ir-stack > .ir-panel { margin-bottom: 0; }
+
+/* ── Ranked problems ────────────────────────────────────────────────────────────────────────── */
+
+.intel-report .ir-ranked { list-style: none; margin: 0; padding: 0; }
+
+.intel-report .ir-rank-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 8px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.intel-report .ir-rank-row:hover { background: rgba(56, 189, 248, 0.07); }
+.intel-report .ir-rank-row:disabled { cursor: default; }
+.intel-report .ir-rank-row:disabled:hover { background: transparent; }
+.intel-report .ir-rank-row:focus-visible { outline: 2px solid var(--ir-accent); outline-offset: 2px; }
+
+.intel-report .ir-rank-row.is-active {
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.intel-report .ir-rank-no {
+  font-size: 17px;
+  font-weight: 900;
+  color: var(--ir-muted);
+  min-width: 22px;
+  text-align: end;
+}
+
+.intel-report .ir-rank-body { display: block; min-width: 0; }
+
+.intel-report .ir-rank-head { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; }
+.intel-report .ir-rank-fault { font-weight: 800; font-size: 15px; unicode-bidi: plaintext; text-align: start; }
+.intel-report .ir-rank-count { font-size: 13px; font-weight: 800; color: var(--ir-dim); white-space: nowrap; }
+
+.intel-report .ir-rank-track {
+  display: block;
+  height: 10px;
+  margin: 7px 0 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  overflow: hidden;
+}
+
+/* One hue: the bar's LENGTH is the count, and nothing else about it varies. A repeated fault is
+   drawn in the status red — and always carries the words "came back" beside it, so the state is
+   never colour alone. */
+.intel-report .ir-rank-fill { display: block; height: 100%; border-radius: 999px; background: var(--ir-accent); }
+.intel-report .ir-rank-fill.is-repeat { background: var(--ir-red); }
+
+.intel-report .ir-rank-meta { display: block; font-size: 12px; color: var(--ir-muted); unicode-bidi: plaintext; }
+.intel-report .ir-rank-tags { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 40%; }
+
+/* ── Months ─────────────────────────────────────────────────────────────────────────────────── */
+
+.intel-report .ir-months-plot {
+  display: grid;
+  grid-template-columns: repeat(var(--ir-months), minmax(0, 1fr));
+  gap: 3px;
+  align-items: end;
+  height: 170px;
+}
+
+.intel-report .ir-month { display: flex; flex-direction: column; height: 100%; min-width: 0; }
+.intel-report .ir-month-track { flex: 1; display: flex; align-items: flex-end; }
+
+.intel-report .ir-month-fill {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 4px 4px 0 0;   /* rounded data-end, square on the baseline */
+  background: var(--ir-accent);
+}
+
+/* A month with no record is a real answer and is drawn, not skipped — as a baseline tick. */
+.intel-report .ir-month-fill.is-empty { height: 2px !important; background: rgba(148, 163, 184, 0.28); }
+
+.intel-report .ir-month-value { height: 16px; font-size: 11px; font-weight: 800; text-align: center; color: var(--ir-dim); }
+.intel-report .ir-month-label { height: 14px; font-size: 10px; text-align: center; color: var(--ir-muted); }
+.intel-report .ir-months-foot { margin-top: 10px; font-size: 12px; color: var(--ir-muted); }
+
+/* ── Filters ────────────────────────────────────────────────────────────────────────────────── */
+
+.intel-report .ir-filter { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.intel-report .ir-filter-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.intel-report .ir-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--ir-line);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.6);
+  color: var(--ir-dim);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.intel-report .ir-filter-chip:hover { border-color: var(--ir-accent); color: var(--ir-accent); }
+.intel-report .ir-filter-chip:focus-visible { outline: 2px solid var(--ir-accent); outline-offset: 2px; }
+
+.intel-report .ir-filter-chip.is-active {
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(56, 189, 248, 0.14);
+  color: #bae6fd;
+}
+
+.intel-report .ir-legend li.is-selected { font-weight: 900; color: var(--ir-text); }
+
+.intel-report .ir-filter-count { font-size: 11px; font-weight: 900; color: var(--ir-muted); }
+.intel-report .ir-filter-chip.is-active .ir-filter-count { color: inherit; }
+
+/* THE FILTER SAYS WHAT IT IS HIDING. This line prints: a PDF of a filtered page that looks unfiltered
+   is a wrong statement about the car. */
+.intel-report .ir-filter-note {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border-inline-start: 3px solid var(--ir-accent);
+  background: rgba(56, 189, 248, 0.08);
+  border-radius: 0 8px 8px 0;
+  font-size: 12.5px;
+  color: var(--ir-dim);
+}
+
+.intel-report td.ir-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
 /* ── Responsive ─────────────────────────────────────────────────────────────────────────────── */
 
 @media (max-width: 1200px) {
@@ -814,6 +965,9 @@
 
 @media (max-width: 760px) {
   .intel-report .ir-container { padding: 16px; }
+  .intel-report .ir-rank-row { grid-template-columns: auto minmax(0, 1fr); }
+  .intel-report .ir-rank-tags { grid-column: 2; max-width: none; justify-content: flex-start; }
+  .intel-report .ir-months-plot { height: 130px; }
   .intel-report .ir-hero-main h1 { font-size: 28px; }
   .intel-report .ir-kpis { grid-template-columns: repeat(2, 1fr); }
   .intel-report .ir-bar-row { grid-template-columns: 1fr; }
@@ -889,6 +1043,23 @@
     page-break-inside: avoid;
   }
   .intel-report .ir-problem-line { color: #475569; }
+
+  /* The whole-car blocks on a light page. The bars keep their fills — they are the reading aid — and
+     everything that was muted ink on the dark surface becomes slate on white. */
+  .intel-report .ir-rank-row { break-inside: avoid; page-break-inside: avoid; }
+  .intel-report .ir-rank-row.is-active { background: #f1f5f9; border-color: #cbd5e1; }
+  .intel-report .ir-rank-no,
+  .intel-report .ir-rank-meta,
+  .intel-report .ir-month-label,
+  .intel-report .ir-months-foot { color: #475569; }
+  .intel-report .ir-rank-fault,
+  .intel-report .ir-rank-count,
+  .intel-report .ir-month-value { color: #0f172a; }
+  .intel-report .ir-rank-track,
+  .intel-report .ir-month-track { background: #e2e8f0; }
+  .intel-report .ir-filter-note { background: #f1f5f9; color: #0f172a; }
+  .intel-report .ir-months,
+  .intel-report .ir-ranked { break-inside: avoid; page-break-inside: avoid; }
   .intel-report .ir-problem-return { color: #0f172a; border-top-color: #cbd5e1; }
   .intel-report .ir-titem { break-inside: avoid; page-break-inside: avoid; }
 }

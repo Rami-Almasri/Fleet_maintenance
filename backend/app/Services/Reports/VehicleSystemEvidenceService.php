@@ -163,7 +163,46 @@ class VehicleSystemEvidenceService
             // and backed by more than the category word alone.
             'is_confirmed'  => $fault !== null && $strength !== 'weak',
             'fault_key'     => $fault !== null ? $this->faultKey($fault) : null,
+            // The SEPARATE faults inside that text — see faultParts().
+            'fault_parts'   => $this->faultParts($fault),
         ]);
+    }
+
+    /**
+     * ONE RECORD CAN NAME SEVERAL FAULTS, and they are separate faults.
+     *
+     * The sheet writes a visit's findings as one comma-separated string, and the report's own system
+     * filter re-joins the phrases that belong to this system — so a record legitimately arrives here as
+     * "Rim Scratch, Paint Peeling / Fading". Treated as one identity, that text is a third fault which
+     * shares nothing with either of the two it is made of: the car's problem list fills with near
+     * duplicates, and a rim scratch logged twice — once alone, once beside a paint fault — reads as two
+     * unrelated one-offs instead of the repeat it is. (Measured on vehicle 1741: "Rim Scratch ×2" and
+     * "Rim Scratch, Paint Peeling / Fading ×1" were the same recurring scratch.)
+     *
+     * So identity is taken at PHRASE grain. The comma is the only separator: it is the one the sheet
+     * and this report's own join both use. A slash is NOT split on — "Paint Peeling / Fading" and
+     * "Headlights / Taillights Fault" are single labels in the sheet's vocabulary, and cutting them
+     * would mint faults nobody ever recorded.
+     *
+     * The composite text is still kept whole as `fault_text`, because that is what the record says and
+     * every incident quotes the record.
+     *
+     * @return array<int, array{text:string, key:string}>
+     */
+    private function faultParts(?string $fault): array
+    {
+        if ($fault === null || trim($fault) === '') {
+            return [];
+        }
+
+        return collect(explode(',', $fault))
+            ->map(fn ($p) => trim($p))
+            ->filter(fn ($p) => $p !== '')
+            ->map(fn ($p) => ['text' => $p, 'key' => $this->faultKey($p)])
+            ->filter(fn (array $p) => $p['key'] !== '')
+            ->unique('key')
+            ->values()
+            ->all();
     }
 
     /**
@@ -506,6 +545,14 @@ class VehicleSystemEvidenceService
             // The named fault this incident establishes, if any. Generic rows contribute none.
             'fault'        => $confirmed->first()['fault_text'] ?? null,
             'fault_key'    => $confirmed->first()['fault_key'] ?? null,
+            // Every distinct fault this incident named, across all of its confirmed rows. The problem
+            // list groups on THESE, so a visit that found two things is one visit and two problems.
+            // @see faultParts
+            'faults'       => $confirmed
+                ->flatMap(fn (array $r) => $r['fault_parts'] ?? [])
+                ->unique('key')
+                ->values()
+                ->all(),
             'severity'     => $rows->pluck('severity')->filter()->first(),
             'sources'      => $rows->pluck('source')->unique()->values()->all(),
             'odometer'     => $rows->pluck('odometer')->filter()->max(),

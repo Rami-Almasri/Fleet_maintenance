@@ -986,6 +986,16 @@ export function PeriodProblems({ problems = [], workshopOnly = [], period }) {
         {o.gap_days != null ? (
           <Chip tone="danger">{tp('reportSystem.fault.after', o.gap_days)}</Chip>
         ) : null}
+        {/*
+          WHICH TRIP THIS WAS. Only the whole-car report resolves it, so the chip is absent rather
+          than empty on the per-system page — and "not on a contract" is printed as its own answer,
+          because a missing chip and a visit outside the contract system are different facts.
+        */}
+        {o.contract ? (
+          <Chip tone="info">
+            {t('reportVehicle.occurrence.contract', { no: o.contract.no || `#${o.contract.id}` })}
+          </Chip>
+        ) : null}
       </div>
 
       {/* THE RECORD, quoted. These are the garage's words, not the report's. */}
@@ -1028,12 +1038,21 @@ export function PeriodProblems({ problems = [], workshopOnly = [], period }) {
               ) : null}
             </div>
             <div className="ir-problem-line">
+              {/* The system is named only when the caller resolved one — the per-system report is
+                  already titled with it, and repeating it on every problem would be noise. */}
+              {p.system_labels?.length ? <strong>{p.system_labels.join(' · ')}</strong> : null}
+              {p.system_labels?.length ? ' — ' : ''}
               {p.first_seen === p.last_seen
                 ? t('reportSystem.period.seenOnce', { date: day(p.first_seen) })
                 : t('reportSystem.period.seenBetween', {
                     from: day(p.first_seen), to: day(p.last_seen), days: p.span_days,
                   })}
               {p.garages?.length ? ` · ${p.garages.join(', ')}` : ''}
+              {p.contracts?.length
+                ? ` · ${t('reportVehicle.problem.onContracts', {
+                    list: p.contracts.map((c) => c.no || `#${c.id}`).join(', '),
+                  })}`
+                : ''}
             </div>
           </header>
 
