@@ -3,7 +3,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { I18nProvider } from '../../i18n/I18nContext';
 import Button from './Button';
-import { Input, Select } from './Field';
+import { Input, Requirement, Select } from './Field';
 
 function Form({ plate = '', odometer = '', garage = '', ...buttonProps }) {
   return (
@@ -54,6 +54,32 @@ test('a custom hint shows alongside the missing fields', async () => {
   render(<Form plate="D-12345" odometer="41200" garage="g1" hint="Attach the garage quote before saving." />);
   hoverSave();
   expect(await screen.findByRole('tooltip')).toHaveTextContent('Attach the garage quote before saving.');
+});
+
+// The Pick up step: the odometer is typed in, the garage is preset by the supervisor, and the only
+// thing left is a photo — which is a file, not a field, and so was invisible until it said so.
+function PickUp({ photo = null }) {
+  return (
+    <I18nProvider>
+      <div data-form-scope="">
+        <Input label="Odometer reading (km)" type="number" required value="57476" onChange={() => {}} />
+        <Requirement label="Odometer photo" value={photo} />
+        <Button disabled={!photo}>Confirm pickup</Button>
+      </div>
+    </I18nProvider>
+  );
+}
+
+test('names a requirement that no field holds', async () => {
+  render(<PickUp />);
+  fireEvent.mouseEnter(screen.getByRole('button', { name: 'Confirm pickup' }).parentElement);
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('Still needed: Odometer photo');
+});
+
+test('and stops naming it once it is attached', () => {
+  render(<PickUp photo={{ name: 'odo.jpg' }} />);
+  fireEvent.mouseEnter(screen.getByRole('button', { name: 'Confirm pickup' }).parentElement);
+  expect(screen.queryByRole('tooltip')).toBeNull();
 });
 
 test('Cancel stays quiet — guidance belongs on the button that finishes the form', () => {

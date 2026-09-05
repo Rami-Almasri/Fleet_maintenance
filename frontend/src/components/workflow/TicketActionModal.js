@@ -26,7 +26,7 @@ import Button from '../ui/Button';
 import SearchSelect from '../ui/SearchSelect';
 import VehicleStatusSelect from './VehicleStatusSelect';
 import Icon from '../ui/Icon';
-import { Input, Textarea, Select } from '../ui/Field';
+import { Input, Textarea, Select, Requirement } from '../ui/Field';
 import FindingsList from './FindingsList';
 import FindingsPicker from './FindingsPicker';
 import FaultDetailPicker from './FaultDetailPicker';
@@ -318,6 +318,14 @@ function StageTimeline({ ticket, t }) {
 // A required-field asterisk.
 const Req = () => <span className="text-red-500"> *</span>;
 
+// The steps whose gate refuses to submit without the odometer image. CONTRACT with the `!photo`
+// branches of invalid() below — a step listed here and not gated there would nag about a photo the
+// form is happy to do without, and one gated there but missing here blocks with nothing to read.
+const PHOTO_GATED = new Set([
+  'open', 'start', 'dispatch', 'recovery', 'receive',
+  'collectFromGarage', 'arriveAtPark', 'pause', 'resume',
+]);
+
 // A numbered section of a long form — used to break the Inspector's test-drive report ('decide') into
 // four readable steps (mileage → findings → diagnosis → decision) instead of one undifferentiated
 // scroll. `done` flips the step number to a green tick so progress through the report is visible.
@@ -512,7 +520,7 @@ function MaintenanceTypeCards({ types, value, onChange, t }) {
 function HandoverFields({
   fuelLevel, onFuelLevel, exteriorCondition, onExteriorCondition, interiorCondition, onInteriorCondition,
   damageFindings, onDamageFindings, missingAccessories, onMissingAccessories,
-  handoverNotes, onHandoverNotes, signatureRef, onSignatureChange, t,
+  handoverNotes, onHandoverNotes, signatureRef, onSignatureChange, signatureReady, t,
 }) {
   const addDamage = () => onDamageFindings([...damageFindings, { location: '', severity: 'routine', note: '' }]);
   const updateDamage = (i, patch) => onDamageFindings(damageFindings.map((d, idx) => (idx === i ? { ...d, ...patch } : d)));
@@ -526,6 +534,9 @@ function HandoverFields({
       {/* Fuel level — 5-option segmented scale, CONTRACT with config/maintenance_handover.php fuel_scale */}
       <div>
         <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.handover.fuelLabel')}<Req /></span>
+        {/* None of the four gates in this component is a Field, so each declares itself or the
+            Confirm button has no way to say which one is holding the handover up. */}
+        <Requirement label={t('workflow.handover.fuelLabel')} value={fuelLevel} />
         <div className="grid grid-cols-5 gap-1.5">
           {FUEL_SCALE.map((f) => {
             const active = fuelLevel === f;
@@ -551,6 +562,7 @@ function HandoverFields({
         ].map((f, i) => (
           <div key={i}>
             <span className="mb-1 block text-sm font-medium text-slate-700">{f.label}<Req /></span>
+            <Requirement label={f.label} value={f.value.trim()} />
             <div className="mb-1.5 flex flex-wrap gap-1.5">
               {CONDITION_PRESETS.map((p) => (
                 <button
@@ -636,6 +648,7 @@ function HandoverFields({
       {/* Signature — mandatory, plain canvas capture (no library) */}
       <div>
         <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.handover.signatureLabel')}<Req /></span>
+        <Requirement label={t('workflow.handover.signatureLabel')} value={signatureReady} />
         <SignaturePad ref={signatureRef} onChange={onSignatureChange} />
       </div>
     </>
@@ -1452,7 +1465,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   }
 
   // The odometer Capture/Upload tile, shared by Dispatch (pre) and Mark-ready (post).
-  const photoTile = photo ? (
+  const photoBody = photo ? (
     <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-2">
       <img src={photo.url} alt={t('workflow.field.odometerPhoto')} className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" />
       <div className="min-w-0 text-xs text-slate-500">
@@ -1467,6 +1480,16 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       {compressing ? t('workflow.photo.processing') : t('workflow.photo.scan')}
       <input type="file" accept="image/*" capture="environment" className="hidden" onChange={onOdometerPhoto} disabled={compressing} />
     </label>
+  );
+
+  // A photo is a file the user attaches, not a value in a field, so the Save button cannot see it
+  // going missing on its own — <Requirement> is what tells it. Kept in step with the `!photo`
+  // branches of invalid(): only those steps refuse to submit without the image.
+  const photoTile = (
+    <>
+      {PHOTO_GATED.has(action) && <Requirement label={t('workflow.field.odometerPhoto')} value={photo} />}
+      {photoBody}
+    </>
   );
 
   // High-consequence, hard-to-undo steps get a tailored confirmation before they fire (a mis-click on
@@ -2651,7 +2674,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               damageFindings={damageFindings} onDamageFindings={setDamageFindings}
               missingAccessories={missingAccessories} onMissingAccessories={setMissingAccessories}
               handoverNotes={handoverNotes} onHandoverNotes={setHandoverNotes}
-              signatureRef={signatureRef} onSignatureChange={setSignatureReady}
+              signatureRef={signatureRef} onSignatureChange={setSignatureReady} signatureReady={signatureReady}
               t={t}
             />
           </div>
@@ -2686,7 +2709,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               damageFindings={damageFindings} onDamageFindings={setDamageFindings}
               missingAccessories={missingAccessories} onMissingAccessories={setMissingAccessories}
               handoverNotes={handoverNotes} onHandoverNotes={setHandoverNotes}
-              signatureRef={signatureRef} onSignatureChange={setSignatureReady}
+              signatureRef={signatureRef} onSignatureChange={setSignatureReady} signatureReady={signatureReady}
               t={t}
             />
           </div>

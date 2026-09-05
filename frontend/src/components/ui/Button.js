@@ -39,7 +39,8 @@ const GUIDED = new Set(['primary', 'success', 'warning', 'danger']);
 // button keeps them too, which is harmless: it now fills the wrapper.
 const LAYOUT_CLASSES = new Set([
   'w-full', 'flex-1', 'grow', 'shrink-0',
-  'ms-auto', 'me-auto', 'ml-auto', 'mr-auto',
+  // Logical only — `check:rtl` keeps the physical ml-/mr- pair out of the codebase entirely.
+  'ms-auto', 'me-auto',
   'self-start', 'self-end', 'self-center', 'self-stretch',
 ]);
 const wrapperLayout = (className) =>

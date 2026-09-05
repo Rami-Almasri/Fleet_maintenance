@@ -9,7 +9,7 @@
 //             lib/formGuide.js.
 
 import { InfoTip } from './Tooltip';
-import { LABEL_ATTR, REQUIRED_ATTR } from '../../lib/formGuide';
+import { LABEL_ATTR, REQUIRED_ATTR, VALUE_ATTR } from '../../lib/formGuide';
 
 const baseInput =
   'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-slate-50 disabled:text-slate-400';
@@ -43,6 +43,28 @@ function guideProps(label, required, hint) {
     'aria-required': required || undefined,
     title: hint || undefined,
   };
+}
+
+/**
+ * Declares a mandatory answer that no <Input> holds — a photo tile, a signature
+ * pad, a picker built out of cards. Without this, such a requirement is
+ * invisible to the Save button and the form goes quiet about the one thing the
+ * user is actually missing.
+ *
+ *   <Requirement label={t('Odometer photo')} value={photo} />
+ *
+ * Renders nothing. `value` is judged the same way a field's is: empty string,
+ * null, undefined and false are unanswered; anything else is answered.
+ */
+export function Requirement({ label, value }) {
+  const answered = value !== null && value !== undefined && value !== false && String(value).trim() !== '';
+  return (
+    <span
+      aria-hidden="true"
+      style={{ display: 'none' }}
+      {...{ [REQUIRED_ATTR]: '1', [LABEL_ATTR]: label, [VALUE_ATTR]: answered ? '1' : '' }}
+    />
+  );
 }
 
 // A number input accepts scientific notation, so 'e'/'E'/'+' are legal keystrokes —
