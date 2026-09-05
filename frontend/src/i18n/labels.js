@@ -3508,6 +3508,7 @@ const en = {
     detail: {
       faultHistory: 'Faults that came back',
       eyebrow: 'Ticket #{id}',
+      openVehicle: 'Open vehicle page',
       overview: 'Overview',
       reason: 'Reason',
       // WHERE the request came from (request_origin) — a separate axis from the reason above.
@@ -9323,6 +9324,7 @@ const ar = {
     detail: {
       faultHistory: 'أعطال عادت من جديد',
       eyebrow: 'تذكرة رقم {id}',
+      openVehicle: 'فتح صفحة المركبة',
       overview: 'نظرة عامة',
       reason: 'السبب',
       source: 'المصدر',

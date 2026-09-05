@@ -533,11 +533,22 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
             {/* identity row */}
             <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-wrap items-center gap-4">
-                {/* license plate */}
-                <span className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-white/95 px-4 py-2 font-mono text-2xl font-bold tracking-[0.18em] text-navy-900 shadow-card">
-                  <Icon.Car className="h-6 w-6 text-navy-500" strokeWidth={2} />
-                  {tk.plate || `#${tk.id}`}
-                </span>
+                {/* license plate — links to the vehicle profile */}
+                {tk.vehicle_id ? (
+                  <Link
+                    to={`/vehicles/${tk.vehicle_id}`}
+                    className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-white/95 px-4 py-2 font-mono text-2xl font-bold tracking-[0.18em] text-navy-900 shadow-card transition hover:bg-white hover:ring-2 hover:ring-brand-400"
+                    title={t('workflow.detail.openVehicle')}
+                  >
+                    <Icon.Car className="h-6 w-6 text-navy-500" strokeWidth={2} />
+                    {tk.plate || `#${tk.id}`}
+                  </Link>
+                ) : (
+                  <span className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-white/95 px-4 py-2 font-mono text-2xl font-bold tracking-[0.18em] text-navy-900 shadow-card">
+                    <Icon.Car className="h-6 w-6 text-navy-500" strokeWidth={2} />
+                    {tk.plate || `#${tk.id}`}
+                  </span>
+                )}
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-brand-300/90">{t('workflow.detail.eyebrow', { id: tk.id })}</p>
                   <h1 className="font-display text-2xl font-bold tracking-tight text-white">{tk.car || tk.plate || `#${tk.id}`}</h1>
