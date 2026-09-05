@@ -48,6 +48,10 @@ class NotificationScanner
         'service_reminder:', 'contact_reminder:',
         'rental_expiring:', 'invoice_overdue:', 'inspection_due:',
         'booking_in_maintenance:', 'booking_readiness:', 'deferred_maint_return:',
+        // A postponed repair whose follow-up moment has arrived. Keyed on the TICKET, so sending it in
+        // (or a supervisor changing the follow-up terms) drops the key from the active set and
+        // resolveStale() clears the bell without anyone dismissing it by hand.
+        'deferred_maint_due:',
         'part_delivery_overdue:', 'test_interrupted:',
         'oil_projection:', // carries the projection ANCHOR, so a new mileage reading rotates it and re-arms the chase
         'oil_decision:',   // same anchor discipline: asked once per reading, re-armed by the next one
@@ -70,6 +74,10 @@ class NotificationScanner
         'overdue_maintenance'   => 'maintenance.view',   // workshop: inspector / driver / maintenance / manager
         'maintenance_back_open' => 'maintenance.view',
         'service_inspection'    => 'maintenance.initiate', // Service & Inspection task → the Inspector (Abo Marouf): log oil + flag issues
+        // A deferred repair coming due is a DISPATCH decision — the supervisors who pick garages are the
+        // ones who can act on it ("Send to maintenance"). Deliberately not `maintenance.view`: telling
+        // every driver a fault is due creates an alert nobody in the audience is able to clear.
+        'deferred_maintenance_due' => 'maintenance.delegate',
 
         'approval_pending'      => 'maintenance.approve', // sign-off authority only
         'document_expiry'       => 'registration.view',   // insurance / registration desk
@@ -367,6 +375,7 @@ class NotificationScanner
             ->concat($this->bookingInMaintenance())
             ->concat($this->bookingReadinessAlerts())
             ->concat($this->deferredMaintenanceReturns())
+            ->concat($this->deferredMaintenanceDue())
             ->concat($this->invoiceOverdue())
             ->concat($this->inspectionDue())
             ->concat($this->partsAwaitingDelivery())
@@ -1146,6 +1155,136 @@ class NotificationScanner
                     'meta'     => ['plate' => $v->plate_no, 'note' => $v->deferred_maintenance_reason],
                 ];
             });
+    }
+
+    /**
+     * DEFERRED MAINTENANCE COMING DUE — a fault that was recorded and consciously postponed, whose
+     * follow-up moment has now arrived.
+     *
+     * This is the other half of the third decision at the Decide step. Deferring a repair is only a real
+     * decision if something brings it back; without this detector "later" means "never", and the feature
+     * would quietly become a nicer way of losing findings than unticking them was.
+     *
+     * ALL FOUR TRIGGERS ARE EVALUATED HERE, AND NONE OF THEM IS A STORED ALARM. The two that carry a
+     * value (a date, a mileage) are compared against live state; the two that do not are derived from
+     * state the platform already owns:
+     *
+     *   date          deferral_due_date is today or past
+     *   mileage       the car's own odometer has reached deferral_due_odometer
+     *   after_rental  the car has no currently-open customer contract — it is back with us
+     *   next_service  the car's service interval says it is due, or one of its reminders is overdue
+     *
+     * Deriving rather than scheduling is what makes them survive reality: a rental extended by a week
+     * simply keeps the after_rental deferral quiet for another week, and a service brought forward pulls
+     * its deferral forward with it. Nothing has to be rebuilt, and nothing can rot. See
+     * [[review-reminder-engine]] for why the ONE genuinely stored reminder in this codebase is stored.
+     *
+     * The alert is keyed on the ticket, so pressing "Send to maintenance" moves it out of
+     * maintenance_deferred, drops the key from the active set, and resolveStale() clears the bell.
+     */
+    private function deferredMaintenanceDue(): Collection
+    {
+        $tickets = Maintenance::deferredMaintenance()
+            ->with('vehicle:id,plate_no,make,model,code,odometer')
+            ->orderBy('deferred_at')
+            ->limit(self::CAP * 2) // read a little wide; the trigger test below is what actually filters
+            ->get();
+
+        if ($tickets->isEmpty()) {
+            return collect();
+        }
+
+        // One query for every car that is still out with a customer, rather than one per ticket.
+        $onRental = Contract::where('contract_type', 'C')
+            ->currentlyOpen()
+            ->whereIn('vehicle_id', $tickets->pluck('vehicle_id')->filter()->unique())
+            ->pluck('vehicle_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        return $tickets->filter(function (Maintenance $t) use ($onRental) {
+            $vehicle = $t->vehicle;
+
+            return match ($t->deferral_trigger) {
+                Maintenance::DEFER_ON_DATE => $t->deferral_due_date !== null
+                    && $t->deferral_due_date->lte(Carbon::today()),
+
+                Maintenance::DEFER_ON_MILEAGE => $t->deferral_due_odometer !== null
+                    && $vehicle !== null
+                    && (int) $vehicle->odometer >= (int) $t->deferral_due_odometer,
+
+                Maintenance::DEFER_AFTER_RENTAL => $vehicle !== null
+                    && ! in_array((int) $t->vehicle_id, $onRental, true),
+
+                Maintenance::DEFER_NEXT_SERVICE => $vehicle !== null && $this->serviceIsDueFor($vehicle),
+
+                // A deferral with no trigger predates this feature or was written by hand. It is not
+                // silently due — that would fire an alert nobody scheduled — and it is not silently
+                // ignored either: it simply sits in the Deferred lane where a human can see it.
+                default => false,
+            };
+        })
+            ->take(self::CAP)
+            ->map(function (Maintenance $t) {
+                $v   = $t->vehicle;
+                $car = trim(($v?->code ? '#' . $v->code . ' ' : '') . trim(($v?->make ?? '') . ' ' . ($v?->model ?? ''))) ?: 'Vehicle';
+                $why = match ($t->deferral_trigger) {
+                    Maintenance::DEFER_ON_DATE      => 'the follow-up date has arrived',
+                    Maintenance::DEFER_ON_MILEAGE   => 'the car has reached ' . number_format((int) $t->deferral_due_odometer) . ' km',
+                    Maintenance::DEFER_AFTER_RENTAL => 'the rental has ended and the car is back',
+                    Maintenance::DEFER_NEXT_SERVICE => 'the car is due for its scheduled service',
+                    default                         => 'it is due',
+                };
+
+                return [
+                    'type'     => 'deferred_maintenance_due',
+                    'category' => 'maintenance',
+                    // Never 'critical': a critical fault could not have been deferred in the first place.
+                    'severity' => 'warning',
+                    'title'    => '🕒 Deferred repair now due · ' . $car,
+                    'body'     => trim($car . ($v?->plate_no ? ' (' . $v->plate_no . ')' : '')
+                        . ' has a fault recorded on ' . optional($t->deferred_at)->toDateString()
+                        . ' that was postponed — ' . $why
+                        . ($t->deferred_reason ? ' (' . $t->deferred_reason . ')' : '')
+                        . '. Review it and send it to maintenance.'),
+                    'url'      => '/maintenance-workflow?ticket=' . $t->id,
+                    'key'      => 'deferred_maint_due:' . $t->id,
+                    'icon'     => 'clock',
+                    'meta'     => [
+                        'ticket_id'        => $t->id,
+                        'plate'            => $v?->plate_no,
+                        'deferral_trigger' => $t->deferral_trigger,
+                        'deferred_at'      => optional($t->deferred_at)->toDateString(),
+                        'fault_severity'   => $t->fault_severity,
+                    ],
+                ];
+            })
+            ->values();
+    }
+
+    /**
+     * "Is this car due for scheduled work?" — the signal behind a `next_service` deferral.
+     *
+     * Deliberately asks the SAME two sources the service alerts themselves read (the vehicle's own
+     * service interval, and its active reminders), rather than inventing a third definition of "due".
+     * A deferral that fires on a different rule than the service alert next to it in the same feed is
+     * how two screens end up disagreeing about one car.
+     */
+    private function serviceIsDueFor(Vehicle $vehicle): bool
+    {
+        try {
+            if (($vehicle->serviceStatus()['status'] ?? null) === 'service_due') {
+                return true;
+            }
+        } catch (\Throwable $e) {
+            // A car with no anchor cannot answer the question; the reminders below still can.
+        }
+
+        return ServiceReminder::where('vehicle_id', $vehicle->id)
+            ->where('active', true)
+            ->where('is_muted', false)
+            ->get()
+            ->contains(fn (ServiceReminder $r) => ($r->statusInfo()['status'] ?? null) === 'overdue');
     }
 
     /**

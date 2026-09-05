@@ -44,6 +44,7 @@ class MaintenanceWorkflowResource extends JsonResource
         Maintenance::WF_AWAITING_INVOICE   => 'Awaiting invoice',
         Maintenance::WF_CLOSED             => 'Closed',
         Maintenance::WF_DIAGNOSTIC_CLEARED => 'No maintenance needed',
+        Maintenance::WF_MAINTENANCE_DEFERRED => 'Deferred — follow up later',
         Maintenance::WF_COMPLAINT_TRIAGE   => 'Pending triage',
         Maintenance::WF_TRIAGE_APPROVAL_PENDING => 'Awaiting routing approval',
         Maintenance::WF_COMPLAINT_RESOLVED => 'Resolved on-site',
@@ -92,6 +93,20 @@ class MaintenanceWorkflowResource extends JsonResource
             'paused_from_status_label' => $t->paused_from_status ? (self::LABELS[$t->paused_from_status] ?? $t->paused_from_status) : null,
             'paused_at'                => optional($t->paused_at)->toIso8601String(),
             'paused_reason'            => $t->paused_reason,
+
+            // DEFERRED MAINTENANCE — the fault is recorded, the repair is scheduled for later. Everything
+            // the card and the drawer need to say WHEN and WHY without a second round trip. Present (as
+            // nulls) on every ticket so a consumer never has to distinguish "not deferred" from "the key
+            // is missing because the backend forgot"; `is_deferred` is the one flag to branch on.
+            'is_deferred'              => $t->workflow_status === Maintenance::WF_MAINTENANCE_DEFERRED,
+            'deferred_at'              => optional($t->deferred_at)->toIso8601String(),
+            'deferred_by_name'         => $t->deferredBy?->name,
+            'deferred_reason'          => $t->deferred_reason,
+            'deferral_trigger'         => $t->deferral_trigger,
+            'deferral_trigger_label'   => $t->deferral_trigger ? (Maintenance::DEFERRAL_TRIGGERS[$t->deferral_trigger] ?? $t->deferral_trigger) : null,
+            'deferral_due_date'        => optional($t->deferral_due_date)->toDateString(),
+            'deferral_due_odometer'    => $t->deferral_due_odometer,
+            'deferral_activated_at'    => optional($t->deferral_activated_at)->toIso8601String(),
 
             // Enterprise Handover Workflow — once physically returned (but not yet resumed) the vehicle
             // is blocked from being rented out again; the open discrepancy incident (if any) gates the

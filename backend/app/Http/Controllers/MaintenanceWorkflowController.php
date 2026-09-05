@@ -69,6 +69,11 @@ class MaintenanceWorkflowController extends Controller
         // On-Site (mobile) lane — the car stays available; a mechanic services it where it's parked and
         // marks it serviced. Its own bucket so the two lanes never blur on the board.
         'on_site'         => [Maintenance::WF_ON_SITE_PENDING],
+        // Deferred — a recorded fault whose repair was consciously postponed. Its own lane because it is
+        // the one open state where NOBODY is expected to act today: mixing these into "Needs Dispatch"
+        // would make the dispatch queue read as a backlog of ignored work, which is exactly the confusion
+        // that made people untick findings instead of deferring them.
+        'deferred'        => [Maintenance::WF_MAINTENANCE_DEFERRED],
         'awaiting_pickup' => [Maintenance::WF_AWAITING_DISPATCH],    // garage + driver assigned — awaiting the driver's pickup (outbound leg)
         'in_transit'      => [Maintenance::WF_IN_TRANSIT],
         'under_repair'    => [Maintenance::WF_UNDER_REPAIR],
@@ -97,7 +102,7 @@ class MaintenanceWorkflowController extends Controller
     // `vehicle.odometer` is selected because it IS the anchor the transfer/release odometer gates compare
     // against server-side; without it the resource's `vehicle_odometer` silently serializes as null and the
     // modal falls back to a stale ticket-chain reading, contradicting the server's own verdict.
-    private const EAGER = ['vendor', 'transferToVendor:id,name', 'vehicle:id,plate_no,make,model,operational_status,odometer', 'inspector:id,name', 'requester:id,name', 'assignedDriver:id,name', 'delegatedBy:id,name', 'recommendationReviewer:id,name', 'watchers:id,name', 'linkedContract:id,contract_no', 'lineItems',
+    private const EAGER = ['vendor', 'transferToVendor:id,name', 'vehicle:id,plate_no,make,model,operational_status,odometer', 'inspector:id,name', 'requester:id,name', 'assignedDriver:id,name', 'delegatedBy:id,name', 'recommendationReviewer:id,name', 'deferredBy:id,name', 'watchers:id,name', 'linkedContract:id,contract_no', 'lineItems',
         // Multi-garage routing: the ticket's faults, each with its garage-stint timeline + current garage.
         // lastFailedVendor drives the "Unresolved at Garage X" blame badge on a re-inspection failure.
         'tasks.assignments.vendor:id,name', 'tasks.assignments.assignedBy:id,name', 'tasks.assignments.releasedBy:id,name',
@@ -178,6 +183,8 @@ class MaintenanceWorkflowController extends Controller
         'inspector:id,name', 'requester:id,name', 'pickedUpFromGarageBy:id,name',
         'assignedDriver:id,name', 'delegatedBy:id,name',
         'recommendationReviewer:id,name', 'linkedContract:id,contract_no',
+        // Deferred maintenance — the card names who postponed the repair, loaded once for the whole board.
+        'deferredBy:id,name',
         'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name',
         // Event Type layer — the card renders a type pill and filters by kind, so the catalog each task
         // was typed from is loaded once for the whole board rather than per card.
@@ -2653,7 +2660,24 @@ class MaintenanceWorkflowController extends Controller
                 : Maintenance::TYPES_TECHNICIAN;
 
             $data = $request->validate([
-                'requires_maintenance' => ['required', 'boolean'],
+                // THE DECISION. `decision` is the authoritative field and carries all THREE answers
+                // (requires | deferred | none). `requires_maintenance` is the original boolean and is
+                // still accepted — every client built before deferral existed sends it, and it means
+                // exactly what it always meant. Sending neither is refused below; sending both is fine
+                // as long as they agree, which is what the mismatch check enforces.
+                'decision'             => ['nullable', Rule::in(Maintenance::DECISIONS)],
+                'requires_maintenance' => ['nullable', 'boolean'],
+                // ── DEFERRED MAINTENANCE (only read when decision=deferred) ──────────────────────────
+                // What brings the repair back, and the value that trigger needs. Shape only here; the
+                // MEANING (a date not in the past, a mileage the car has not already passed, a severity
+                // that may be postponed at all) is enforced in the service, which is also where the
+                // report is refused whole — see MaintenanceWorkflowService::submitReport().
+                'deferral_trigger'     => ['nullable', Rule::in(array_keys(Maintenance::DEFERRAL_TRIGGERS))],
+                'deferral_due_date'    => ['nullable', 'date'],
+                'deferral_due_odometer' => ['nullable', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
+                // WHY it is being postponed — mandatory for a deferral, and the one thing the person who
+                // picks this up in two months cannot reconstruct for themselves.
+                'deferred_reason'      => ['nullable', 'string', 'max:2000'],
                 'symptoms'             => ['nullable', 'array'],
                 'symptoms.*'           => ['string', 'max:255'],
                 // Symptom → Root-Cause diagnostic: the cause chosen (or typed) for each symptom. A
@@ -2729,19 +2753,57 @@ class MaintenanceWorkflowController extends Controller
                 'check_results.*.finding_keyword' => ['nullable', 'string', 'max:120'],
             ]);
 
-            $requires = $request->boolean('requires_maintenance');
-            $ticket = $this->workflow->submitReport($ticket, $data, $requires, $request->user());
+            // Resolve the three-way decision from whichever field the client speaks. A client that sends
+            // both must not contradict itself: silently preferring one would turn a client bug into a
+            // wrong decision about a real car, and the two possible wrong answers here are "we sent a car
+            // nobody meant to send" and "we cleared a car that has a fault".
+            $decision = $data['decision'] ?? null;
+            $hasBool  = $request->has('requires_maintenance');
+
+            if ($decision === null) {
+                if (! $hasBool) {
+                    throw new \App\Exceptions\WorkflowTransitionException(
+                        'Say what you decided: requires maintenance, deferred, or none.',
+                        ['field' => 'decision'],
+                    );
+                }
+                $decision = $request->boolean('requires_maintenance')
+                    ? Maintenance::DECIDE_REQUIRES
+                    : Maintenance::DECIDE_NONE;
+            } elseif ($hasBool && $request->boolean('requires_maintenance') !== ($decision === Maintenance::DECIDE_REQUIRES)) {
+                throw new \App\Exceptions\WorkflowTransitionException(
+                    'The decision and requires_maintenance disagree — send one or the other.',
+                    ['field' => 'decision'],
+                );
+            }
+
+            $requires = $decision === Maintenance::DECIDE_REQUIRES;
+            $deferred = $decision === Maintenance::DECIDE_DEFERRED;
+            // Both of the first two answers record a REAL FAULT, and everything that follows from that —
+            // required parts, findings promoted into routable tasks — is owed to both. Only the dispatch
+            // half is withheld from a deferral.
+            $recordsFault = $requires || $deferred;
+
+            $ticket = $this->workflow->submitReport($ticket, $data, $decision, $request->user());
 
             // Record the technical requirements BEFORE findings are promoted below, so each line binds to
             // its fault automatically (MaintenanceTaskService::bindRequiredParts). A cleared diagnostic
             // needs no parts — the car required no work — so they are only kept when a ticket is opened.
-            if ($requires && ! empty($data['required_parts'])) {
+            // A DEFERRED repair keeps its parts list too: what the job will need is technical knowledge
+            // captured while the inspector still had the car in front of him, and it does not become less
+            // true because the trip was postponed.
+            if ($recordsFault && ! empty($data['required_parts'])) {
                 $this->requiredParts->record($ticket, $data['required_parts'], $request->user());
             }
 
             // Promote the inspector's findings into first-class routable tasks (one per fault), so the
             // ticket can be split across garages from the moment it opens.
-            if ($requires) {
+            //
+            // THIS IS WHY A DEFERRAL IS A TICKET AND NOT A NOTE. The faults become the same first-class
+            // MaintenanceTask rows an ordinary repair produces, on the same ticket, through the same
+            // service — so fault history, recurrence analysis and the vehicle's own record all see them
+            // from the moment they are found rather than from the day someone finally drove the car in.
+            if ($recordsFault) {
                 $this->tasks->syncFromFindings($ticket, $request->user());
                 $ticket->load(self::EAGER);
             }
@@ -2749,6 +2811,12 @@ class MaintenanceWorkflowController extends Controller
             // Hand the required parts to PROCUREMENT — now, not after a maintenance approval. Runs after
             // findings promotion so every request already carries its originating fault. Best-effort
             // internally: a procurement hiccup never fails the inspection the technician just filed.
+            //
+            // A DEFERRED repair raises NOTHING here, and that is a deliberate money decision rather than an
+            // oversight: procurement is a commitment to spend, and it should follow the decision to do the
+            // work, not a decision to postpone it. Parts for a job scheduled for next quarter would sit in
+            // the sourcing queue ageing against a repair nobody has started. The requests are raised when
+            // the ticket is actually sent in — see activateDeferred().
             $partRequests = ($requires && ! empty($data['required_parts']))
                 ? $this->requiredParts->raiseRequests($ticket, $request->user())
                 : [];
@@ -2768,7 +2836,7 @@ class MaintenanceWorkflowController extends Controller
             // AFTER the transaction has committed and after findings were promoted, so the events
             // describe what was actually saved rather than what was attempted — and so a rollback
             // can never leave facts recorded about work that did not happen.
-            $this->capture->inspectionSubmitted($ticket, $data, $request->user(), $requires);
+            $this->capture->inspectionSubmitted($ticket, $data, $request->user(), $decision);
 
             return ResponseHelper::SuccessResponse(
                 [
@@ -2777,15 +2845,61 @@ class MaintenanceWorkflowController extends Controller
                     // So the UI can confirm procurement was actually reached, not just promised.
                     'part_requests_created' => $partsRaised,
                 ],
-                $requires
-                    ? 'Requires maintenance — ticket opened, logistics notified'
-                        . ($partsRaised > 0 ? " · {$partsRaised} part request(s) sent to procurement" : '')
-                    : 'No maintenance needed — diagnostic closed',
+                match ($decision) {
+                    Maintenance::DECIDE_REQUIRES => 'Requires maintenance — ticket opened, logistics notified'
+                        . ($partsRaised > 0 ? " · {$partsRaised} part request(s) sent to procurement" : ''),
+                    // Says both halves out loud, because a deferral is the one answer where what did NOT
+                    // happen (no garage, no dispatch) matters as much as what did.
+                    Maintenance::DECIDE_DEFERRED => 'Fault recorded — repair deferred. No garage assigned and the car stays available.',
+                    default                      => 'No maintenance needed — diagnostic closed',
+                },
                 200
             );
         });
     }
 
+
+    /**
+     * "SEND TO MAINTENANCE" — a deferred repair's follow-up moment has come (or a supervisor decided it
+     * has), and the parked ticket enters the ordinary dispatch queue.
+     *
+     * Procurement starts HERE, not at deferral: the required parts the inspector recorded are converted
+     * into real part requests now that the work is actually going to happen. That ordering is the whole
+     * reason the parts were kept but not raised when the repair was postponed.
+     */
+    public function activateDeferred(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                // Answered now rather than at deferral: a job postponed for months may have outgrown the
+                // mobile lane. Omitted = in-shop, the safe default.
+                'repair_location' => ['nullable', Rule::in(Maintenance::REPAIR_LOCATIONS)],
+                'notes'           => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->activateDeferred($ticket, $data, $request->user());
+
+            // The technical requirements captured at inspection become procurement now that the repair is
+            // real. Idempotent per line (MaintenanceRequiredPartService only raises what has no request),
+            // so a ticket deferred, sent in, and bounced back never orders the same part twice.
+            $partRequests = $this->requiredParts->raiseRequests($ticket, $request->user());
+            $partsRaised  = count($partRequests);
+
+            if ($partsRaised > 0) {
+                $ticket->load(self::EAGER);
+            }
+
+            return ResponseHelper::SuccessResponse(
+                [
+                    'ticket'                => MaintenanceWorkflowResource::make($ticket),
+                    'part_requests_created' => $partsRaised,
+                ],
+                'Deferred repair sent to maintenance'
+                    . ($partsRaised > 0 ? " · {$partsRaised} part request(s) sent to procurement" : ''),
+                200
+            );
+        });
+    }
 
     /**
      * Phase 2 — the Supervisor (dispatcher) reviews the open ticket, picks the ONE primary garage and

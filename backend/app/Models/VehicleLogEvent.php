@@ -23,6 +23,10 @@ class VehicleLogEvent extends Model
     public const EVENT_DIAGNOSTIC_STARTED = 'diagnostic_started'; // UC-1 open()/startDiagnostic(): Inspector starts a test drive
     public const EVENT_REPORT_FILED       = 'report_filed';       // UC-2 submitReport(requires=true): ticket born
     public const EVENT_DIAGNOSTIC_CLEARED = 'diagnostic_cleared'; // UC-2 submitReport(requires=false): no work needed
+    // UC-2 submitReport(decision=deferred): a real fault, recorded whole, with the repair postponed to a
+    // named moment. The pair below is the whole life of that decision — deferred, then finally sent in.
+    public const EVENT_MAINTENANCE_DEFERRED  = 'maintenance_deferred';
+    public const EVENT_DEFERRED_ACTIVATED    = 'deferred_activated';
     public const EVENT_GARAGE_ASSIGNED    = 'garage_assigned';    // Phase 2 assignDispatch(): supervisor picked the garage + assigned a driver
     public const EVENT_DISPATCHED         = 'dispatched';         // UC-3 dispatch(): driver picked the car up and took it to the garage
     public const EVENT_UNDER_REPAIR       = 'under_repair';       // UC-4 markUnderRepair(): garage received it
@@ -245,6 +249,9 @@ class VehicleLogEvent extends Model
         self::EVENT_DIAGNOSTIC_STARTED => Maintenance::FINDING_INSPECTOR,
         self::EVENT_REPORT_FILED       => Maintenance::FINDING_INSPECTOR,
         self::EVENT_DIAGNOSTIC_CLEARED => Maintenance::FINDING_INSPECTOR,
+        // Both halves of a deferral are the inspector's/supervisor's own record of the car, not a garage's.
+        self::EVENT_MAINTENANCE_DEFERRED => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_DEFERRED_ACTIVATED   => Maintenance::FINDING_INSPECTOR,
         self::EVENT_GARAGE_ASSIGNED    => Maintenance::FINDING_GARAGE,
         self::EVENT_DISPATCHED         => Maintenance::FINDING_GARAGE,
         self::EVENT_UNDER_REPAIR       => Maintenance::FINDING_GARAGE,

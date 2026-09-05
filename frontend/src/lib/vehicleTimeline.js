@@ -315,6 +315,9 @@ export function normalizeLegacyTimeline(rows) {
 // Rough pipeline order for the "Workflow stage" sort — earliest lifecycle stage first. Unknown → end.
 const STAGE_ORDER = [
   'pending_review', 'complaint_triage', 'inspection_requested', 'inspection_diagnostic',
+  // maintenance_deferred sits right after the diagnostic that produced it — that is the moment the
+  // decision was made, and it is where the reader looks for it when tracing a car's history.
+  'maintenance_deferred',
   'triage_approval_pending', 'recommendation_pending', 'inspection_pending', 'on_site_pending',
   'awaiting_dispatch', 'in_transit', 'under_repair', 'repair_review',
   'reinspection_failed', 'ready_reinspection', 'ready_for_pickup', 'in_our_park', 'awaiting_invoice',
