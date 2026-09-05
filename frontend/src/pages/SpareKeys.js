@@ -59,6 +59,26 @@ const REASON_LABEL = {
   other: 'Other',
 };
 
+/**
+ * The same reason, said in the past tense once the requirement is closed.
+ *
+ * "Why" is the reason the requirement was RAISED, not a statement about the car today — but printed
+ * flat beside a green "Completed" badge, "No spare key" reads as a contradiction of it. A closed row
+ * therefore says what WAS true when somebody wrote the car down.
+ */
+const CLOSED_REASON_LABEL = {
+  missing: 'Was missing a spare key',
+  additional: 'An extra key was wanted',
+  lost: 'A key had been lost',
+  replacement: 'A key needed replacing',
+  other: 'Other',
+};
+
+const reasonLabel = (row, t) => {
+  const map = row.is_open ? REASON_LABEL : CLOSED_REASON_LABEL;
+  return map[row.reason_code] ? t(map[row.reason_code]) : row.reason_code;
+};
+
 /** The stages a manager scans first — the ones that mean somebody has to do something. */
 const OUTSTANDING = ['required', 'purchase_requested', 'approved', 'ordered', 'received', 'rejected'];
 
@@ -146,9 +166,7 @@ export default function SpareKeys() {
       header: t('Why'),
       render: (r) => (
         <div className="min-w-0">
-          <div className="text-sm text-slate-700">
-            {REASON_LABEL[r.reason_code] ? t(REASON_LABEL[r.reason_code]) : r.reason_code}
-          </div>
+          <div className="text-sm text-slate-700">{reasonLabel(r, t)}</div>
           {r.source === 'sheet_import' && (
             <Badge tone="gray">{t('From the sheet')}</Badge>
           )}
@@ -189,6 +207,11 @@ export default function SpareKeys() {
         }
         if ((r.rejected_requests || []).length > 0) {
           return <span className="text-xs text-rose-600">{t('{n} refused attempt(s)', { n: num(r.rejected_requests.length) })}</span>;
+        }
+        // An imported row has no procurement chain and never will: the sheet recorded the need and
+        // its dates only. Saying "nothing requested YET" there implies somebody still has to act.
+        if (r.source === 'sheet_import') {
+          return <span className="text-xs text-slate-400">{t('Not recorded on the sheet')}</span>;
         }
         return <span className="text-xs text-slate-400">{t('Nothing requested yet')}</span>;
       },

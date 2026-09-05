@@ -64,6 +64,26 @@ const REASON_LABEL = {
   other: 'Other',
 };
 
+/**
+ * The same reason once the requirement is closed, said in the past tense.
+ *
+ * The reason is why the requirement was RAISED, not a claim about the car today. Beside a green
+ * "Completed" badge the present tense reads as a contradiction of it, so a closed row states what
+ * WAS true at the time. The dropdown keeps the present tense: there you are describing now.
+ */
+const CLOSED_REASON_LABEL = {
+  missing: 'Was missing a spare key',
+  additional: 'An extra key was wanted',
+  lost: 'A key had been lost',
+  replacement: 'A key needed replacing',
+  other: 'Other',
+};
+
+const reasonLabel = (row, t) => {
+  const map = row.is_open ? REASON_LABEL : CLOSED_REASON_LABEL;
+  return map[row.reason_code] ? t(map[row.reason_code]) : row.reason_code;
+};
+
 const SLOT_LABEL = { unit_1: 'Spare Key #1', unit_2: 'Spare Key #2', unit_3: 'Spare Key #3', unit_4: 'Spare Key #4' };
 
 /** The single next action a requirement is waiting for, in the words of the person who must do it. */
@@ -342,7 +362,7 @@ function RequirementRow({ row, t, onCancel }) {
             )}
           </div>
           <div className="mt-1 text-xs text-slate-500">
-            {REASON_LABEL[row.reason_code] ? t(REASON_LABEL[row.reason_code]) : row.reason_code}
+            {reasonLabel(row, t)}
             {' · '}
             {/* An imported row has the sheet's own dates and no app timestamp — say which is which
                 rather than presenting a spreadsheet date as something this system recorded. */}
