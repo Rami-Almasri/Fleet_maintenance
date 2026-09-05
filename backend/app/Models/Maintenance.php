@@ -137,6 +137,11 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
     public const WF_AWAITING_INVOICE   = 'awaiting_invoice';         // returned to service; invoice outstanding
     public const WF_CLOSED             = 'closed';                    // UC-6: re-inspected, returned to service
     public const WF_DIAGNOSTIC_CLEARED = 'diagnostic_cleared';       // Stage 2 (no maintenance): diagnosis closed, no ticket ever
+    // Stage 2, THE THIRD ANSWER (deferred maintenance): the car HAS a real fault, the report and its
+    // findings are kept whole and promoted into fault tasks — but the repair is consciously postponed.
+    // No garage is picked, nothing is dispatched, no driver is alerted, and (deliberately absent from
+    // WF_TICKET_STATES) the car stays rentable. It leaves this state only when a supervisor sends it in.
+    public const WF_MAINTENANCE_DEFERRED = 'maintenance_deferred';
     // Customer-complaint TRIAGE lane (Abu Maroof). A complaint no longer jumps straight to the
     // Supervisors' garage-dispatch queue: it parks HERE first, where the Inspector (Abu Maroof) decides
     // how to handle it — talk to the customer, resolve it on-site, or send the car in (to a garage or to
@@ -212,6 +217,9 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
         self::WF_COMPLAINT_TRIAGE,
         self::WF_TRIAGE_APPROVAL_PENDING,
         self::WF_INSPECTION_DIAGNOSTIC,
+        // Off the linear path: a fault recorded and consciously parked. Placed straight after the
+        // diagnostic because that is the only state it is ever entered from.
+        self::WF_MAINTENANCE_DEFERRED,
         self::WF_RECOMMENDATION_PENDING,
         self::WF_INSPECTION_PENDING,
         self::WF_ON_SITE_PENDING,
@@ -295,7 +303,79 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
         // NOTE: WF_IN_OUR_PARK is ALSO DELIBERATELY NOT here. It is a TRANSIENT checkpoint — arriveAtPark()
         // always auto-continues to closed (minor repair) or ready_for_reinspection (major repair) within
         // the same request, so no ticket ever rests here; whichever state it lands on governs freedom.
+        // NOTE: WF_MAINTENANCE_DEFERRED is DELIBERATELY NOT here either, and for the same reason as the
+        // on-site lane: the fault is real and recorded, but no repair is under way and the car must keep
+        // earning. Listing it would ground every car anyone ever postponed a wiper blade on.
     ];
+
+    // ── DEFERRED MAINTENANCE — the third answer at the Decide step ──────────────────────────────────
+
+    /**
+     * WHAT BRINGS A DEFERRED FAULT BACK. Four kinds, because "later" means four different things in this
+     * operation and flattening them into a date would mean guessing at three of them.
+     *
+     * Only DEFER_ON_DATE and DEFER_ON_MILEAGE store a value of their own (deferral_due_date /
+     * deferral_due_odometer). The other two are DERIVED ON SCAN from state the platform already holds —
+     * which is what keeps them true when a rental is extended or a service is brought forward. See
+     * NotificationScanner::deferredMaintenanceDue().
+     */
+    public const DEFER_ON_DATE         = 'date';         // a calendar moment the decider chose
+    public const DEFER_AFTER_RENTAL    = 'after_rental'; // the moment the car is back off hire
+    public const DEFER_NEXT_SERVICE    = 'next_service'; // whenever it is next in for scheduled work
+    public const DEFER_ON_MILEAGE      = 'mileage';      // at an odometer reading, whenever that arrives
+
+    /**
+     * THE THREE ANSWERS the inspector may give at the Decide step. One field, three meanings, so no
+     * caller can express a fourth by combining flags:
+     *
+     *   requires  send it for maintenance NOW           → a ticket in the dispatch queue
+     *   deferred  fault recorded, follow it up LATER    → a parked ticket, car stays rentable
+     *   none      the car is good to go                 → terminal, and may carry no findings
+     */
+    public const DECIDE_REQUIRES = 'requires';
+    public const DECIDE_DEFERRED = 'deferred';
+    public const DECIDE_NONE     = 'none';
+    public const DECISIONS       = [self::DECIDE_REQUIRES, self::DECIDE_DEFERRED, self::DECIDE_NONE];
+
+    public const DEFERRAL_TRIGGERS = [
+        self::DEFER_ON_DATE      => 'On a specific date',
+        self::DEFER_AFTER_RENTAL => 'After the current rental ends',
+        self::DEFER_NEXT_SERVICE => 'At the next scheduled service',
+        self::DEFER_ON_MILEAGE   => 'At a specific mileage',
+    ];
+
+    /** Is this ticket a recorded-but-postponed fault right now? */
+    public function isDeferredMaintenance(): bool
+    {
+        return $this->workflow_status === self::WF_MAINTENANCE_DEFERRED;
+    }
+
+    /** Parked faults awaiting their follow-up moment. */
+    public function scopeDeferredMaintenance(Builder $q): Builder
+    {
+        return $q->where('workflow_status', self::WF_MAINTENANCE_DEFERRED);
+    }
+
+    /**
+     * MAY THIS DECISION BE POSTPONED AT ALL? Returns the refusal, or null when deferral is allowed.
+     *
+     * Two hard blocks, both of them safety rather than policy: a 🔴 Critical grade is the inspector's own
+     * statement that the car is not safe to keep using, and a Breakdown is a car that will not start.
+     * Neither can be answered with "we'll look at it next month", so the refusal lives on the model where
+     * the report gate, the activation path and any future caller all read the same one.
+     */
+    public static function deferralRefusal(?string $faultSeverity, ?string $maintenanceType): ?string
+    {
+        if ($maintenanceType === self::TYPE_BREAKDOWN) {
+            return 'A breakdown cannot be deferred — the car will not start, so it has to go in now.';
+        }
+
+        if ($faultSeverity === self::FAULT_SEVERITY_CRITICAL) {
+            return 'A 🔴 Critical fault cannot be deferred — grade it moderate or routine, or send the car in now.';
+        }
+
+        return null;
+    }
 
     /**
      * Maintenance Checkpoint tracking window — the active, committed in-repair stages a car passes
@@ -1099,6 +1179,11 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
         // Triage Routing Approval — Abu Maroof's recommended routing (destination + optional replacement +
         // note + who/when) held while it awaits a Supervisor's approve/reject.
         'triage_route_request',
+        // Deferred Maintenance — the fault is recorded, the repair is postponed, and this is the whole
+        // record of that decision: when/who/why, what brings it back, and when it was finally sent in.
+        'deferred_at', 'deferred_by', 'deferred_reason',
+        'deferral_trigger', 'deferral_due_date', 'deferral_due_odometer',
+        'deferral_activated_at', 'deferral_activated_by',
     ];
 
     protected $casts = [
@@ -1167,6 +1252,13 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
         'deferrable_for_rental'        => 'boolean',
         // Triage Routing Approval — the pending routing recommendation (JSON).
         'triage_route_request'         => 'array',
+        // Deferred Maintenance. `deferral_due_date` is a DATE, not a datetime: the follow-up moment is a
+        // day the supervisor picked, not an hour, and casting it as a datetime would make "due today"
+        // depend on the minute the scanner happened to run.
+        'deferred_at'                  => 'datetime',
+        'deferral_due_date'            => 'date',
+        'deferral_due_odometer'        => 'integer',
+        'deferral_activated_at'        => 'datetime',
     ];
 
     /**
@@ -1201,6 +1293,17 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
     public function recommendationReviewer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'recommendation_reviewed_by');
+    }
+
+    /** Who decided to postpone this repair, and who finally sent it in. */
+    public function deferredBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'deferred_by');
+    }
+
+    public function deferralActivatedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'deferral_activated_by');
     }
 
     /** The Supervisor who delegated the current driver (pickup/dropoff), if any. */

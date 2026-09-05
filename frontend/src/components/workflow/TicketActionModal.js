@@ -29,6 +29,7 @@ import Icon from '../ui/Icon';
 import { Input, Textarea, Select, Requirement } from '../ui/Field';
 import FindingsList from './FindingsList';
 import FindingsPicker from './FindingsPicker';
+import { reasonText as findingHoldReason } from './FindingApprovalPanel';
 import FaultDetailPicker from './FaultDetailPicker';
 import SystemChecks, { buildCheckResults, checkFindings } from './SystemChecks';
 import { buildDetails, findingsMissingLocation, withDetails } from '../../lib/faultLocations';
@@ -164,6 +165,34 @@ const FAULT_SEVERITY_OPTS = [
   { value: 'moderate', emoji: '🟡' },
   { value: 'routine', emoji: '🟢' },
 ];
+
+// ── WHAT A HELD FINDING DOES NOT STOP ───────────────────────────────────────────────────────────────
+//
+// While a finding is held for approval the server refuses EVERY staged transition
+// (MaintenanceWorkflowService::assertTransition → FindingApprovalService::assertNothingPending), so the
+// modal must not go on offering a form whose Save is already decided. It used to: the Assign Garage step
+// rendered the amber "⏸ Awaiting approval" chip on the finding and then let a supervisor pick a garage,
+// pick a driver and press Save, only for the server to refuse it — the blocker discovered after the work
+// of filling the form rather than before.
+//
+// Listed the OTHER way round on purpose. These are the actions that do NOT route through
+// assertTransition, so blocking them here would refuse something the server allows:
+//   finding / followup   — writing to the ticket, not moving it; `finding` is also how a held finding
+//                          gets corrected in the first place, so it must stay open
+//   lineitems            — the invoice reconciliation, explicitly valid in any state
+//   pause / resume /
+//   markReturned         — custody checkpoints that guard on workflow_status directly
+//   temporarilyRelease
+//   and its six legs     — the car leaving and coming back; the ticket stays at its stage throughout
+//   delegate / typechange — reassignment and reclassification, neither of which is a move
+// Everything else moves the ticket, and while the hold stands, nothing moves.
+const FINDING_HOLD_EXEMPT = new Set([
+  'finding', 'followup', 'lineitems', 'delegate', 'typechange',
+  'pause', 'resume', 'markReturned',
+  'temporarilyRelease', 'cancelRelease', 'assignReleaseMove', 'startReleaseMove',
+  'arriveAtDestination', 'requestReleaseReturn', 'assignReleaseReturn', 'startReleaseReturn',
+  'returnFromRelease',
+]);
 
 // Submit-button tone per action (visual only). The footer further overrides this
 // for the branching decisions (reinspect pass/fail, decide requires/clear).
@@ -425,20 +454,24 @@ export function severitySuggestion(symptoms = [], keywordMeta = {}) {
   return best;
 }
 
-function FaultSeverityPicker({ value, onChange, t, locked = false, suggestion = null }) {
+// `disabledValues` greys out individual grades the current decision cannot carry — a deferral may not be
+// 🔴 Critical, because "not safe to drive" and "we'll do it next month" cannot both be true. Distinct from
+// `locked` (a Breakdown, where the grade is decided for you and NO option is choosable).
+function FaultSeverityPicker({ value, onChange, t, locked = false, suggestion = null, disabledValues = [] }) {
   return (
     <div className="grid grid-cols-3 gap-2">
       {FAULT_SEVERITY_OPTS.map((p) => {
         const active = value === p.value;
-        const isSuggested = !locked && suggestion?.risk === p.value;
+        const off = locked || disabledValues.includes(p.value);
+        const isSuggested = !off && suggestion?.risk === p.value;
         return (
           <button
             key={p.value}
             type="button"
-            disabled={locked}
-            aria-disabled={locked}
+            disabled={off}
+            aria-disabled={off}
             onClick={() => onChange(active ? '' : p.value)}
-            className={`relative flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${active ? SEVERITY_STYLE[p.value] : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'} ${!active && isSuggested ? ' border-indigo-300 ring-1 ring-indigo-200' : ''} ${locked ? `cursor-not-allowed${active ? '' : ' opacity-40'}` : ''}`}
+            className={`relative flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${active ? SEVERITY_STYLE[p.value] : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'} ${!active && isSuggested ? ' border-indigo-300 ring-1 ring-indigo-200' : ''} ${off ? `cursor-not-allowed${active ? '' : ' opacity-40'}` : ''}`}
           >
             <span className="text-base leading-none" aria-hidden>{p.emoji}</span>
             {t(`workflow.faultSeverity.${p.value}`)}
@@ -656,7 +689,7 @@ function HandoverFields({
 }
 
 export default function TicketActionModal({ action, ticket, vehicles = [], garages = [], findingsCatalog = [], keywordMeta = {}, faultCausesCatalog = {}, locationCatalog = { groups: [], policy: {}, maxQuantity: 40 }, assignableDrivers = [], allowedTypes = null, onClose, onDone }) {
-  const { t, tf, lang } = useI18n();
+  const { t, tf, tp, lang } = useI18n();
   const { user: currentUser } = useAuth();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -834,7 +867,24 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // trustworthy dataset the platform has.
   const [unverifiable, setUnverifiable] = useState({});       // { [taskId]: true }
   const [unverifiableReason, setUnverifiableReason] = useState({}); // { [taskId]: 'vehicle_unavailable' }
-  const [requiresMaintenance, setRequiresMaintenance] = useState(true); // decide: open ticket | clear diagnostic
+  // decide: THE THREE ANSWERS. One field, three meanings, so the UI cannot express a fourth by
+  // combining flags — and so "send it now" and "record it for later" read as the different decisions
+  // they are rather than as two settings of one switch.
+  //   requires  🔧 send it for maintenance now
+  //   deferred  🕒 fault recorded, follow up later — no garage, no dispatch, car stays rentable
+  //   none      ✓  the car is good to go (the only answer that may carry no findings)
+  const [decision, setDecision] = useState('requires');
+  const requiresMaintenance = decision === 'requires';
+  const deferred = decision === 'deferred';
+  // The report STATES A REAL FAULT. Every gate that keeps fault data honest — a severity grade, a root
+  // cause, a place on the car — keys off this, not off whether a garage is being chosen today. A
+  // postponed fault is not a lesser fault. Mirrors $recordsFault in MaintenanceWorkflowService.
+  const recordsFault = requiresMaintenance || deferred;
+  // decide/deferred: what brings the repair back, and the value that trigger needs.
+  const [deferralTrigger, setDeferralTrigger] = useState('date');
+  const [deferralDate, setDeferralDate] = useState('');
+  const [deferralOdo, setDeferralOdo] = useState('');
+  const [deferredReason, setDeferredReason] = useState('');
   // decide: which of the five report steps is expanded. One question at a time — see <Step>.
   const [activeStep, setActiveStep] = useState(1);
   const [faultSeverity, setFaultSeverity] = useState(() => ticket?.fault_severity || ''); // decide: mandatory fault-severity grade
@@ -866,6 +916,16 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   useEffect(() => {
     if (severityLocked && faultSeverity !== 'critical') setFaultSeverity('critical');
   }, [severityLocked, faultSeverity]);
+
+  // The mirror of that coupling for the third answer: a 🔴 Critical fault and a Breakdown are the two
+  // things that CANNOT wait, so choosing "Deferred maintenance" drops both rather than letting the
+  // inspector build a report the server will refuse. The grade is cleared (not downgraded) on purpose —
+  // re-grading a fault is his call to make, not something the UI should quietly do on his behalf.
+  useEffect(() => {
+    if (action !== 'decide' || !deferred) return;
+    if (faultSeverity === 'critical') setFaultSeverity('');
+    if (maintType === 'breakdown') setMaintType('');
+  }, [action, deferred, faultSeverity, maintType]);
   // The grade the risk library already holds for the findings that were ticked — offered to the
   // inspector, never written for them (see severitySuggestion).
   const severityHint = useMemo(() => severitySuggestion(symptoms, keywordMeta), [symptoms, keywordMeta]);
@@ -1183,7 +1243,36 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'typechange':
         return { url: `${base}/${ticket.id}/type`, body: { maintenance_type: maintType }, method: 'patch' };
       case 'decide':
-        return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), details: buildDetails(symptoms, details, locationCatalog.policy), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null, required_parts: requiresMaintenance && requiresParts ? cleanRequiredParts(requiredParts) : null, check_results: checkPlan.rows } };
+        // `decision` is the authoritative field; `requires_maintenance` rides along unchanged for any
+        // consumer still reading the boolean. The server refuses the pair if they disagree, so they are
+        // always derived from the one piece of state.
+        return { url: `${base}/${ticket.id}/report`, body: {
+          decision,
+          requires_maintenance: requiresMaintenance,
+          symptoms,
+          causes: buildCauses(symptoms),
+          details: buildDetails(symptoms, details, locationCatalog.policy),
+          fault_severity: recordsFault ? (faultSeverity || null) : null,
+          recommended_action: recommended || null,
+          notes: notes || null,
+          maintenance_type: maintType || null,
+          // Where the repair happens is a question only a repair being DONE has to answer. A deferral
+          // leaves it open; it is asked again when the ticket is finally sent in.
+          repair_location: requiresMaintenance ? repairLocation : null,
+          // Deferral terms — sent only when they mean something.
+          deferral_trigger: deferred ? deferralTrigger : null,
+          deferral_due_date: deferred && deferralTrigger === 'date' ? (deferralDate || null) : null,
+          deferral_due_odometer: deferred && deferralTrigger === 'mileage' ? Number(deferralOdo) || null : null,
+          deferred_reason: deferred ? (deferredReason.trim() || null) : null,
+          report_odometer: odometer ? Number(odometer) : null,
+          odometer_note: odoNote.trim() || null,
+          odometer_confirmed: odoAckRequired ? odoConfirmed : null,
+          // Kept for a deferral too: what the job will need was learned with the car in front of him,
+          // and it does not become less true because the trip was postponed. (Procurement is NOT
+          // started — the server raises the part requests when the repair is actually sent in.)
+          required_parts: recordsFault && requiresParts ? cleanRequiredParts(requiredParts) : null,
+          check_results: checkPlan.rows,
+        } };
       case 'delegate':
         // No task is sent — the backend derives pick-up vs drop-off from where the car physically is.
         return { url: `${base}/${ticket.id}/delegate`, body: { driver_id: Number(driverId) } };
@@ -1269,6 +1358,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         // no garage, no re-inspection, no QA. Cost/vendor/notes are all optional. The vendor is a
         // free-text on-site mechanic name (no garage picker — the car never left).
         return { url: `${base}/${ticket.id}/mark-serviced`, body: { notes: notes || null, cost: cost === '' ? null : Number(cost), vendor_name: onsiteVendor.trim() || null } };
+      case 'activateDeferred':
+        // "Send to maintenance" — the follow-up moment on a parked fault has come. Where the repair
+        // happens is answered NOW rather than at deferral time: a job postponed for two months may well
+        // have outgrown the mobile lane, and the person sending it in is the one who knows.
+        return { url: `${base}/${ticket.id}/activate-deferred`, body: { repair_location: repairLocation, notes: notes || null } };
       case 'requestinvoice':
         // Path A — ask the garage for an itemised invoice (the team is alerted to chase it).
         return { url: `${base}/${ticket.id}/request-invoice`, body: {} };
@@ -1359,7 +1453,19 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // and lose them: the findings are written to the ticket either way, but a cleared diagnostic is
   // terminal and never promotes them into fault tasks, so nobody would ever see those faults again.
   // The server enforces the same rule (MaintenanceWorkflowService::submitReport) — this is the readable half.
-  const clearanceWithFindings = action === 'decide' && !requiresMaintenance && symptoms.length > 0;
+  // …and "Deferred maintenance" is the third door out of it: the findings stay, they still become fault
+  // tasks, and only the trip is postponed. So this contradiction is now specific to a CLEARANCE.
+  const clearanceWithFindings = action === 'decide' && decision === 'none' && symptoms.length > 0;
+
+  // A deferral with no follow-up moment is not a decision, it is forgetting with extra steps. Mirrors the
+  // server-side gate in MaintenanceWorkflowService::submitReport(); the server is still the authority.
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const vehicleOdo = Number(ticket?.vehicle_odometer || 0);
+  const deferralIncomplete = action === 'decide' && deferred && (
+    !deferredReason.trim()
+    || (deferralTrigger === 'date' && (!deferralDate || deferralDate < todayISO))
+    || (deferralTrigger === 'mileage' && (!deferralOdo || Number(deferralOdo) < 1 || (vehicleOdo > 0 && Number(deferralOdo) <= vehicleOdo)))
+  );
 
   // ---- minimal client guard (the server is the source of truth) ----
   function invalid() {
@@ -1398,7 +1504,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // `!checksReady` — we do not yet know whether this ticket owes any system checks. Submitting
     // blind is exactly how a report gets rejected by the server-side gate with nothing on screen to
     // fix, so hold the button until the answer is in.
-    if (action === 'decide') return !checksReady || (requiresMaintenance && (!faultSeverity || !rootCausesComplete(symptoms, faultCausesCatalog, causes) || missingLocations.length > 0)) || clearanceWithFindings || odoGateBlocked || checkPlan.unanswered.length > 0 || (!requiresMaintenance && checkBornFindings.length > 0);
+    // `recordsFault` — a deferred report is held to the SAME evidence standard as one being sent in:
+    // graded, diagnosed and localised. Only the routing questions below it are skipped.
+    if (action === 'decide') return !checksReady || (recordsFault && (!faultSeverity || !rootCausesComplete(symptoms, faultCausesCatalog, causes) || missingLocations.length > 0)) || deferralIncomplete || clearanceWithFindings || odoGateBlocked || checkPlan.unanswered.length > 0 || (decision === 'none' && checkBornFindings.length > 0);
     if (action === 'followup') return !followNote.trim();
     if (action === 'dispatch') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
     // Recovery (towing): the odometer + its photo AND the recovery unit name are all mandatory (the
@@ -1582,6 +1690,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           // odometer photo rides along. Laravel's 'boolean' rule accepts 1/0/"1"/"0"/true/false but NOT
           // the strings "true"/"false" that String(bool) yields — and FormData can't carry a real bool —
           // so send '1'/'0' (mirrors odometer_confirmed below).
+          fd.append('decision', decision);
           fd.append('requires_maintenance', requiresMaintenance ? '1' : '0');
           symptoms.forEach((s) => fd.append('symptoms[]', s));
           buildDetails(symptoms, details, locationCatalog.policy).forEach((d, i) => {
@@ -1603,15 +1712,24 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             if (c.decision_code) fd.append(`check_results[${i}][decision_code]`, c.decision_code);
             if (c.finding_keyword) fd.append(`check_results[${i}][finding_keyword]`, c.finding_keyword);
           });
-          if (requiresMaintenance && faultSeverity) fd.append('fault_severity', faultSeverity);
+          if (recordsFault && faultSeverity) fd.append('fault_severity', faultSeverity);
           if (recommended) fd.append('recommended_action', recommended);
           if (notes) fd.append('notes', notes);
           if (maintType) fd.append('maintenance_type', maintType);
           if (requiresMaintenance && repairLocation) fd.append('repair_location', repairLocation);
           if (requiresMaintenance) fd.append('deferrable_for_rental', deferrableForRental ? '1' : '0');
-          // Required parts — technical only, and only when a ticket is actually opened (a cleared
+          // Deferral terms — carried on the multipart path too. A report filed WITH an odometer photo
+          // must state the same follow-up terms as one filed without, or the server refuses it with
+          // nothing on screen to explain why.
+          if (deferred) {
+            fd.append('deferral_trigger', deferralTrigger);
+            if (deferralTrigger === 'date' && deferralDate) fd.append('deferral_due_date', deferralDate);
+            if (deferralTrigger === 'mileage' && deferralOdo) fd.append('deferral_due_odometer', String(Number(deferralOdo)));
+            if (deferredReason.trim()) fd.append('deferred_reason', deferredReason.trim());
+          }
+          // Required parts — technical only, and only when the report records a real fault (a cleared
           // diagnostic needed no work, so it needs no parts).
-          if (requiresMaintenance && requiresParts) {
+          if (recordsFault && requiresParts) {
             cleanRequiredParts(requiredParts).forEach((p, i) => {
               fd.append(`required_parts[${i}][part_name]`, p.part_name);
               fd.append(`required_parts[${i}][quantity]`, String(p.quantity));
@@ -1689,7 +1807,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'start': return t('workflow.success.start', { who });
       case 'followup': return t('workflow.success.followup', { who });
       case 'open': return t('workflow.success.open');
-      case 'decide': return requiresMaintenance ? t('workflow.success.decideRequires', { who }) : t('workflow.success.decideClear', { who });
+      case 'decide': return requiresMaintenance
+        ? t('workflow.success.decideRequires', { who })
+        : deferred ? t('workflow.success.decideDeferred', { who }) : t('workflow.success.decideClear', { who });
+      case 'activateDeferred': return t('workflow.success.activateDeferred', { who });
       case 'dispatch': return photo ? t('workflow.success.dispatchPhoto', { who }) : t('workflow.success.dispatch', { who });
       case 'recovery': return t('workflow.success.recovery', { who });
       case 'receive': return t('workflow.success.receive', { who });
@@ -1780,8 +1901,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // the load failed), which reads as a broken screen.
     !checksReady && { step: 2, label: t('checks.loading') },
     odoGateBlocked && { step: 1, label: t('workflow.decideStep.needOdometerCheck') },
-    requiresMaintenance && !causesComplete && { step: 3, label: t('workflow.decideStep.needCauses') },
-    requiresMaintenance && !faultSeverity && { step: 4, label: t('workflow.decideStep.needSeverity') },
+    recordsFault && !causesComplete && { step: 3, label: t('workflow.decideStep.needCauses') },
+    recordsFault && !faultSeverity && { step: 4, label: t('workflow.decideStep.needSeverity') },
+    // A deferral that never says when or why is the failure mode this whole feature exists to avoid.
+    deferralIncomplete && { step: 4, label: t('workflow.decideStep.needDeferralTerms') },
     // The two halves of this report may not contradict each other: findings ARE the reason a car needs
     // a ticket, so a report that lists them cannot also say "no maintenance needed". Points at step 2,
     // because untick-the-findings is the fix when the inspector really means the car is clear.
@@ -1790,9 +1913,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // "answer the battery check" is actionable and "2 checks unanswered" is a scavenger hunt.
     checkPlan.unanswered.length > 0 && { step: 2, label: t('checks.blocking', { list: checkPlan.unanswered.join(', ') }) },
     // A report cannot approve work and simultaneously say the car needs none.
-    !requiresMaintenance && checkBornFindings.length > 0
+    decision === 'none' && checkBornFindings.length > 0
       && { step: 2, label: t('checks.blockingClearance', { n: checkBornFindings.length }) },
   ].filter(Boolean);
+
+  // THE HOLD, read on the way IN. `pending_finding_approvals` is the same list the drawer's red deck
+  // alert and the approve/reject panel render from, so all three screens name the same findings for the
+  // same reason and one cannot say "held" while another offers a Save.
+  const findingHold = (ticket?.pending_finding_approvals || []);
+  const holdBlocks = findingHold.length > 0 && !FINDING_HOLD_EXEMPT.has(action);
 
   // Submit-button label: the branching steps spell out their decision; the rest use the action's submit verb.
   const submitLabel = action === 'reinspect'
@@ -1818,13 +1947,36 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       footer={
         <>
           <Button variant="secondary" onClick={guardedClose} disabled={busy}>{t('common.cancel')}</Button>
-          <Button variant={submitVariant} onClick={submit} loading={busy} disabled={invalid() || stale}>
+          <Button variant={submitVariant} onClick={submit} loading={busy} disabled={invalid() || stale || holdBlocks}>
             {submitLabel}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
+        {/* THE TICKET IS HELD — first in the body, above everything, because while this is on screen the
+            Save below is already decided. Red rather than amber: unlike an unpaid invoice this is a full
+            stop, and the step that used to let a supervisor fill in a garage and a driver before the
+            server refused it is exactly the reason this banner exists. Names the findings, why each one
+            is questioned, who logged it, and where the decision is actually taken. */}
+        {holdBlocks && (
+          <div className="rounded-lg bg-red-50 px-3 py-2.5 text-sm text-red-800 ring-1 ring-inset ring-red-600/25">
+            <p className="font-semibold">{tp('findingApproval.title', findingHold.length)}</p>
+            <ul className="mt-1.5 space-y-1">
+              {findingHold.map((h) => (
+                <li key={h.finding}>
+                  <span className="font-semibold">{h.finding}</span>
+                  <span className="opacity-90"> — {findingHoldReason(t, h.reason, h.params)}</span>
+                  {h.requested_by && (
+                    <span className="opacity-70"> · {tf('findingApproval.loggedBy', '', { name: h.requested_by })}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs opacity-90">{t('findingApproval.blockedHere')}</p>
+          </div>
+        )}
+
         {stale ? (
           <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-500/30">
             <p>{err}</p>
@@ -2072,8 +2224,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               <Textarea label={t('common.notes')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder={t('workflow.ph.testDriveNotes')} />
               {/* "Requires Parts" — the technical requirement, still part of DIAGNOSIS. It creates no part
                   request: the coordinator sources these once the garage is picked. Only offered when the
-                  car is actually going in for work — a cleared diagnostic needs nothing. */}
-              {requiresMaintenance && (
+                  car is actually going in for work — a cleared diagnostic needs nothing. A DEFERRAL keeps
+                  its list: what the job will need was learned with the car in front of him, and it does
+                  not become less true because the trip was postponed. (Procurement still waits — the part
+                  requests are raised when the repair is finally sent in, not when it is scheduled.) */}
+              {recordsFault && (
                 <RequiredPartsEditor
                   enabled={requiresParts}
                   onToggle={setRequiresParts}
@@ -2091,32 +2246,124 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <Step
               {...stepProps(
                 4,
-                !requiresMaintenance
+                decision === 'none'
                   ? t('workflow.decision.noNeed')
                   : faultSeverity
-                  ? `${t('workflow.decision.requires')} · ${t(`workflow.faultSeverity.${faultSeverity}`)}`
-                  : t('workflow.decision.requires'),
-                requiresMaintenance ? !!faultSeverity : true,
+                  ? `${t(`workflow.decision.${deferred ? 'deferred' : 'requires'}`)} · ${t(`workflow.faultSeverity.${faultSeverity}`)}`
+                  : t(`workflow.decision.${deferred ? 'deferred' : 'requires'}`),
+                recordsFault ? (!!faultSeverity && !deferralIncomplete) : true,
               )}
               title={t('workflow.decideStep.decisionTitle')}
               hint={t('workflow.decideStep.decisionHint')}
             >
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setRequiresMaintenance(true)}
-                  className={`rounded-xl px-4 py-3 text-sm font-semibold ring-1 transition ${requiresMaintenance ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}
-                >
-                  {t('workflow.decision.requires')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRequiresMaintenance(false)}
-                  className={`rounded-xl px-4 py-3 text-sm font-semibold ring-1 transition ${!requiresMaintenance ? 'bg-emerald-600 text-white ring-emerald-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}
-                >
-                  {t('workflow.decision.noNeed')}
-                </button>
+              {/* THREE ANSWERS, THREE CARDS. Stacked rather than side by side, and each carrying the one
+                  sentence that says what it DOES to the car, because the whole risk with a middle option
+                  is that it reads as a softer version of one of its neighbours. Colour carries the same
+                  split: indigo = it goes now, amber = it waits, emerald = nothing to do. */}
+              <div className="grid gap-2">
+                {[
+                  { value: 'requires', label: t('workflow.decision.requires'), sub: t('workflow.decision.requiresSub'), on: 'bg-indigo-600 text-white ring-indigo-600', subOn: 'text-indigo-100' },
+                  { value: 'deferred', label: t('workflow.decision.deferred'), sub: t('workflow.decision.deferredSub'), on: 'bg-amber-500 text-white ring-amber-500', subOn: 'text-amber-50' },
+                  { value: 'none', label: t('workflow.decision.noNeed'), sub: t('workflow.decision.noNeedSub'), on: 'bg-emerald-600 text-white ring-emerald-600', subOn: 'text-emerald-100' },
+                ].map((opt) => {
+                  const active = decision === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setDecision(opt.value)}
+                      aria-pressed={active}
+                      className={`rounded-xl px-4 py-3 text-start text-sm font-semibold ring-1 transition ${active ? opt.on : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}
+                    >
+                      <span className="block">{opt.label}</span>
+                      <span className={`mt-0.5 block text-xs font-normal ${active ? opt.subOn : 'text-slate-400'}`}>{opt.sub}</span>
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* THE DEFERRAL TERMS — what brings this repair back, and why it is waiting. Only ever shown
+                  under the middle answer, and every field in it is required: a deferral that says neither
+                  when nor why is the thing this feature was built to stop people from doing. */}
+              {deferred && (
+                <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                  <div>
+                    <span className="block text-sm font-semibold text-amber-900">{t('workflow.deferral.title')}</span>
+                    <span className="mt-0.5 block text-xs text-amber-800/80">{t('workflow.deferral.hint')}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { value: 'date', icon: '📅', label: t('workflow.deferral.trigger.date') },
+                      { value: 'after_rental', icon: '🔄', label: t('workflow.deferral.trigger.after_rental') },
+                      { value: 'next_service', icon: '🛠️', label: t('workflow.deferral.trigger.next_service') },
+                      { value: 'mileage', icon: '📈', label: t('workflow.deferral.trigger.mileage') },
+                    ].map((opt) => {
+                      const active = deferralTrigger === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setDeferralTrigger(opt.value)}
+                          aria-pressed={active}
+                          className={`rounded-lg border px-3 py-2 text-start text-xs font-semibold transition ${active ? 'border-amber-500 bg-white text-amber-900 ring-1 ring-amber-500' : 'border-amber-200 bg-white/70 text-slate-600 hover:border-amber-300'}`}
+                        >
+                          <span className="me-1" aria-hidden>{opt.icon}</span>{opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {deferralTrigger === 'date' && (
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-amber-900">{t('workflow.deferral.dateLabel')}<Req /></span>
+                      <input
+                        type="date"
+                        min={todayISO}
+                        value={deferralDate}
+                        onChange={(e) => setDeferralDate(e.target.value)}
+                        className="w-full rounded-lg border border-amber-200 px-3 py-2 text-sm"
+                      />
+                    </label>
+                  )}
+
+                  {deferralTrigger === 'mileage' && (
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-amber-900">{t('workflow.deferral.mileageLabel')}<Req /></span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={vehicleOdo ? vehicleOdo + 1 : 1}
+                        value={deferralOdo}
+                        onChange={(e) => setDeferralOdo(e.target.value)}
+                        className="w-full rounded-lg border border-amber-200 px-3 py-2 text-sm"
+                        placeholder={vehicleOdo ? String(vehicleOdo + 5000) : ''}
+                      />
+                      {/* Says what the car is on NOW, because "pick a higher number" is unanswerable
+                          without it — and a target already passed would fire the moment it is saved. */}
+                      {vehicleOdo > 0 && (
+                        <span className="mt-1 block text-[11px] text-amber-800/80">
+                          {t('workflow.deferral.currentOdo', { km: vehicleOdo.toLocaleString() })}
+                        </span>
+                      )}
+                    </label>
+                  )}
+
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-amber-900">{t('workflow.deferral.reasonLabel')}<Req /></span>
+                    <textarea
+                      rows={2}
+                      value={deferredReason}
+                      onChange={(e) => setDeferredReason(e.target.value)}
+                      placeholder={t('workflow.deferral.reasonPlaceholder')}
+                      className="w-full rounded-lg border border-amber-200 px-3 py-2 text-sm"
+                    />
+                  </label>
+
+                  {/* What will and will NOT happen, said plainly at the moment of the decision. */}
+                  <p className="text-[11px] leading-snug text-amber-800/90">{t('workflow.deferral.consequences')}</p>
+                </div>
+              )}
               {/* The contradiction, said where it is made. A refusal the inspector only meets at a greyed-out
                   submit button is a puzzle; here it names the faults that are in the way and what to do. */}
               {clearanceWithFindings ? (
@@ -2138,13 +2385,16 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 </div>
               ) : (
                 <p className="text-xs text-slate-400">
-                  {requiresMaintenance ? t('workflow.hint.requiresMaintenance') : t('workflow.hint.noMaintenance')}
+                  {requiresMaintenance
+                    ? t('workflow.hint.requiresMaintenance')
+                    : deferred ? t('workflow.hint.deferredMaintenance') : t('workflow.hint.noMaintenance')}
                 </p>
               )}
 
               {/* Inspector's official classification — the authoritative source; Driver's request carries none.
-                  Only relevant when the car actually needs work: hidden once "No maintenance needed" is chosen. */}
-              {requiresMaintenance && (
+                  Shown for BOTH answers that record a real fault: a postponed repair still has a kind, and
+                  the type is what the eventual garage run is booked as. Hidden only for a clearance. */}
+              {recordsFault && (
                 <div className="border-t border-slate-100 pt-3">
                   <span className="mb-1.5 block text-sm font-medium text-slate-700">
                     {t('workflow.type.label')}<Req />
@@ -2154,21 +2404,38 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               )}
 
               {/* ROUTING — how urgent, where it's repaired, and whether the car may still be rented.
-                  All three only exist once the car is actually going into maintenance, so the whole
-                  block is folded away behind "No maintenance needed". */}
-              {requiresMaintenance && (
+                  The whole block is folded away behind "No maintenance needed".
+                  A DEFERRAL keeps only the first question. The grade still matters — it is what says the
+                  fault can wait, and it is the urgency the supervisor reads when the follow-up comes due.
+                  The other two are questions about a repair that is HAPPENING: where a car goes and
+                  whether it may be rented meanwhile are meaningless for a job nobody is doing yet, and
+                  asking them now would freeze answers that will be stale by the time it matters. */}
+              {recordsFault && (
                 <div className="space-y-3 border-t border-slate-100 pt-3">
                   <div>
-                    <span className="block text-sm font-semibold text-slate-700">{t('workflow.decideStep.routingTitle')}</span>
-                    <span className="mt-0.5 block text-xs text-slate-400">{t('workflow.decideStep.routingHint')}</span>
+                    <span className="block text-sm font-semibold text-slate-700">
+                      {t(deferred ? 'workflow.decideStep.gradeTitle' : 'workflow.decideStep.routingTitle')}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-slate-400">
+                      {t(deferred ? 'workflow.decideStep.gradeHint' : 'workflow.decideStep.routingHint')}
+                    </span>
                   </div>
             {/* Fault Severity — the inspector's MANDATORY diagnostic grade, gating "Requires maintenance".
                 It becomes the headline urgency the supervisor reads first on the dispatch board. */}
               <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                 <span className="mb-1.5 block text-sm font-semibold text-slate-700">{t('workflow.faultSeverity.label')}<Req /></span>
-                <FaultSeverityPicker value={faultSeverity} onChange={setFaultSeverity} t={t} locked={severityLocked} suggestion={severityHint} />
+                <FaultSeverityPicker
+                  value={faultSeverity}
+                  onChange={setFaultSeverity}
+                  t={t}
+                  locked={severityLocked}
+                  suggestion={severityHint}
+                  disabledValues={deferred ? ['critical'] : []}
+                />
                 <p className="mt-1.5 text-xs text-slate-400">
-                  {severityLocked ? t('workflow.faultSeverity.breakdownLocked') : t('workflow.faultSeverity.hint')}
+                  {severityLocked
+                    ? t('workflow.faultSeverity.breakdownLocked')
+                    : deferred ? t('workflow.faultSeverity.deferredNoCritical') : t('workflow.faultSeverity.hint')}
                 </p>
                 {/* What the risk library grades the findings that were ticked — shown, never applied. */}
                 {!severityLocked && (
@@ -2176,6 +2443,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 )}
               </div>
 
+            {requiresMaintenance && (<>
             {/* Repair Location — where does this repair happen? On-Site (mobile — car stays available) or
                 In-Shop (goes to a garage → Waleed & Abdullah are alerted to assign one). A breakdown is
                 locked to In-Shop (it grounds the car). */}
@@ -2247,6 +2515,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                     : (deferrableForRental ? t('workflow.rentalEligibility.deferrableHint') : t('workflow.rentalEligibility.mandatoryHint'))}
                 </p>
               </div>
+            </>)}
                 </div>
               )}
             </Step>
@@ -2617,6 +2886,68 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               placeholder={t('workflow.serviced.vendorPlaceholder')}
             />
             <Textarea label={t('workflow.field.notesOptional')} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </div>
+        )}
+
+        {/* DEFERRED MAINTENANCE — "Send to maintenance". The fault has been on the record since the day it
+            was found; this is the moment the trip is finally booked. The screen leads with WHAT was
+            deferred and WHY, because the person acting on the reminder is usually not the person who made
+            the call, and sending a car to a garage without reading the fault is how the wrong job gets
+            done. From here on it is an ordinary ticket — the dispatch queue does not know it waited. */}
+        {action === 'activateDeferred' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-600/15">
+              {t('workflow.activateDeferred.banner')}
+            </div>
+
+            <div className="space-y-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+              {ticket?.deferred_at && (
+                <p className="text-xs text-slate-500">
+                  {t('workflow.activateDeferred.deferredOn', {
+                    date: new Date(ticket.deferred_at).toLocaleDateString(),
+                    who: ticket.deferred_by_name || '—',
+                  })}
+                </p>
+              )}
+              {ticket?.deferred_reason && (
+                <p className="font-medium text-slate-700">“{ticket.deferred_reason}”</p>
+              )}
+              {ticket?.deferral_trigger_label && (
+                <p className="text-xs text-slate-500">
+                  {t('workflow.activateDeferred.followUp')}: {ticket.deferral_trigger_label}
+                  {ticket.deferral_due_date ? ` · ${ticket.deferral_due_date}` : ''}
+                  {ticket.deferral_due_odometer ? ` · ${Number(ticket.deferral_due_odometer).toLocaleString()} km` : ''}
+                </p>
+              )}
+            </div>
+
+            {/* Asked again here rather than carried over from the deferral: months may have passed. */}
+            <div>
+              <span className="mb-1.5 block text-sm font-semibold text-slate-700">{t('workflow.repairLocation.label')}<Req /></span>
+              <div className="flex gap-2">
+                {[
+                  { value: 'on_site', icon: '🧰', title: t('workflow.repairLocation.onSite'), sub: t('workflow.repairLocation.onSiteSub') },
+                  { value: 'in_shop', icon: '🔧', title: t('workflow.repairLocation.inShop'), sub: t('workflow.repairLocation.inShopSub') },
+                ].map((opt) => {
+                  const active = repairLocation === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setRepairLocation(opt.value)}
+                      className={`flex-1 rounded-xl border px-3 py-2.5 text-start transition ${
+                        active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <span className="block text-sm font-semibold text-slate-800"><span aria-hidden>{opt.icon}</span> {opt.title}</span>
+                      <span className="mt-0.5 block text-xs text-slate-500">{opt.sub}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <Textarea label={t('workflow.field.notesOptional')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
           </div>
         )}
 

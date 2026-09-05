@@ -638,6 +638,7 @@ const en = {
         inspection_diagnostic: 'Test drive / diagnostic',
         inspection_pending: 'Awaiting dispatch decision',
         on_site_pending: 'On-site service pending',
+        maintenance_deferred: 'Fault recorded — repair deferred',
         awaiting_dispatch: 'Waiting for pickup',
         in_transit: 'On the way to the garage',
         under_repair: 'Under repair',
@@ -2003,6 +2004,7 @@ const en = {
       arriveAtPark:      { title: 'Arrive at our park',    sub: 'Driver — confirm the car is back at base; a photo is required',                        submit: 'Confirm arrival' },
       recovery:          { title: 'Recovery (towing)',     sub: 'A recovery truck tows the car in — capture the towing unit + odometer', submit: 'Confirm recovery' },
       serviced:          { title: 'Mark as Serviced',      sub: 'On-Site job — the car stays available; no garage, no re-inspection', submit: 'Mark as Serviced' },
+      activateDeferred:  { title: 'Send to maintenance',   sub: 'The deferred repair’s moment has come — this puts it in the dispatch queue like any other ticket', submit: 'Send to maintenance' },
       pause:             { title: 'Pause & return to service', sub: 'Release this car for a customer — capture a full handover; the repair pauses and resumes from the same stage later', submit: 'Pause & release car' },
       resume:            { title: 'Resume maintenance',     sub: 'The car is back — capture the return handover to continue the repair from exactly where it paused', submit: 'Resume maintenance' },
       markReturned:      { title: 'Vehicle physically returned', sub: 'Flag that the car is back at base — the return handover is now due before it can resume', submit: 'Mark returned' },
@@ -2688,6 +2690,7 @@ const en = {
     hint: {
       blankDateToday: 'Leave the date blank to use today.',
       requiresMaintenance: 'Opens a maintenance ticket and notifies the supervisor to pick a garage; all drivers are then alerted to collect.',
+      deferredMaintenance: 'Records the fault on a real maintenance record and parks it. No garage, no dispatch, no driver alert — the car keeps working until the follow-up you set below comes due.',
       noMaintenance: 'Closes the diagnostic — no ticket is created.',
       // Shown when the report contradicts itself: findings were tapped, yet the decision says the car is clear.
       clearanceWithFindingsTitle: 'You listed {n} finding(s) on this car',
@@ -2762,9 +2765,39 @@ const en = {
     decision: {
       label: 'Decision',
       requires: '🔧 Requires maintenance',
+      // Each answer carries the one sentence that says what it DOES to the car. The middle option is the
+      // one most easily misread as "a softer yes", so its subtitle names both halves: recorded, not sent.
+      requiresSub: 'Send it for maintenance now',
+      deferred: '🕒 Deferred maintenance',
+      deferredSub: 'Fault recorded, follow up later — no garage, no dispatch, the car stays rentable',
       noNeed: '✓ No maintenance needed',
+      noNeedSub: 'The car is good to go',
       requiresOpen: 'Requires maintenance · open ticket',
+      deferredOpen: 'Deferred · follow up later',
       noClose: 'No maintenance · close',
+    },
+    // Deferred maintenance — the terms the postponement is made on.
+    deferral: {
+      title: 'When should this come back?',
+      hint: 'A deferral with no follow-up moment is just forgetting. Pick what brings the repair back, and say why it is waiting.',
+      trigger: {
+        date: 'On a date',
+        after_rental: 'After this rental',
+        next_service: 'At the next service',
+        mileage: 'At a mileage',
+      },
+      dateLabel: 'Follow up on',
+      mileageLabel: 'Follow up at (km)',
+      currentOdo: 'The car is on {km} km now.',
+      reasonLabel: 'Why is it waiting?',
+      reasonPlaceholder: 'e.g. Minor rattle — do it with the next oil change; car is booked all week',
+      consequences: 'The fault and all its findings are saved on a real maintenance record. No garage is chosen, nothing is dispatched, no driver is alerted, and the car stays rentable. The supervisors are alerted when the follow-up is due, and can send it in with one tap.',
+    },
+    // "Send to maintenance" — a deferred repair's moment has come.
+    activateDeferred: {
+      banner: 'This fault was recorded earlier and its repair was postponed. Sending it in now puts it in the dispatch queue like any other ticket — a supervisor picks the garage next.',
+      deferredOn: 'Deferred on {date} by {who}',
+      followUp: 'Follow-up',
     },
     // Section headers for the four-step test-drive report ('decide').
     decideStep: {
@@ -2775,9 +2808,12 @@ const en = {
       diagnosisTitle: 'Diagnosis',
       diagnosisHint: 'Name the probable cause behind each symptom, then add your recommendation.',
       decisionTitle: 'Your decision',
-      decisionHint: 'Does this car need workshop attention, or is it good to go? If it needs work, set the terms below.',
+      decisionHint: 'Send it in now, record the fault and follow it up later, or clear it. If it needs work, set the terms below.',
       routingTitle: 'Routing',
       routingHint: 'How urgent, where the repair happens, and whether the car may still be rented.',
+      // A deferral answers only the first of those three questions — see the decide step.
+      gradeTitle: 'How urgent is it?',
+      gradeHint: 'Grade the fault. It is what says the repair can wait, and it is the urgency the supervisor reads when the follow-up comes due.',
       noFindings: 'No findings tapped yet.',
       // Accordion walk-through: one step open at a time, the rest collapsed to their own answer.
       continue: 'Continue',
@@ -2789,6 +2825,7 @@ const en = {
       needCauses: 'A probable cause for every finding',
       needSeverity: 'A fault severity grade',
       needNoFindings: 'Remove the {n} finding(s), or open a ticket instead',
+      needDeferralTerms: 'Say when the repair should come back, and why it is waiting',
     },
     // "Requires Parts" — the inspector reports a technical need and submitting the report sends it straight
     // to the parts team. The wording says so plainly: he is not ordering or approving anything, but he IS
@@ -2825,6 +2862,7 @@ const en = {
       label: 'Fault severity',
       hint: 'Required. Grade the fault so the supervisor can gauge how urgent the garage dispatch is.',
       breakdownLocked: 'Locked to 🔴 Critical — a Breakdown is always graded critical and the car is grounded.',
+      deferredNoCritical: '🔴 Critical is not available on a deferred repair — a fault that unsafe has to go in now. Grade it moderate or routine, or choose “Requires maintenance”.',
       // The risk library's own grade for the findings that were ticked. Offered, never applied: the
       // inspector still owns the call, and the keyword is named so the suggestion can be checked.
       suggested: 'Suggested',
@@ -3067,6 +3105,7 @@ const en = {
     },
     lane: {
       on_site:         { title: 'On-Site Service',     role: 'Mobile job — car stays available' },
+      deferred:        { title: 'Deferred — Later',    role: 'Recorded fault, repair scheduled for later' },
       triage:          { title: 'Complaint Triage',    role: 'Abu Maroof: talk / resolve / send in' },
       requested:       { title: 'Needs Test Drive',    role: 'Waiting for inspector' },
       diagnostic:      { title: 'Being Inspected',     role: 'Inspector checking car' },
@@ -3111,6 +3150,9 @@ const en = {
       collectFromGarage: 'Collect from garage',
       arriveAtPark: 'Arrived at park',
       serviced: 'Mark as Serviced',
+      // The one action on a parked fault. Says the outcome ("send it") rather than the mechanism
+      // ("activate"), because the supervisor is deciding about a car, not about a record.
+      activateDeferred: 'Send to maintenance',
       pause: 'Pause & release',
       resume: 'Resume maintenance',
       markReturned: 'Mark returned',
@@ -3415,7 +3457,9 @@ const en = {
       followup: '{who}: follow-up logged.',
       open: 'Test drive started — make your diagnosis.',
       decideRequires: '{who}: requires maintenance — ticket opened, supervisor notified.',
+      decideDeferred: '{who}: fault recorded, repair deferred — no garage assigned and the car stays available.',
       decideClear: '{who}: no maintenance needed — diagnostic closed.',
+      activateDeferred: '{who}: deferred repair sent to maintenance — supervisors notified.',
       assign: '{who}: garage assigned — all drivers have been notified to pick up.',
       dispatch: '{who} picked the car up · heading to the garage.',
       dispatchPhoto: '{who} picked the car up · heading to the garage · odometer photo saved.',
@@ -4440,6 +4484,9 @@ const en = {
     subtitleReadOnly: 'Someone logged work the car’s own data disagrees with. A manager has to approve or reject it before this ticket can move.',
     loggedBy: 'Logged by {name}',
     someone: 'someone',
+    // Shown on the action forms the hold refuses (Assign Garage, Dispatch, Close…). It has to say WHERE
+    // the decision is taken, because this screen deliberately cannot take it.
+    blockedHere: 'This step cannot be saved while the hold stands. Open the ticket and approve or reject it there — a manager (Maintenance Manage) has been notified.',
     tag: { notNeeded: 'Not due', repeat: 'Already raised', generic: 'Check this' },
     reason: {
       notNeeded: 'the car’s own status says this is not due',
@@ -6563,6 +6610,7 @@ const ar = {
     paused:                   { name: 'موقوفة مؤقتًا',          hint: 'الإصلاح معلّق — أُفرج عن السيارة للخدمة' },
     returned_waiting_resume:  { name: 'عادت — يلزم الاستئناف',  hint: 'عادت فعليًا — بانتظار تسليم العودة' },
     on_site:                  { name: 'خدمة في الموقع',        hint: 'عمل بسيط أُنجز حيث تقف السيارة' },
+    deferred:                 { name: 'مؤجَّلة — لاحقًا',       hint: 'العطل مسجَّل والإصلاح مجدول لاحقًا — تبقى السيارة في الخدمة' },
   },
   modules: {
     overview: 'نظرة عامة',
@@ -7080,6 +7128,7 @@ const ar = {
         inspection_diagnostic: 'تجربة قيادة / تشخيص',
         inspection_pending: 'بانتظار قرار الإرسال',
         on_site_pending: 'خدمة في الموقع قيد الانتظار',
+        maintenance_deferred: 'العطل مسجَّل — الإصلاح مؤجَّل',
         awaiting_dispatch: 'بانتظار الاستلام',
         in_transit: 'في الطريق إلى الورشة',
         under_repair: 'قيد الإصلاح',
@@ -8042,6 +8091,7 @@ const ar = {
       arriveAtPark:      { title: 'الوصول إلى موقفنا',  sub: 'السائق — أكّد عودة السيارة إلى المقر؛ الصورة مطلوبة',   submit: 'تأكيد الوصول' },
       recovery:          { title: 'الإنقاذ (سحب)',       sub: 'شاحنة إنقاذ تسحب السيارة — سجّل وحدة السحب والعدّاد',    submit: 'تأكيد الإنقاذ' },
       serviced:          { title: 'تعليم كمُصلَحة',        sub: 'مهمة في الموقع — تبقى السيارة متاحة؛ دون كراج أو إعادة فحص', submit: 'تعليم كمُصلَحة' },
+      activateDeferred:  { title: 'إرسال إلى الصيانة',     sub: 'حان موعد الإصلاح المؤجَّل — هذا يضعه في طابور الإرسال كأي تذكرة أخرى', submit: 'إرسال إلى الصيانة' },
       pause:             { title: 'إيقاف مؤقت وإعادة للخدمة', sub: 'حرّر هذه السيارة لعميل — سجّل تسليمًا كاملًا؛ تتوقف الصيانة مؤقتًا وتُستأنف من المرحلة نفسها لاحقًا', submit: 'إيقاف مؤقت وتحرير السيارة' },
       resume:            { title: 'استئناف الصيانة',        sub: 'عادت السيارة — سجّل تسليم الإرجاع لمتابعة الإصلاح من حيث توقّف تمامًا', submit: 'استئناف الصيانة' },
       markReturned:      { title: 'أُعيدت السيارة فعليًا', sub: 'سجّل أن السيارة عادت إلى القاعدة — تسليم الإرجاع مستحق الآن قبل الاستئناف', submit: 'تعليم كمُعادة' },
@@ -8689,6 +8739,7 @@ const ar = {
     hint: {
       blankDateToday: 'اترك التاريخ فارغًا لاستخدام تاريخ اليوم.',
       requiresMaintenance: 'يفتح تذكرة صيانة ويُشعر المشرف لاختيار كراج — ثم يُنبَّه جميع السائقين للاستلام.',
+      deferredMaintenance: 'يسجّل العطل في سجل صيانة حقيقي ثم يوقفه في الانتظار. بلا كراج، وبلا إرسال، وبلا تنبيه لأي سائق — تبقى السيارة تعمل حتى يحين موعد المتابعة الذي تحدّده أدناه.',
       noMaintenance: 'يُغلق التشخيص — لا تُنشأ أي تذكرة.',
       clearanceWithFindingsTitle: 'سجّلت {n} ملاحظة على هذه المركبة',
       clearanceWithFindingsBody: 'المركبة التي عليها ملاحظات تحتاج تذكرة — إغلاق التشخيص هنا سيُسجّل هذه الأعطال ولن يتولّاها أحد. أزِل ما ليس عطلاً حقيقياً، أو اختر «تحتاج صيانة».',
@@ -8749,9 +8800,35 @@ const ar = {
     decision: {
       label: 'القرار',
       requires: '🔧 تحتاج صيانة',
+      requiresSub: 'أرسلها إلى الصيانة الآن',
+      deferred: '🕒 صيانة مؤجَّلة',
+      deferredSub: 'العطل مسجَّل والمتابعة لاحقًا — بلا كراج ولا إرسال، وتبقى السيارة قابلة للتأجير',
       noNeed: '✓ لا تحتاج صيانة',
+      noNeedSub: 'السيارة جاهزة للعمل',
       requiresOpen: 'تحتاج صيانة · فتح تذكرة',
+      deferredOpen: 'مؤجَّلة · متابعة لاحقًا',
       noClose: 'لا صيانة · إغلاق',
+    },
+    deferral: {
+      title: 'متى تعود هذه الصيانة؟',
+      hint: 'التأجيل بلا موعد متابعة هو نسيان. اختر ما يُعيد الإصلاح إلى الواجهة، واذكر سبب الانتظار.',
+      trigger: {
+        date: 'في تاريخ محدّد',
+        after_rental: 'بعد انتهاء الإيجار',
+        next_service: 'مع الخدمة القادمة',
+        mileage: 'عند مسافة محدّدة',
+      },
+      dateLabel: 'المتابعة بتاريخ',
+      mileageLabel: 'المتابعة عند (كم)',
+      currentOdo: 'عدّاد السيارة الآن {km} كم.',
+      reasonLabel: 'لماذا تنتظر؟',
+      reasonPlaceholder: 'مثال: صوت خفيف — يُنجز مع تغيير الزيت القادم؛ السيارة محجوزة طوال الأسبوع',
+      consequences: 'يُحفظ العطل وكل ملاحظاته في سجل صيانة حقيقي. لا يُختار كراج، ولا يُرسل شيء، ولا يُنبَّه أي سائق، وتبقى السيارة قابلة للتأجير. يُشعَر المشرفون عند حلول موعد المتابعة، ويمكنهم إرسالها بضغطة واحدة.',
+    },
+    activateDeferred: {
+      banner: 'سُجِّل هذا العطل سابقًا وأُجِّل إصلاحه. إرساله الآن يضعه في طابور الإرسال كأي تذكرة أخرى — والمشرف هو من يختار الكراج بعدها.',
+      deferredOn: 'أُجِّل في {date} بواسطة {who}',
+      followUp: 'المتابعة',
     },
     decideStep: {
       mileageTitle: 'إنهاء تجربة القيادة',
@@ -8761,9 +8838,11 @@ const ar = {
       diagnosisTitle: 'التشخيص',
       diagnosisHint: 'حدّد السبب المحتمل لكل عرض، ثم أضف توصيتك.',
       decisionTitle: 'قرارك',
-      decisionHint: 'هل تحتاج السيارة إلى الورشة، أم أنها جاهزة للتشغيل؟ إن كانت تحتاج عملاً، حدّد الشروط أدناه.',
+      decisionHint: 'أرسلها الآن، أو سجّل العطل وتابعه لاحقًا، أو أغلق التشخيص. إن كانت تحتاج عملاً، حدّد الشروط أدناه.',
       routingTitle: 'التوجيه',
       routingHint: 'درجة الإلحاح، ومكان الإصلاح، وهل يمكن تأجير السيارة أثناءه.',
+      gradeTitle: 'ما درجة الإلحاح؟',
+      gradeHint: 'قيّم العطل. هذا ما يقول إن الإصلاح يمكن أن ينتظر، وهو درجة الإلحاح التي يقرؤها المشرف عند حلول موعد المتابعة.',
       noFindings: 'لم تُحدَّد أي ملاحظة بعد.',
       continue: 'متابعة',
       notRecorded: 'لم تُسجَّل',
@@ -8774,6 +8853,7 @@ const ar = {
       needCauses: 'سبب محتمل لكل ملاحظة',
       needSeverity: 'درجة خطورة العطل',
       needNoFindings: 'احذف الملاحظات ({n})، أو افتح تذكرة بدلاً من ذلك',
+      needDeferralTerms: 'حدّد متى يعود الإصلاح، ولماذا ينتظر',
     },
     requiredParts: {
       toggle: 'هذا الإصلاح يحتاج قطع غيار',
@@ -8806,6 +8886,7 @@ const ar = {
       label: 'خطورة العطل',
       hint: 'إلزامي. قيّم خطورة العطل ليقدّر المشرف مدى إلحاح الإرسال إلى الكراج.',
       breakdownLocked: 'مثبّتة على 🔴 حرجة — العطل التام يُصنّف دائمًا حرجًا ويُوقَف تشغيل المركبة.',
+      deferredNoCritical: '🔴 حرجة غير متاحة مع الإصلاح المؤجَّل — العطل بهذا الخطر يجب أن يدخل الورشة الآن. صنّفه متوسطًا أو عاديًا، أو اختر «تحتاج صيانة».',
       suggested: 'مقترح',
       suggestionLine: 'مكتبة المخاطر تصنّف هذا {emoji} {severity} — من «{keyword}».',
       useSuggestion: 'استخدمه',
@@ -9032,6 +9113,7 @@ const ar = {
     },
     lane: {
       on_site:         { title: 'خدمة في الموقع', role: 'عمل متنقّل — تبقى السيارة متاحة' },
+      deferred:        { title: 'مؤجَّلة — لاحقًا', role: 'عطل مسجَّل وإصلاح مجدول لاحقًا' },
       triage:          { title: 'فرز الشكوى', role: 'أبو معروف: تحدّث / حلّ / أدخِل' },
       requested:       { title: 'بحاجة لتجربة قيادة', role: 'بانتظار المفتش' },
       diagnostic:      { title: 'قيد الفحص',          role: 'المفتش يفحص السيارة' },
@@ -9076,6 +9158,7 @@ const ar = {
       collectFromGarage: 'الاستلام من الكراج',
       arriveAtPark: 'وصلت الموقف',
       serviced: 'تعليم كمُصلَحة',
+      activateDeferred: 'إرسال إلى الصيانة',
       pause: 'إيقاف وتحرير',
       resume: 'استئناف الصيانة',
       markReturned: 'تعليم كمُعادة',
@@ -9365,7 +9448,9 @@ const ar = {
       followup: '{who}: تم تسجيل المتابعة.',
       open: 'بدأت تجربة القيادة — قم بتشخيصك.',
       decideRequires: '{who}: تحتاج صيانة — فُتحت التذكرة وأُشعر المشرف.',
+      decideDeferred: '{who}: سُجِّل العطل وأُجِّل الإصلاح — لم يُحدَّد كراج وتبقى السيارة متاحة.',
       decideClear: '{who}: لا تحتاج صيانة — أُغلق التشخيص.',
+      activateDeferred: '{who}: أُرسل الإصلاح المؤجَّل إلى الصيانة — أُشعر المشرفون.',
       assign: '{who}: تم إسناد الكراج — أُشعِر جميع السائقين للاستلام.',
       dispatch: '{who} استلم السيارة · متوجّه إلى الكراج.',
       dispatchPhoto: '{who} استلم السيارة · متوجّه إلى الكراج · حُفظت صورة العدّاد.',
@@ -10340,6 +10425,7 @@ const ar = {
     subtitleReadOnly: 'سجّل أحدهم عملًا تخالفه بيانات السيارة نفسها. يجب أن يوافق مسؤول أو يرفض قبل أن تتحرّك البطاقة.',
     loggedBy: 'سجّلها {name}',
     someone: 'أحدهم',
+    blockedHere: 'لا يمكن حفظ هذه الخطوة ما دام الإيقاف قائمًا. افتح البطاقة ووافق أو ارفض من هناك — وقد أُبلغ المسؤول (إدارة الصيانة).',
     tag: { notNeeded: 'غير مستحقة', repeat: 'سبق تسجيلها', generic: 'تحقّق من هذا' },
     reason: {
       notNeeded: 'حالة السيارة نفسها تقول إن هذه غير مستحقة',

@@ -16,6 +16,10 @@ export const ACTION = {
   // primary action collapses the whole back-half of the workflow into one step: no dispatch, no
   // re-inspection, no QA. Same authority as closing a ticket (inspector who logged it, or a supervisor).
   on_site_pending:         { action: 'serviced', perm: ['maintenance.initiate', 'maintenance.delegate'], variant: 'success' },
+  // Deferred maintenance — a recorded fault whose repair was postponed. The ONE action on it is to send
+  // it in, and it is the dispatch authority's call (the same pair that resumes a paused ticket): whether
+  // the moment has come is a scheduling judgement, not a diagnostic one. The inspector already made his.
+  maintenance_deferred:   { action: 'activateDeferred', perm: ['maintenance.delegate', 'maintenance.manage'], variant: 'primary' },
   // Phase 3 — the assigned Driver executes the physical pickup.
   awaiting_dispatch:      { action: 'dispatch',  perm: 'maintenance.logistics', variant: 'primary' },
   in_transit:             { action: 'receive',   perm: 'maintenance.logistics', variant: 'primary' },

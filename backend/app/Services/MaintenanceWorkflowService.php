@@ -72,7 +72,16 @@ class MaintenanceWorkflowService
         // step picks which committed branch it enters.
         // A filed report becomes a real ticket IMMEDIATELY: in-shop → inspection_pending (Needs Dispatch),
         // on-site → the mobile lane. There is no approval gate in between — see submitReport().
-        Maintenance::WF_INSPECTION_DIAGNOSTIC => [Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_ON_SITE_PENDING, Maintenance::WF_DIAGNOSTIC_CLEARED],
+        // …or, THE THIRD ANSWER, it is parked: a real fault, recorded whole, with the repair postponed
+        // to a moment the decider names (maintenance_deferred). See submitReport().
+        Maintenance::WF_INSPECTION_DIAGNOSTIC => [Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_ON_SITE_PENDING, Maintenance::WF_DIAGNOSTIC_CLEARED, Maintenance::WF_MAINTENANCE_DEFERRED],
+        // A parked fault has exactly one way out and it is FORWARD: someone decides the moment has come
+        // and sends it in (activateDeferred()) — to a garage, or to the mobile lane if it turns out to be
+        // an on-site job. It deliberately CANNOT reach diagnostic_cleared: the findings are already
+        // promoted into fault tasks, and a terminal clearance would bury them exactly as the mirror rule
+        // in submitReport() exists to prevent. A fault that turns out not to be real is closed through
+        // the ordinary mark-incorrect path, which leaves a reason behind.
+        Maintenance::WF_MAINTENANCE_DEFERRED => [Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_ON_SITE_PENDING],
         // RETIRED approval gate. Nothing enters recommendation_pending any more; the entry is kept only so
         // legacy rows still transition out of it (a one-off migration moves them to inspection_pending).
         Maintenance::WF_RECOMMENDATION_PENDING => [Maintenance::WF_INSPECTION_PENDING],
@@ -4523,8 +4532,29 @@ class MaintenanceWorkflowService
         return ['answers' => $planned, 'findings' => array_values(array_unique($findings))];
     }
 
-    public function submitReport(Maintenance $ticket, array $report, bool $requiresMaintenance, User $actor): Maintenance
+    public function submitReport(Maintenance $ticket, array $report, bool|string $decision, User $actor): Maintenance
     {
+        // ── THE THREE ANSWERS ───────────────────────────────────────────────────────────────────────
+        //
+        // The decision used to be a boolean and callers still pass one; a bool means what it always
+        // meant. The third answer can only be expressed by name, which is deliberate — it is a decision
+        // somebody made, not a combination of flags that could be arrived at by accident.
+        $decision = is_string($decision)
+            ? $decision
+            : ($decision ? Maintenance::DECIDE_REQUIRES : Maintenance::DECIDE_NONE);
+
+        if (! in_array($decision, Maintenance::DECISIONS, true)) {
+            throw new WorkflowTransitionException('Unknown decision “' . $decision . '”.', ['field' => 'decision']);
+        }
+
+        $requiresMaintenance = $decision === Maintenance::DECIDE_REQUIRES;
+        $deferred            = $decision === Maintenance::DECIDE_DEFERRED;
+        // The report STATES A REAL FAULT — true for both "send it now" and "record it, do it later".
+        // Every gate that exists to keep fault data honest (a severity grade, a root cause, a place on
+        // the car, at least one finding) keys off THIS, not off whether a garage is being chosen today.
+        // A postponed fault is not a lesser fault; it is the same fault with a different date.
+        $recordsFault = $requiresMaintenance || $deferred;
+
         // Repair Location (only meaningful when a ticket is actually opened). 'on_site' routes the ticket
         // into the mobile lane (car stays available); anything else defaults to the in-shop pipeline.
         $repairLocation = ($requiresMaintenance && ($report['repair_location'] ?? null) === Maintenance::REPAIR_ON_SITE)
@@ -4542,11 +4572,12 @@ class MaintenanceWorkflowService
         // sat waiting for an approval that added nothing, so it is gone; see
         // [[inspection-required-parts-split]]. Required parts raise their own Part Requests at submit time
         // and are handled by procurement in parallel — they never hold the repair up either.
-        $target = ! $requiresMaintenance
-            ? Maintenance::WF_DIAGNOSTIC_CLEARED
-            : ($repairLocation === Maintenance::REPAIR_ON_SITE
-                ? Maintenance::WF_ON_SITE_PENDING
-                : Maintenance::WF_INSPECTION_PENDING);
+        $target = match (true) {
+            $deferred             => Maintenance::WF_MAINTENANCE_DEFERRED,
+            ! $requiresMaintenance => Maintenance::WF_DIAGNOSTIC_CLEARED,
+            $repairLocation === Maintenance::REPAIR_ON_SITE => Maintenance::WF_ON_SITE_PENDING,
+            default               => Maintenance::WF_INSPECTION_PENDING,
+        };
         $this->assertTransition($ticket, $target);
 
         // An emergency Breakdown is never a mobile job — it grounds the car and must go to a workshop.
@@ -4564,10 +4595,78 @@ class MaintenanceWorkflowService
         $faultSeverity = isset($report['fault_severity']) && in_array($report['fault_severity'], Maintenance::FAULT_SEVERITIES, true)
             ? $report['fault_severity']
             : null;
-        if ($requiresMaintenance && ! $faultSeverity) {
-            throw new WorkflowTransitionException('Tag the fault severity (critical, moderate or routine) before opening a maintenance ticket.', [
-                'field' => 'fault_severity',
-            ]);
+        if ($recordsFault && ! $faultSeverity) {
+            throw new WorkflowTransitionException(
+                $deferred
+                    ? 'Tag the fault severity (moderate or routine) before postponing this repair — the grade is what says it can wait.'
+                    : 'Tag the fault severity (critical, moderate or routine) before opening a maintenance ticket.',
+                ['field' => 'fault_severity'],
+            );
+        }
+
+        // ── WHAT MAY NOT BE POSTPONED, AND WHAT BRINGS BACK WHAT MAY ────────────────────────────────
+        //
+        // Two refusals and one requirement, all of them refused BEFORE the transaction with the inspector
+        // still on the screen (the same discipline the location and check gates follow above).
+        $deferralTrigger = null;
+        $deferralDate    = null;
+        $deferralOdo     = null;
+        $deferralReason  = $this->clean($report['deferred_reason'] ?? null);
+
+        if ($deferred) {
+            // Safety, not policy: a critical fault or a car that will not start cannot be answered with
+            // "we'll look at it next month". The model owns the rule so the report gate and any future
+            // caller read the same one.
+            $refusal = Maintenance::deferralRefusal($faultSeverity, $report['maintenance_type'] ?? null);
+            if ($refusal) {
+                throw new WorkflowTransitionException($refusal, ['field' => 'decision']);
+            }
+
+            // A deferral with no follow-up moment is not a decision, it is forgetting with extra steps.
+            $deferralTrigger = $this->clean($report['deferral_trigger'] ?? null);
+            if (! array_key_exists((string) $deferralTrigger, Maintenance::DEFERRAL_TRIGGERS)) {
+                throw new WorkflowTransitionException('Say what brings this repair back: a date, the end of the rental, the next service, or a mileage.', [
+                    'field' => 'deferral_trigger',
+                ]);
+            }
+
+            if (! $deferralReason) {
+                throw new WorkflowTransitionException('Say why the repair is being postponed — it is the one thing the person who picks this up later cannot work out for themselves.', [
+                    'field' => 'deferred_reason',
+                ]);
+            }
+
+            if ($deferralTrigger === Maintenance::DEFER_ON_DATE) {
+                $raw = $report['deferral_due_date'] ?? null;
+                $deferralDate = $raw ? Carbon::parse($raw)->startOfDay() : null;
+                if (! $deferralDate) {
+                    throw new WorkflowTransitionException('Pick the date this repair should be followed up on.', ['field' => 'deferral_due_date']);
+                }
+                // Today is allowed (a same-day follow-up is a real instruction); yesterday is not — a
+                // date already past is due the instant it is saved, which is not what anyone means.
+                if ($deferralDate->lt(Carbon::today())) {
+                    throw new WorkflowTransitionException('The follow-up date is in the past — pick today or a day ahead.', ['field' => 'deferral_due_date']);
+                }
+            }
+
+            if ($deferralTrigger === Maintenance::DEFER_ON_MILEAGE) {
+                $deferralOdo = isset($report['deferral_due_odometer']) && is_numeric($report['deferral_due_odometer'])
+                    ? (int) $report['deferral_due_odometer']
+                    : null;
+                if (! $deferralOdo || $deferralOdo < 1) {
+                    throw new WorkflowTransitionException('Give the mileage this repair should be done at.', ['field' => 'deferral_due_odometer']);
+                }
+                // A target the car has already passed would fire on the next scan, which reads as a bug
+                // rather than as the instruction it was meant to be. Compared against the car's own
+                // canonical odometer — the same number every other mileage gate in the workflow uses.
+                $currentOdo = (int) ($ticket->loadMissing('vehicle')->vehicle?->odometer ?? 0);
+                if ($currentOdo > 0 && $deferralOdo <= $currentOdo) {
+                    throw new WorkflowTransitionException(
+                        'The car is already on ' . number_format($currentOdo) . ' km — pick a higher mileage, or send it in now.',
+                        ['field' => 'deferral_due_odometer', 'current_odometer' => $currentOdo],
+                    );
+                }
+            }
         }
 
         // Rental Eligibility — the inspector's ONE-TIME call, made here at the Decide step and carried by
@@ -4575,7 +4674,9 @@ class MaintenanceWorkflowService
         // false (mandatory) — the car stays grounded until the workshop finishes — unless the inspector
         // explicitly marks it deferrable, in which case a later rental pauses the ticket and it resumes on
         // return. A cleared diagnostic (no maintenance) carries no such decision, so it stays false.
-        $deferrableForRental = $requiresMaintenance && ! empty($report['deferrable_for_rental']);
+        // …and a DEFERRED fault is deferrable by definition: postponing the repair while grounding the car
+        // would be a contradiction — the whole point is that the car keeps earning until its moment comes.
+        $deferrableForRental = $deferred || ($requiresMaintenance && ! empty($report['deferrable_for_rental']));
 
         $payload = [
             'symptoms'           => array_values(array_filter(array_map(
@@ -4592,7 +4693,7 @@ class MaintenanceWorkflowService
             // none — the car required no work — so it stays null.
             'maintenance_type'   => (isset($report['maintenance_type']) && array_key_exists($report['maintenance_type'], Maintenance::MAINTENANCE_TYPES))
                 ? $report['maintenance_type']
-                : ($requiresMaintenance ? Maintenance::TYPE_ROUTINE : null),
+                : ($recordsFault ? Maintenance::TYPE_ROUTINE : null),
         ];
 
         // ── SYSTEM CHECKS — every obligation this ticket carries must be answered, right here ──────
@@ -4624,11 +4725,12 @@ class MaintenanceWorkflowService
         // A report cannot approve work and simultaneously declare the car needs none. Caught here
         // with its own message rather than falling into the generic mirror rule below, because the
         // inspector's mistake is specific and so is the fix: change the decision, or open the ticket.
-        if (! $requiresMaintenance && $checkPlan['findings'] !== []) {
+        // (A DEFERRED report may carry them: the work was approved and it is being scheduled, not denied.)
+        if ($decision === Maintenance::DECIDE_NONE && $checkPlan['findings'] !== []) {
             throw new WorkflowTransitionException(
                 'You approved work on ' . count($checkPlan['findings']) . ' system check(s), so this cannot be '
                 . 'filed as “no maintenance needed”. Change those decisions to deferred / not required, or '
-                . 'choose “Requires maintenance”.',
+                . 'choose “Requires maintenance” — or “Deferred maintenance” to record them for later.',
                 ['field' => 'check_results', 'findings' => $checkPlan['findings']],
             );
         }
@@ -4642,7 +4744,7 @@ class MaintenanceWorkflowService
         //
         // Appended, never rejected: refusing the whole report would lose an inspector's real work
         // over a checkbox, and the requirement is ours to re-assert, not his to satisfy.
-        if ($requiresMaintenance && $this->oilChangeIsOwed($ticket)) {
+        if ($recordsFault && $this->oilChangeIsOwed($ticket)) {
             $already = array_filter($payload['symptoms'], fn ($s) => mb_strtolower($s) === 'oil change');
             if (! $already) {
                 $payload['symptoms'][] = 'Oil Change';
@@ -4651,7 +4753,7 @@ class MaintenanceWorkflowService
 
         // A ticket must carry SOME finding (it explains the repair); a "no maintenance" clearance
         // may legitimately be empty (the car was fine).
-        if ($requiresMaintenance && $payload['symptoms'] === [] && ! $payload['recommended_action'] && ! $payload['notes']) {
+        if ($recordsFault && $payload['symptoms'] === [] && ! $payload['recommended_action'] && ! $payload['notes']) {
             throw new WorkflowTransitionException('Add at least a symptom, an action, or a note before opening a maintenance ticket.', [
                 'field' => 'test_drive_report',
             ]);
@@ -4665,10 +4767,18 @@ class MaintenanceWorkflowService
         // attached to a ticket that no lane, no garage and no queue would ever show again. The car went
         // back into service carrying faults the platform had recorded and buried in the same click.
         // A car with findings needs a ticket: the inspector must either untick them or open one.
-        if (! $requiresMaintenance && $payload['symptoms'] !== []) {
+        //
+        // DEFERRED MAINTENANCE IS THE THIRD DOOR OUT OF THIS RULE, and the reason it was built. Before it,
+        // an inspector who found something genuinely non-urgent had exactly two options — send the car in,
+        // or untick the faults — and the second is deleting evidence to satisfy a gate. A deferral keeps
+        // the findings AND promotes them into fault tasks, so nothing is buried; only the trip is
+        // postponed. The rule below is unchanged for a clearance, which is still the one answer that may
+        // carry no findings at all.
+        if ($decision === Maintenance::DECIDE_NONE && $payload['symptoms'] !== []) {
             throw new WorkflowTransitionException(
                 'This report lists ' . count($payload['symptoms']) . ' finding(s), so it cannot be filed as “no maintenance needed”. '
-                . 'Remove the findings, or choose “Requires maintenance” and open the ticket.',
+                . 'Remove the findings, choose “Requires maintenance” to open the ticket, or “Deferred maintenance” to record '
+                . 'them and follow them up later.',
                 [
                     'field'    => 'test_drive_report',
                     'findings' => $payload['symptoms'],
@@ -4699,7 +4809,7 @@ class MaintenanceWorkflowService
         // workshop cannot find and the next inspector re-reports. Every offender is named in ONE
         // message rather than one resubmission each — the inspector is still on the screen and can
         // fix all of them in the same pass.
-        if ($requiresMaintenance) {
+        if ($recordsFault) {
             $needLocation = $locationSvc->findingsMissingRequiredLocation(array_map(
                 fn ($text) => [
                     'text'         => $text,
@@ -4740,7 +4850,7 @@ class MaintenanceWorkflowService
             $this->assertNoDecrease($ticket, $actor, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, $reportNote, 'report_odometer', 'start-of-drive reading');
         }
 
-        return DB::transaction(function () use ($ticket, $payload, $target, $requiresMaintenance, $actor, $faultSeverity, $causeChoices, $detailChoices, $repairLocation, $deferrableForRental, $reportOdo, $reportNote, $reportConfirmed, $checkService, $checkPlan) {
+        return DB::transaction(function () use ($ticket, $payload, $target, $decision, $requiresMaintenance, $deferred, $recordsFault, $actor, $faultSeverity, $causeChoices, $detailChoices, $repairLocation, $deferrableForRental, $reportOdo, $reportNote, $reportConfirmed, $checkService, $checkPlan, $deferralTrigger, $deferralDate, $deferralOdo, $deferralReason) {
             // Answer every system check in the same transaction as the report that answers them. A
             // report that saved while its check answers did not would leave the car looking unchecked
             // by a person who demonstrably checked it — the exact ambiguity this is here to remove.
@@ -4838,10 +4948,24 @@ class MaintenanceWorkflowService
             // A CLEARED diagnostic creates no work, so there is nothing for anyone to approve — the
             // hold would park a terminal row forever waiting on a decision about a job that will never
             // happen. The findings stay (they are the record of what was looked at); the hold drops.
-            if (! $requiresMaintenance) {
+            // (A DEFERRED report keeps its holds: the work WILL happen, so a challenged finding still has
+            // a decision waiting to be made about it — later, but really.)
+            if ($decision === Maintenance::DECIDE_NONE) {
                 $ticket->findings = collect($ticket->findings)
                     ->map(fn ($f) => is_array($f) ? ['approval' => null] + $f : $f)
                     ->values()->all();
+            }
+
+            // THE DEFERRAL DECISION, stamped on the ticket that carries it. Written before the status
+            // change so a row can never be found sitting in maintenance_deferred without the reason and
+            // the follow-up moment that justify it.
+            if ($deferred) {
+                $ticket->deferred_at           = Carbon::now();
+                $ticket->deferred_by           = $actor->id;
+                $ticket->deferred_reason       = $deferralReason;
+                $ticket->deferral_trigger      = $deferralTrigger;
+                $ticket->deferral_due_date     = $deferralDate;
+                $ticket->deferral_due_odometer = $deferralOdo;
             }
 
             $ticket->workflow_status = $target;
@@ -4869,7 +4993,71 @@ class MaintenanceWorkflowService
 
             // The Driver who requested this inspection is told the RESULT either way — the design's
             // "notify the Driver of the result" step, routed straight to whoever raised it.
-            $this->notifyResultToRequester($ticket, $vehicle, $requiresMaintenance, $actor);
+            $this->notifyResultToRequester($ticket, $vehicle, $decision, $actor);
+
+            // ── DEFERRED: the fault is on the record, the trip is not booked ─────────────────────────
+            //
+            // Everything that makes this a real fault has already happened above — the findings are on the
+            // ticket, severity is graded, causes and locations are captured, and the caller promotes them
+            // into first-class MaintenanceTasks exactly as it does for an ordinary ticket. What does NOT
+            // happen is the entire dispatch half: no garage, no driver alert, no Logistics hand-off, and
+            // no operational_status change (maintenance_deferred is outside WF_TICKET_STATES, so the car
+            // stays rentable). The one notification raised here goes to the supervisors as INFORMATION —
+            // a decision was taken on their fleet — not as a job to do. The job arrives when the follow-up
+            // moment does; see NotificationScanner::deferredMaintenanceDue().
+            if ($deferred) {
+                // The car is going back into service, so the visit's maintenance contract closes with the
+                // test drive — the same reasoning as a clearance. A contract left open would report this
+                // car as sitting in a workshop it was deliberately not sent to.
+                $this->closeMaintenanceContract($ticket, $actor);
+
+                $triggerLabel = Maintenance::DEFERRAL_TRIGGERS[$ticket->deferral_trigger] ?? $ticket->deferral_trigger;
+                $whenTail = match ($ticket->deferral_trigger) {
+                    Maintenance::DEFER_ON_DATE    => 'on ' . optional($ticket->deferral_due_date)->toDateString(),
+                    Maintenance::DEFER_ON_MILEAGE => 'at ' . number_format((int) $ticket->deferral_due_odometer) . ' km',
+                    Maintenance::DEFER_AFTER_RENTAL => 'after the current rental ends',
+                    Maintenance::DEFER_NEXT_SERVICE => 'at the next scheduled service',
+                    default => (string) $triggerLabel,
+                };
+
+                $this->log->record($ticket, VehicleLogEvent::EVENT_MAINTENANCE_DEFERRED, $actor, [
+                    'description' => 'Fault recorded, repair postponed — follow up ' . $whenTail
+                        . ($deferralReason ? ' · ' . $deferralReason : '')
+                        . ' (by ' . $actor->name . ')',
+                    'meta'        => [
+                        'severity'              => $payload['severity'],
+                        'symptoms'              => $payload['symptoms'],
+                        'maintenance_type'      => $payload['maintenance_type'],
+                        'deferral_trigger'      => $ticket->deferral_trigger,
+                        'deferral_due_date'     => optional($ticket->deferral_due_date)->toDateString(),
+                        'deferral_due_odometer' => $ticket->deferral_due_odometer,
+                        'deferred_reason'       => $deferralReason,
+                    ],
+                ]);
+
+                $sevMeta = $faultSeverity ? (Maintenance::FAULT_SEVERITY_META[$faultSeverity] ?? null) : null;
+                $this->notifier->notifyByPermission(self::NOTIFY_DISPATCHER, [
+                    'type'     => 'maint_deferred',
+                    'category' => 'maintenance',
+                    'severity' => 'info',
+                    'title'    => trim('🕒 Maintenance deferred · ' . $this->label($vehicle)),
+                    'body'     => trim($this->label($vehicle) . ' has a recorded fault that ' . $actor->name
+                        . ' postponed — follow up ' . $whenTail
+                        . ($deferralReason ? ' (' . $deferralReason . ')' : '')
+                        . '. The car stays available; you will be alerted when it is due.'),
+                    'url'      => $this->link($ticket),
+                    'key'      => 'maint_wf:' . $ticket->id . ':maintenance_deferred',
+                    'icon'     => 'clock',
+                    'meta'     => [
+                        'ticket_id'        => $ticket->id,
+                        'plate'            => $vehicle?->plate_no,
+                        'fault_severity'   => $faultSeverity,
+                        'deferral_trigger' => $ticket->deferral_trigger,
+                    ],
+                ], $actor->id);
+
+                return $ticket->load($this->eager());
+            }
 
             // A cleared diagnostic stops here — no ticket, so Logistics has nothing to dispatch.
             if (! $requiresMaintenance) {
@@ -4934,6 +5122,118 @@ class MaintenanceWorkflowService
                 'icon'     => 'wrench',
                 'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'fault_severity' => $faultSeverity],
             ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    // ── DEFERRED MAINTENANCE — the follow-up finally happens ────────────────────
+
+    /**
+     * "SEND TO MAINTENANCE" — a parked fault becomes an ordinary ticket.
+     *
+     * This is the ONLY way out of maintenance_deferred, and it is a plain forward step: the ticket enters
+     * the dispatch queue (or the mobile lane) exactly as if the inspector had chosen "Requires maintenance"
+     * at the Decide step, and every downstream stage — garage choice, driver, repair, QA, invoice — is
+     * unchanged and unaware that the fault waited. That is the point of implementing a deferral as a
+     * PARKED TICKET rather than as a note somewhere: there is no second pipeline to keep in step.
+     *
+     * Called both by a human pressing the button when the reminder lands, and (by the same route) when a
+     * supervisor simply decides the moment has come early. Nothing here consults the follow-up trigger:
+     * the trigger's job was to raise the alert, and the decision to act was always a person's.
+     *
+     * Deliberately NOT done here:
+     *  • the deferral columns are not cleared. `deferred_at` → `deferral_activated_at` is the record of how
+     *    long the fleet carried this fault, and it is one of the few honest inputs into "should we have
+     *    gone earlier?". Clearing them would erase the only evidence the decision ever happened.
+     *  • the findings are not re-promoted. They became MaintenanceTasks when the report was filed; the
+     *    tasks have been sitting on the ticket the whole time.
+     *
+     * @param array{repair_location?:?string, notes?:?string} $data
+     */
+    public function activateDeferred(Maintenance $ticket, array $data, User $actor): Maintenance
+    {
+        if ($ticket->workflow_status !== Maintenance::WF_MAINTENANCE_DEFERRED) {
+            throw new WorkflowTransitionException('This ticket is not a deferred repair.', [
+                'from' => $ticket->workflow_status,
+                'allowed' => [Maintenance::WF_MAINTENANCE_DEFERRED],
+            ]);
+        }
+
+        // Where the repair happens is answered NOW, not at deferral time: a job postponed for two months
+        // may well have grown out of the mobile lane, and the person sending it in is the one who knows.
+        // In-shop is the default because it is the safe assumption — it books a garage rather than
+        // promising a mechanic will handle it where the car is parked.
+        $onSite = ($data['repair_location'] ?? null) === Maintenance::REPAIR_ON_SITE;
+
+        // A breakdown can never be on-site (the same rule submitReport() enforces) — and a deferred
+        // ticket can never have been a breakdown in the first place, so this only guards a type that was
+        // corrected while the ticket sat parked.
+        if ($onSite && $ticket->maintenance_type === Maintenance::TYPE_BREAKDOWN) {
+            throw new WorkflowTransitionException('A breakdown must be repaired in-shop — it cannot be handled on-site.', [
+                'field' => 'repair_location',
+            ]);
+        }
+
+        $target = $onSite ? Maintenance::WF_ON_SITE_PENDING : Maintenance::WF_INSPECTION_PENDING;
+        $this->assertTransition($ticket, $target);
+
+        $note = $this->clean($data['notes'] ?? null);
+
+        return DB::transaction(function () use ($ticket, $target, $onSite, $actor, $note) {
+            $ticket->deferral_activated_at = Carbon::now();
+            $ticket->deferral_activated_by = $actor->id;
+            $ticket->repair_location       = $onSite ? Maintenance::REPAIR_ON_SITE : Maintenance::REPAIR_IN_SHOP;
+            $ticket->workflow_status       = $target;
+            $ticket->save();
+
+            // The visit's maintenance contract was closed when the car went back into service at deferral.
+            // A real visit is starting now, so it needs one again — the same call every other entry into
+            // the pipeline makes, and idempotent if OM already opened one.
+            $this->openMaintenanceContract($ticket, $actor);
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+
+            $waited = $ticket->deferred_at ? $ticket->deferred_at->diffInDays(Carbon::now()) : null;
+            $this->log->record($ticket, VehicleLogEvent::EVENT_DEFERRED_ACTIVATED, $actor, [
+                'description' => 'Deferred repair sent in'
+                    . ($waited !== null ? ' after ' . $waited . ' day(s) on hold' : '')
+                    . ($onSite ? ' · on-site' : '')
+                    . ($note ? ' · ' . $note : '')
+                    . ' (by ' . $actor->name . ')',
+                'meta' => [
+                    'deferred_at'      => optional($ticket->deferred_at)->toIso8601String(),
+                    'days_deferred'    => $waited,
+                    'deferral_trigger' => $ticket->deferral_trigger,
+                    'repair_location'  => $ticket->repair_location,
+                ],
+            ]);
+
+            $sevMeta = $ticket->fault_severity ? (Maintenance::FAULT_SEVERITY_META[$ticket->fault_severity] ?? null) : null;
+            $sevTail = $sevMeta ? ' · ' . $sevMeta['emoji'] . ' ' . $sevMeta['label'] : '';
+
+            // Whoever acts next is told, on the same keys and in the same shape as a freshly-opened
+            // ticket — controllers for a mobile job, supervisors for a garage run. The body says the fault
+            // was deferred so the reader knows this is an old finding coming due, not a new discovery.
+            $this->notifier->notifyByPermission(
+                $onSite ? self::NOTIFY_CONTROLLERS : self::NOTIFY_DISPATCHER,
+                [
+                    'type'     => $onSite ? 'maint_on_site_task' : 'maint_dispatch_ready',
+                    'category' => 'maintenance',
+                    'severity' => $sevMeta['severity'] ?? 'warning',
+                    'title'    => trim(($onSite ? '🧰 On-site service needed' : '🔧 Deferred repair now due')
+                        . $sevTail . ' · ' . $this->label($vehicle)),
+                    'body'     => trim($this->label($vehicle) . ' — a fault recorded earlier'
+                        . ($waited !== null ? ' (' . $waited . ' day(s) ago)' : '')
+                        . ' has been sent in by ' . $actor->name . $sevTail
+                        . ($onSite ? ' — service it where it is parked.' : ' — review it and pick a garage.')),
+                    'url'      => $this->link($ticket),
+                    'key'      => 'maint_wf:' . $ticket->id . ':' . $target,
+                    'icon'     => 'wrench',
+                    'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'fault_severity' => $ticket->fault_severity, 'was_deferred' => true],
+                ],
+                $actor->id,
+            );
 
             return $ticket->load($this->eager());
         });
@@ -8813,7 +9113,7 @@ class MaintenanceWorkflowService
      * Required" or "Cleared". Targeted straight at that one user (requested_by); when the inspector
      * self-initiated (no requester) there is nobody waiting on a result, so this is a no-op.
      */
-    private function notifyResultToRequester(Maintenance $ticket, ?Vehicle $vehicle, bool $requiresMaintenance, User $actor): void
+    private function notifyResultToRequester(Maintenance $ticket, ?Vehicle $vehicle, string $decision, User $actor): void
     {
         if (! $ticket->requested_by) {
             return;
@@ -8823,18 +9123,42 @@ class MaintenanceWorkflowService
             return; // nobody to tell, or the requester is the one who just filed the report
         }
 
+        // The person who asked for the test learns which of the THREE answers came back — and a deferral
+        // is told as a deferral, never dressed up as a clearance. Someone who reported a noise and reads
+        // "no maintenance needed" reports it again next week; "recorded, we'll do it later" ends that loop.
+        [$severity, $title, $body, $icon] = match ($decision) {
+            Maintenance::DECIDE_REQUIRES => [
+                'warning',
+                'Maintenance required · ' . $this->label($vehicle),
+                trim($this->label($vehicle) . ' needs maintenance — ' . $actor->name . ' opened a ticket. Dispatch it to a garage.'),
+                'wrench',
+            ],
+            Maintenance::DECIDE_DEFERRED => [
+                'info',
+                'Recorded · follow-up later · ' . $this->label($vehicle),
+                trim($this->label($vehicle) . ' was test-driven by ' . $actor->name . ' — a fault was found and recorded, '
+                    . 'but the repair is scheduled for later' . ($ticket->deferred_reason ? ' (' . $ticket->deferred_reason . ')' : '')
+                    . '. The car stays in service.'),
+                'clock',
+            ],
+            default => [
+                'success',
+                'Cleared · ' . $this->label($vehicle),
+                trim($this->label($vehicle) . ' was test-driven by ' . $actor->name . ' — no maintenance needed.'),
+                'check',
+            ],
+        };
+
         $this->notifier->notifyUser($requester, [
             'type'     => 'maint_inspection_result',
             'category' => 'maintenance',
-            'severity' => $requiresMaintenance ? 'warning' : 'success',
-            'title'    => ($requiresMaintenance ? 'Maintenance required · ' : 'Cleared · ') . $this->label($vehicle),
-            'body'     => $requiresMaintenance
-                ? trim($this->label($vehicle) . ' needs maintenance — ' . $actor->name . ' opened a ticket. Dispatch it to a garage.')
-                : trim($this->label($vehicle) . ' was test-driven by ' . $actor->name . ' — no maintenance needed.'),
+            'severity' => $severity,
+            'title'    => $title,
+            'body'     => $body,
             'url'      => $this->link($ticket),
-            'key'      => 'maint_wf:' . $ticket->id . ':result:' . ($requiresMaintenance ? 'required' : 'cleared'),
-            'icon'     => $requiresMaintenance ? 'wrench' : 'check',
-            'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no],
+            'key'      => 'maint_wf:' . $ticket->id . ':result:' . $decision,
+            'icon'     => $icon,
+            'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'decision' => $decision],
         ]);
     }
 

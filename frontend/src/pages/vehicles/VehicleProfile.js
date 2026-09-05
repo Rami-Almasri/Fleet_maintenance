@@ -112,6 +112,9 @@ const WF_STATUS_META = {
   inspection_requested:   { label: 'Needs Test Drive',   tone: 'violet', icon: 'Test' },
   inspection_diagnostic:  { label: 'Being Inspected',    tone: 'cyan',   icon: 'Test' },
   diagnostic_cleared:     { label: 'Cleared — No Work',  tone: 'slate',  icon: 'IN' },
+  // Amber, like every other "waiting on a moment rather than on a person" state. Deliberately NOT slate:
+  // a deferred fault is open work the car is still carrying, not a closed chapter.
+  maintenance_deferred:   { label: 'Deferred — Later',   tone: 'amber',  icon: 'Follow up' },
   inspection_pending:     { label: 'Needs Dispatch',     tone: 'amber',  icon: 'Select garage' },
   on_site_pending:        { label: 'On-Site Service',    tone: 'yellow', icon: 'Follow up' },
   awaiting_dispatch:      { label: 'Awaiting Pickup',    tone: 'orange', icon: 'OUT' },

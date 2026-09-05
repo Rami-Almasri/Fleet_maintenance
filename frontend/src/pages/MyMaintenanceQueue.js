@@ -110,6 +110,9 @@ const ROLE_TABS = [
 // data-backed indicator of ticket lifecycle position (replacing the mockup's invented health meters).
 const STAGE_PCT = {
   complaint_triage: 8, inspection_requested: 12, inspection_diagnostic: 22,
+  // Diagnosed but parked. Sits just past the diagnostic because that work IS done — what remains is a
+  // wait, and the bar should not imply the repair has started.
+  maintenance_deferred: 26,
   inspection_pending: 32, on_site_pending: 40, awaiting_dispatch: 44,
   in_transit: 56, under_repair: 68, repair_review: 78, ready_for_pickup: 90,
   ready_for_reinspection: 84, reinspection_failed: 52, paused_returned_to_service: 46,

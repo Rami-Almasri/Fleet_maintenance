@@ -45,16 +45,29 @@ class CaptureTranslator
      *
      * @param  array<string,mixed>  $report  the payload the inspector submitted, unchanged
      */
-    public function inspectionSubmitted(Maintenance $ticket, array $report, User $actor, bool $requiresMaintenance): void
+    public function inspectionSubmitted(Maintenance $ticket, array $report, User $actor, bool|string $decision): void
     {
-        $this->safely('inspectionSubmitted', $ticket, function () use ($ticket, $report, $actor, $requiresMaintenance) {
-            $this->recorder->session(function () use ($ticket, $report, $actor, $requiresMaintenance) {
+        // THREE ANSWERS, TWO QUESTIONS. `requires_maintenance` has always answered "does this car need
+        // work?" and a DEFERRED report answers yes — the fault is real and recorded; only the trip was
+        // postponed. Recording it as false would teach every model reading this stream that a deferred
+        // car was found healthy, which is the exact opposite of what the inspector said. `decision`
+        // carries the second question ("and are we doing it now?") alongside it, so the two never
+        // collapse into one another.
+        $decision = is_string($decision)
+            ? $decision
+            : ($decision ? Maintenance::DECIDE_REQUIRES : Maintenance::DECIDE_NONE);
+        $requiresMaintenance = $decision !== Maintenance::DECIDE_NONE;
+
+        $this->safely('inspectionSubmitted', $ticket, function () use ($ticket, $report, $actor, $requiresMaintenance, $decision) {
+            $this->recorder->session(function () use ($ticket, $report, $actor, $requiresMaintenance, $decision) {
                 $subject = $this->subject($ticket);
                 $who = Provenance::staff($actor);
 
                 // FACT — the inspection happened.
                 $this->recorder->record(DomainEvent::INSPECTION_PERFORMED, [
                     'requires_maintenance' => $requiresMaintenance,
+                    'decision'             => $decision,
+                    'deferral_trigger'     => $ticket->deferral_trigger,
                     'maintenance_type'     => $ticket->maintenance_type,
                     'fault_severity'       => $ticket->fault_severity,
                     'repair_location'      => $ticket->repair_location,

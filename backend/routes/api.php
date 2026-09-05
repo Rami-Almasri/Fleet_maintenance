@@ -828,6 +828,10 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // UC-1 / UC-2 — Inspector (Abu Maroof). `start` picks up an existing task → diagnostic.
     Route::post('/{ticket}/start', 'startDiagnostic')->middleware('permission:maintenance.initiate');
     Route::post('/{ticket}/report', 'submitReport')->middleware('permission:maintenance.initiate');
+    // DEFERRED MAINTENANCE — "Send to maintenance". The follow-up moment on a parked fault has come and
+    // the ticket joins the ordinary dispatch queue. Supervisors (who own the dispatch decision) or
+    // controllers (who own the fleet's schedule) — the same authority pair that resumes a paused ticket.
+    Route::post('/{ticket}/activate-deferred', 'activateDeferred')->middleware('permission:maintenance.delegate|maintenance.manage');
     // INSPECTION REQUIRED PARTS — the inspector's technical requirement, kept for traceability. Filing them
     // with the report (POST /report) raises the Part Requests automatically; POST here covers the mid-repair
     // case and does the same thing. There is NO convert/approve route: procurement owns every sourcing

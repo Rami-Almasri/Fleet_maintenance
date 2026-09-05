@@ -33,6 +33,10 @@ export const EXCEPTION_LANES = [
   { key: 'paused',                  name: 'Paused',                role: 'none',       tone: '#64748b', hint: 'Repair on hold — car released to service' },
   { key: 'returned_waiting_resume', name: 'Returned — Resume Due', role: 'none',       tone: '#f97316', hint: 'Physically back — return handover pending' },
   { key: 'on_site',                 name: 'On-Site Service',       role: 'inspector',  tone: '#0d9488', hint: 'Minor job done where the car is parked' },
+  // An EXCEPTION lane on purpose, and the one lane where nobody is expected to act today. Mixing these
+  // into "Needs Dispatch" would make the dispatch queue read as a backlog of ignored work — which is the
+  // confusion that used to make people untick findings rather than record them and wait.
+  { key: 'deferred',                name: 'Deferred — Later',      role: 'supervisor', tone: '#f59e0b', hint: 'Fault recorded, repair scheduled for later — the car stays in service' },
 ];
 
 // Every lane, in render order.

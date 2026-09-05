@@ -54,6 +54,8 @@ class VehicleLogSheetExporter
         'diagnostic_started'        => 'Test Drive Started',
         'report_filed'              => 'Report Filed',
         'diagnostic_cleared'        => 'Cleared — No Work',
+        'maintenance_deferred'      => 'Deferred — Follow Up Later',
+        'deferred_activated'        => 'Deferred Repair Sent In',
         'garage_assigned'           => 'Dispatch Assigned',
         'dispatched'                => 'Picked Up',
         'under_repair'              => 'Arrived at Garage',
