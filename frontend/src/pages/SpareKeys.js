@@ -51,33 +51,15 @@ const STATUS_LABEL = {
   cancelled: 'Cancelled',
 };
 
-const REASON_LABEL = {
-  missing: 'No spare key',
-  additional: 'Additional key',
-  lost: 'Key lost',
-  replacement: 'Replacement',
-  other: 'Other',
-};
-
 /**
- * The same reason, said in the past tense once the requirement is closed.
+ * THERE IS NO "WHY" COLUMN. On a board of spare keys the reason is nearly always the same one — the
+ * car has no spare — and a column that reads "No spare key" down every row buys no decision while
+ * costing the width the stage and the procurement chain need. The reason is kept on the vehicle's
+ * own panel, where one requirement is read in full rather than scanned against fifty others.
  *
- * "Why" is the reason the requirement was RAISED, not a statement about the car today — but printed
- * flat beside a green "Completed" badge, "No spare key" reads as a contradiction of it. A closed row
- * therefore says what WAS true when somebody wrote the car down.
+ * The "From the sheet" badge does NOT go with it: where a row came from is a traceability fact, not
+ * a detail, so it moves up beside the stage.
  */
-const CLOSED_REASON_LABEL = {
-  missing: 'Was missing a spare key',
-  additional: 'An extra key was wanted',
-  lost: 'A key had been lost',
-  replacement: 'A key needed replacing',
-  other: 'Other',
-};
-
-const reasonLabel = (row, t) => {
-  const map = row.is_open ? REASON_LABEL : CLOSED_REASON_LABEL;
-  return map[row.reason_code] ? t(map[row.reason_code]) : row.reason_code;
-};
 
 /** The stages a manager scans first — the ones that mean somebody has to do something. */
 const OUTSTANDING = ['required', 'purchase_requested', 'approved', 'ordered', 'received', 'rejected'];
@@ -150,25 +132,18 @@ export default function SpareKeys() {
       header: t('Stage'),
       render: (r) => (
         <div>
-          <Badge tone={STATUS_TONE[r.status] || 'gray'}>
-            {STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge tone={STATUS_TONE[r.status] || 'gray'}>
+              {STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}
+            </Badge>
+            {r.source === 'sheet_import' && (
+              <Badge tone="gray">{t('From the sheet')}</Badge>
+            )}
+          </div>
           {r.quantity > 1 && (
             <div className="mt-0.5 text-xs text-slate-400">
               {t('{n} of {total} received', { n: num(r.received_quantity), total: num(r.quantity) })}
             </div>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'reason',
-      header: t('Why'),
-      render: (r) => (
-        <div className="min-w-0">
-          <div className="text-sm text-slate-700">{reasonLabel(r, t)}</div>
-          {r.source === 'sheet_import' && (
-            <Badge tone="gray">{t('From the sheet')}</Badge>
           )}
         </div>
       ),
