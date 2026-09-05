@@ -6413,6 +6413,9 @@ const ar = {
     routine: 'خدمة الصيانة',
     other: 'عام وأخرى',
     unspecified: 'غير محدد',
+    // A visit that named the SYSTEM but no fault inside it. Distinct from `unspecified`, which means
+    // the visit recorded nothing at all.
+    notSpecified: 'لم يُحدَّد العطل',
     otherTypes: {
       zero: 'أخرى', one: 'أخرى (نوع واحد)', two: 'أخرى (نوعان)',
       few: 'أخرى ({n} أنواع)', many: 'أخرى ({n} نوعًا)', other: 'أخرى ({n} نوع)',

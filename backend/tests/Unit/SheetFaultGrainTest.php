@@ -154,6 +154,30 @@ class SheetFaultGrainTest extends TestCase
         );
     }
 
+    /**
+     * The sheet writes one fault more than one way — "Engine Oil leak" and "Engine Oil Leak" both occur
+     * on the same cars. Listing a system's children by raw wording showed them as two separate faults
+     * under Engine, which reads as a duplicate and costs the panel its credibility.
+     */
+    #[Test]
+    public function two_wordings_of_one_fault_are_one_child_of_its_system(): void
+    {
+        $analytics = app(\App\Services\MaintenanceAnalyticsService::class);
+
+        $findings = [
+            ['label' => 'Engine Oil leak', 'category_key' => 'engine', 'category_label' => 'Engine'],
+            ['label' => 'Engine Oil Leak', 'category_key' => 'engine', 'category_label' => 'Engine'],
+            ['label' => 'Ignition Issues', 'category_key' => 'engine', 'category_label' => 'Engine'],
+        ];
+
+        $systems = $analytics->faultSystems($findings);
+
+        $this->assertCount(1, $systems);
+        $this->assertSame('Engine', $systems[0]['label']);
+        $this->assertCount(2, $systems[0]['faults'], 'the two oil-leak wordings are one fault');
+        $this->assertContains('Ignition Issues', $systems[0]['faults']);
+    }
+
     /** A typo in the bridge must not mint an identity that matches nothing. */
     #[Test]
     public function every_bridged_slug_exists_in_the_fault_catalog(): void

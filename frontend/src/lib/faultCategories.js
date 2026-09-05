@@ -132,6 +132,11 @@ function flatTotals(visits) {
   return totals;
 }
 
+// What a child row is called when the visit named the SYSTEM and nothing finer. A sentinel rather than
+// the system's own name: repeating it under itself reads as a duplicate, when the honest statement is
+// that the record does not say which fault it was.
+const UNSPECIFIED_CHILD = 'Not specified';
+
 // Tally per SYSTEM, carrying the individual faults recorded under it.
 //
 // A system's `value` counts the VISITS that recorded a fault in it, not the faults — a visit that
@@ -141,7 +146,7 @@ function flatTotals(visits) {
 //
 // A visit with no fault at all still contributes "Unspecified" exactly as before, so a car whose log is
 // mostly blank still reads as mostly blank rather than quietly shrinking.
-function systemTotals(visits) {
+function systemTotals(visits, loc) {
   const bySystem = {};
 
   visits.forEach((v) => {
@@ -161,11 +166,19 @@ function systemTotals(visits) {
     systems.forEach((s) => {
       bySystem[s.key] ??= { key: s.key, label: s.label, value: 0, kids: {} };
       bySystem[s.key].value += 1;
-      // No child faults means the visit recorded only the system's own name — surfaced as a child in
-      // its own right, because "logged as Engine, nothing more" is a finding about the RECORD worth
-      // seeing rather than an empty expander.
-      const faults = Array.isArray(s.faults) && s.faults.length ? s.faults : [s.label];
-      faults.forEach((f) => { bySystem[s.key].kids[f] = (bySystem[s.key].kids[f] || 0) + 1; });
+      // No child faults means the visit recorded only the system's own name. That is worth seeing —
+      // it says the record is thin — but it must NOT be shown by repeating the system name, which
+      // renders as "Engine › Engine" and reads as a duplicate rather than as missing detail.
+      // The child's KEY stays the raw recorded label — it is what `fault_tags` holds, so it is what the
+      // drill-down matches on. Only the displayed text changes, so an unspecified row still opens onto
+      // the visits behind it instead of becoming a dead end.
+      const faults = Array.isArray(s.faults) && s.faults.length
+        ? s.faults.map((f) => ({ key: f, label: f }))
+        : [{ key: s.label, label: UNSPECIFIED_CHILD }];
+      faults.forEach((f) => {
+        bySystem[s.key].kids[f.key] ??= { label: f.label, value: 0 };
+        bySystem[s.key].kids[f.key].value += 1;
+      });
     });
   });
 
@@ -175,7 +188,11 @@ function systemTotals(visits) {
       label: s.label,
       value: s.value,
       children: Object.entries(s.kids)
-        .map(([label, value]) => ({ key: label, label, value }))
+        .map(([key, kid]) => ({
+          key,
+          label: kid.label === UNSPECIFIED_CHILD ? loc('faultCategories.notSpecified', UNSPECIFIED_CHILD) : kid.label,
+          value: kid.value,
+        }))
         .sort((a, b) => b.value - a.value),
     }))
     .sort((a, b) => b.value - a.value);
@@ -200,7 +217,7 @@ export function faultTagSegments(visits = [], { top = 10, tf = null, tp = null }
   // behaviour is still the best available.
   const grouped = visits.some((v) => Array.isArray(v?.fault_systems));
   const sorted = grouped
-    ? systemTotals(visits)
+    ? systemTotals(visits, loc)
     : Object.entries(flatTotals(visits))
       .map(([label, value]) => ({ key: label, label, value }))
       .sort((a, b) => b.value - a.value);

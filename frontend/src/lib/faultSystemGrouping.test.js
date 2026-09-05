@@ -48,17 +48,17 @@ describe('the fault donut groups a system above the faults inside it', () => {
   });
 
   /**
-   * A visit whose only content was the system word is real history and must still count — but it is
-   * thinner evidence, and the expanded row says so by naming the system as its own child rather than
-   * opening onto nothing.
+   * A visit whose only content was the system word is real history and must still COUNT — it is just
+   * thinner evidence. How that thinness is displayed is asserted separately below; this only locks
+   * that the visit is not dropped for being vague.
    */
-  it('keeps a visit that recorded only the system name, and shows it as such', () => {
+  it('keeps a visit that recorded only the system name', () => {
     const segments = faultTagSegments([
       visit([{ key: 'engine', label: 'Engine', faults: [] }], { fault_tags: ['Engine'] }),
     ]);
 
     expect(segments[0].value).toBe(1);
-    expect(segments[0].children.map((c) => c.label)).toEqual(['Engine']);
+    expect(segments[0].children).toHaveLength(1);
   });
 
   it('still counts a visit with nothing recorded as Unspecified', () => {
@@ -92,6 +92,29 @@ describe('the fault donut groups a system above the faults inside it', () => {
     const keys = engine.children.map((k) => k.key);
 
     expect(visitsForFault([a, b, c], keys).map((v) => v.id)).toEqual([1, 2]);
+  });
+
+  /**
+   * A system whose visit recorded nothing finer must not be shown by repeating its own name. On the
+   * Challenger's dossier that rendered as "Engine › Engine", which reads as a duplicate rather than as
+   * missing detail — and sat directly above the genuine children, so the whole panel looked broken.
+   */
+  it('names an unrecorded detail rather than repeating the system', () => {
+    const segments = faultTagSegments([
+      visit([{ key: 'engine', label: 'Engine', faults: [] }], { fault_tags: ['Engine'] }),
+    ]);
+
+    expect(segments[0].label).toBe('Engine');
+    expect(segments[0].children.map((c) => c.label)).toEqual(['Not specified']);
+    // The KEY stays the recorded label, so the row still opens onto the visits behind it.
+    expect(segments[0].children[0].key).toBe('Engine');
+  });
+
+  it('still drills an unspecified child back to its visits', () => {
+    const v = visit([{ key: 'engine', label: 'Engine', faults: [] }], { fault_tags: ['Engine'], id: 7 });
+    const child = faultTagSegments([v])[0].children[0];
+
+    expect(visitsForFault([v], [child.key]).map((x) => x.id)).toEqual([7]);
   });
 
   it('falls back to the flat tally for payloads that predate fault_systems', () => {

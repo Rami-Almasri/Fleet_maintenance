@@ -475,14 +475,19 @@ class MaintenanceAnalyticsService
             // A system whose only evidence is its own name has no children to list — the donut renders
             // it as a leaf rather than inventing "Engine › Engine".
             if ($f['label'] !== $f['category_label']) {
-                $systems[$f['category_key']]['faults'][$f['label']] = true;
+                // Keyed by IDENTITY, not by wording. The sheet writes the same fault more than one way
+                // ("Engine Oil leak" and "Engine Oil Leak" both occur), and de-duplicating on the raw
+                // string listed them as two separate faults under the same system — the reader sees a
+                // duplicate and stops trusting the panel. First wording seen wins as the display label.
+                $key = FaultVocabulary::catalogSlugOf($f['label']) ?: FaultVocabulary::normalise($f['label']);
+                $systems[$f['category_key']]['faults'][$key] ??= $f['label'];
             }
         }
 
         // array_merge, NOT the `+` union: `+` keeps the LEFT operand's key, so `$s + ['faults' => …]`
-        // silently preserved the label=>true dedupe map and every child rendered as `1`.
+        // silently preserved the dedupe map and every child rendered as `1`.
         return array_values(array_map(
-            fn ($s) => array_merge($s, ['faults' => array_keys($s['faults'])]),
+            fn ($s) => array_merge($s, ['faults' => array_values($s['faults'])]),
             $systems,
         ));
     }

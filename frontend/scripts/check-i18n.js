@@ -154,8 +154,10 @@ report('orphan Arabic lane keys', Object.keys(arLanes).filter((k) => !laneKeys.i
 const fcSrc = fs.readFileSync(path.join(SRC, 'lib/faultCategories.js'), 'utf8');
 const fcBlock = fcSrc.slice(fcSrc.indexOf('export const FAULT_CATEGORIES'), fcSrc.indexOf('const OTHER ='));
 const fcKeys = [...fcBlock.matchAll(/\{\s*key:\s*'([^']+)'/g)].map((m) => m[1]);
-// `other` (the fallback bucket) plus the two synthetic donut slices, which have no table entry.
-const fcExtra = ['other', 'unspecified', 'otherTypes'];
+// `other` (the fallback bucket) plus the synthetic donut slices, which have no table entry.
+// `notSpecified` is the CHILD row shown when a visit named the system but no fault inside it —
+// distinct from `unspecified`, which means the visit recorded nothing at all.
+const fcExtra = ['other', 'unspecified', 'notSpecified', 'otherTypes'];
 const arFc = LABELS.ar.faultCategories || {};
 console.log(`fault categories: ${fcKeys.length}`);
 report('fault categories missing Arabic', fcKeys.filter((k) => !arFc[k]));
