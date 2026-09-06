@@ -21,6 +21,7 @@ import InvoicesPanel from './InvoicesPanel';
 import FinancialPanel from '../maintenance/FinancialPanel';
 import TicketParts from './TicketParts';
 import SuggestedChecks from './SuggestedChecks';
+import NoteLines from './NoteLines';
 import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased, isReleaseCancellable, releaseStage, canOrderParts, ORIGIN_LABEL } from './meta';
 import { SHOW_VIDEO_REVIEW, SHOW_FINANCIALS } from '../../config/features';
 
@@ -903,7 +904,9 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                       <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
                         {t(tk.trigger_reason === 'customer_reported' ? 'workflow.detail.complaint' : tk.trigger_reason === 'periodic' ? 'workflow.detail.agenda' : 'workflow.detail.driverNote')}
                       </p>
-                      <p className="mt-1 text-sm text-slate-700">{tk.customer_complaint}</p>
+                      {/* An agenda is a LIST of separate facts (routine check + overdue clock + oil
+                          follow-up), so it renders one line each rather than a run-on paragraph. */}
+                      <NoteLines value={tk.customer_complaint} className="mt-1 text-sm text-slate-700" />
 
                       {/* The agenda text above is a FROZEN snapshot of why the request was raised, and for a
                           system-scheduled check it is the standing safety list ("please check: Battery,

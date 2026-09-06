@@ -1003,8 +1003,11 @@ class OilChangeProjectionService
                     'remaining_days'  => $projection['remaining_days'],
                 ],
             ];
+            // ONE FACT PER LINE — the verdict, the figures behind it, the instruction. Three separate
+            // things a Controller reads in sequence, so they are not glued into one paragraph (every
+            // surface renders the note as a dashed list; see NoteLines.js).
             $oilLine = sprintf(
-                'Oil follow-up — %s. Moved more than expected: ~%s km over the %s km max (return ~%s km; last reading %s km, contract %s). Check oil on arrival.',
+                "Oil follow-up — %s.\nMoved more than expected: ~%s km over the %s km max (return ~%s km; last reading %s km, contract %s).\nCheck oil on arrival.",
                 $verb,
                 number_format($overAllowance),
                 number_format((int) $projection['allowed_max']),

@@ -13,6 +13,7 @@ import { Input, Textarea } from '../../components/ui/Field';
 import { useToast } from '../../components/ui/Toast';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useI18n } from '../../i18n/I18nContext';
+import NoteLines from '../../components/workflow/NoteLines';
 import { num, fmtDate } from '../../lib/format';
 
 /**
@@ -1431,9 +1432,10 @@ export function DecisionDialog({ row, decision, onClose, onDecided }) {
                   {tf('oil.decide.alreadyAsked', 'The system has already asked for a test on this car')}
                 </div>
                 <p className="mt-0.5 text-xs text-indigo-800">
-                  {tf('oil.decide.alreadyAskedWhy', 'Request #{id}, waiting in the review queue:', { id: already.id })}{' '}
-                  <span className="italic">“{already.reason}”</span>
+                  {tf('oil.decide.alreadyAskedWhy', 'Request #{id}, waiting in the review queue:', { id: already.id })}
                 </p>
+                {/* The reason is a list of separate facts, not a sentence — one line each. */}
+                <NoteLines value={already.reason} quote className="mt-0.5 text-xs italic text-indigo-800" />
                 <label className="mt-1.5 flex items-start gap-2 text-sm text-slate-800">
                   <input
                     type="checkbox"

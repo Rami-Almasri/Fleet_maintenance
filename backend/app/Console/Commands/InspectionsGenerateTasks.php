@@ -326,7 +326,12 @@ class InspectionsGenerateTasks extends Command
             $parts[] = (string) ($inactivity['detail'] ?? 'Vehicle inactive since its last test — run a check-up.');
         }
 
-        return implode(' ', $parts);
+        // ONE FACT PER LINE. Each part above is an independent obligation the Inspector has to answer
+        // separately, and a car can carry all three at once. Glued into a paragraph they read as a wall
+        // of text on the review card; on their own lines they read as the checklist they are. Every
+        // surface that shows the note renders it as a dashed list (see NoteLines.js) — this only saves
+        // it from having to guess where one fact ends and the next begins.
+        return implode("\n", $parts);
     }
 
     /**
