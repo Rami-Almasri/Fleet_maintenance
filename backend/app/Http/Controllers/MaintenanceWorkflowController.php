@@ -13,6 +13,7 @@ use App\Models\MaintenanceHandover;
 use App\Models\MaintenanceIncident;
 use App\Models\MaintenanceTask;
 use App\Models\MaintenanceTemporaryRelease;
+use App\Models\RequestReason;
 use App\Models\Vehicle;
 use App\Models\VehicleLogEvent;
 use App\Services\ActivityFeedService;
@@ -455,12 +456,29 @@ class MaintenanceWorkflowController extends Controller
                 // Planned work, kept in its own list for the reason spelled out above.
                 'service_groups' => $serviceGroups,
                 'fault_causes'   => $causes,
-                // CODE => label. The code is the stored fact; the label is presentation and the client is
-                // free to render its own translation instead (see [[reason-code-contract]]).
+                // CODE => label, LIVE rows only, straight off `request_reasons`. The code is the stored
+                // fact; the label is presentation and the client is free to render its own translation
+                // instead (see [[reason-code-contract]]). A reason added or withdrawn by the office shows
+                // up here on the next load, with no deploy behind it.
                 'reasons'      => [
-                    'inspection' => Maintenance::REQUEST_REASONS_INSPECTION,
-                    'dispatch'   => Maintenance::REQUEST_REASONS_DISPATCH,
+                    'inspection' => Maintenance::requestReasons(RequestReason::DOOR_INSPECTION),
+                    'dispatch'   => Maintenance::requestReasons(RequestReason::DOOR_DISPATCH),
                 ],
+                // May this person edit the reason lists? The form shows its add/remove controls on this
+                // answer; /request-reasons enforces it for real.
+                'can_edit_reasons' => (bool) $user?->can('maintenance.manage'),
+                // The same LIVE reasons as rows, carrying the id the remove button needs. Sent only to
+                // an editor — everyone else uses the code => label map above and has nothing to target.
+                'reason_rows'      => $user?->can('maintenance.manage')
+                    ? RequestReason::query()->live()->ordered()->get(['id', 'door', 'code', 'label', 'label_ar'])
+                        ->groupBy('door')
+                        ->map(fn ($rows) => $rows->map(fn ($r) => [
+                            'id'       => $r->id,
+                            'code'     => $r->code,
+                            'label'    => $r->label,
+                            'label_ar' => $r->label_ar,
+                        ])->values())
+                    : (object) [],
                 // Read-only identity for the "Filed by" line — never an input.
                 'filed_by'     => ['id' => $user?->id, 'name' => $user?->name],
                 // WHICH DOORS THIS PERSON MAY ACTUALLY USE. The routes enforce both; these flags only
@@ -1782,7 +1800,7 @@ class MaintenanceWorkflowController extends Controller
                 'requested_services'                      => ['nullable', 'array', 'max:6'],
                 'requested_services.*.service_catalog_id' => ['nullable', 'integer'],
                 'requested_services.*.slug'               => ['nullable', 'string', 'max:64'],
-                'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_INSPECTION))],
+                'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::requestReasons(RequestReason::DOOR_INSPECTION)))],
             ]);
 
             $ticket = $this->workflow->requestInspectionByController([
@@ -1997,7 +2015,7 @@ class MaintenanceWorkflowController extends Controller
                 'requested_services'                      => ['nullable', 'array', 'max:6'],
                 'requested_services.*.service_catalog_id' => ['nullable', 'integer'],
                 'requested_services.*.slug'               => ['nullable', 'string', 'max:64'],
-                'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_INSPECTION))],
+                'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::requestReasons(RequestReason::DOOR_INSPECTION)))],
                 // requested_by is NOT accepted: the filer comes from the token, never from the payload.
             ]);
 
@@ -2047,7 +2065,7 @@ class MaintenanceWorkflowController extends Controller
                 'requested_services'                    => ['nullable', 'array', 'max:6'],
                 'requested_services.*.service_catalog_id' => ['nullable', 'integer'],
                 'requested_services.*.slug'             => ['nullable', 'string', 'max:64'],
-                'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_DISPATCH))],
+                'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::requestReasons(RequestReason::DOOR_DISPATCH)))],
                 'customer_complaint'                    => ['nullable', 'string', 'max:2000'],
             ]);
 

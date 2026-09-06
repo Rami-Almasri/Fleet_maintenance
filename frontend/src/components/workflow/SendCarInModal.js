@@ -13,7 +13,9 @@
 //                      Offered only to people with diagnostic/dispatch authority — committing a car to
 //                      a workshop with nobody having diagnosed it is not a driver's call.
 //
-// Both doors then ask the SAME question — "why?" — and accept exactly one KIND of answer, never two:
+// Both doors then ask the SAME question — "why?" — and accept exactly one KIND of answer, never two.
+// BOTH of them are countable, which is the point: every request that has ever been filed can be grouped
+// by what it was filed for. Free text was the third answer and was withdrawn for failing exactly that.
 //
 //   NAME THE WORK    — from the live vocabularies, in one searchable list:
 //                        · FAULTS, or (the good bit) what THIS car was already in the shop for. The single
@@ -30,8 +32,9 @@
 //                      the menu: the row's catalog identity decides how it is stored and counted, so a tap
 //                      cannot file planned work as a failure. Both may be named together — "it pulls left
 //                      and it's due an oil change" is one answer about two jobs.
-//   PICK A REASON    — a code from the door's own list, for when you honestly cannot name the work.
-//   WRITE A NOTE     — your own words.
+//   PICK A REASON    — a code from the door's own list, for when you honestly cannot name the work. The
+//                      list is data (request_reasons) and the office edits it in place, so a reason that
+//                      is genuinely missing gets ADDED rather than typed once into a free-text box.
 //
 // WHO FILED IT IS NOT A FIELD. It comes from the session and is shown, not chosen; the server stamps
 // requested_by from the token no matter what this form sends.
@@ -66,12 +69,15 @@ const VOICE_OBSERVATION = 'observation';
 const VOICE_OFFICE      = 'office_call';
 
 // The ways of answering "why?" (Maintenance::REPORT_MODES). `fault` and `service` are both NAMED WORK and
-// may be sent together; a reason code or a note excludes them, and they exclude it. MODE_SERVICE is not a
-// tab of its own — it labels the service half of the one picker and the payload field it fills.
+// may be sent together; a reason code excludes them, and they exclude it. MODE_SERVICE is not a tab of
+// its own — it labels the service half of the one picker and the payload field it fills.
+//
+// There is no MODE_NOTE here any more. The server still knows `note` as a stored mode — breakdown intake
+// and complaint triage write one, and the tickets that carry it must keep reading — but this form no
+// longer OFFERS it: see the note where the tab used to be rendered.
 const MODE_FAULT   = 'fault';
 const MODE_SERVICE = 'service';
 const MODE_REASON  = 'reason';
-const MODE_NOTE    = 'note';
 
 // A day count → the short phrase the history chips wear. Deliberately coarse: "3 weeks ago" is the
 // resolution a person actually reasons at, and "23 days ago" pretends to a precision nobody uses.
@@ -332,6 +338,13 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
 
+  // Editing the reason list itself, from inside the form that uses it. The office maintains this list;
+  // making them leave the form to do it is how a missing reason becomes a note nobody can count.
+  const [adding, setAdding]         = useState(false);
+  const [newReason, setNewReason]   = useState('');
+  const [reasonBusy, setReasonBusy] = useState(false);
+  const [reasonNotice, setReasonNotice] = useState(null);
+
   const isObservation = door === DOOR_INSPECTION && voice === VOICE_OBSERVATION;
   const isOffice      = door === DOOR_INSPECTION && voice === VOICE_OFFICE && canManage;
   // The server is the authority on which doors are usable; until its answer lands, fall back to the
@@ -346,14 +359,23 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   const inShopVehicles   = useMemo(() => vehicles.filter(inShop), [vehicles]);
 
   // ── loads ──────────────────────────────────────────────────────────────────────────────────────
-  // The vocabulary, the reason lists and the filer's name: one call, once, car-independent.
+  // The vocabulary, the reason lists and the filer's name: one call, once, car-independent. Pulled out
+  // of the effect because adding or removing a reason has to re-read it — the picker must show the
+  // server's answer, not a locally patched guess about what the server did.
+  const loadOptions = useCallback(async () => {
+    try {
+      const r = await api.get('/maintenance-tickets/request-options');
+      return r?.data?.data || null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
-    api.get('/maintenance-tickets/request-options')
-      .then((r) => { if (alive) setOptions(r?.data?.data || null); })
-      .catch(() => { if (alive) setOptions(null); });
+    loadOptions().then((data) => { if (alive) setOptions(data); });
     return () => { alive = false; };
-  }, []);
+  }, [loadOptions]);
 
   // This car's own history + whether it already has a request in flight. Both are best-effort: a failed
   // fetch just leaves the panel off. The server guard is the real fence, not these notes.
@@ -374,15 +396,24 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     return () => { alive = false; };
   }, [vehicleId]);
 
-  // An observation IS a note — there is no fault to name and no reason code to pick, because nothing is
-  // being requested. Forcing the mode here keeps the form honest rather than showing dead controls.
-  useEffect(() => { if (isObservation) setMode(MODE_NOTE); }, [isObservation]);
+  // An observation asks no "why?" at all — nothing is being requested, so the whole tab strip is hidden
+  // and `mode` means nothing while it is selected. Coming BACK out of it, land on the naming tab: the
+  // mode left behind must be one that still exists, and since WRITE A NOTE was withdrawn, anything that
+  // assumed it would strand the form on a tab with nothing under it.
+  useEffect(() => { if (!isObservation) setMode(MODE_FAULT); }, [isObservation]);
 
   // Switching doors changes which reason list is legal, so a reason picked on the other door would be
   // refused on submit. Clear it at the moment of the switch instead of at the moment of the refusal.
   // Named work is NOT cleared: both doors accept it, and re-picking an oil change because you changed
   // your mind about which queue it belongs in would be the form punishing a correction.
-  useEffect(() => { setReason(''); setError(null); }, [door]);
+  useEffect(() => {
+    setReason('');
+    setError(null);
+    // The list-editing panel belongs to the door it was opened on, and so does anything it just said.
+    setAdding(false);
+    setNewReason('');
+    setReasonNotice(null);
+  }, [door]);
 
   // Land on a door this person can actually submit through. An inspector holds `initiate` but not
   // `logistics`: opening on "Ask for a test" would let him fill the whole form in and be refused by the
@@ -479,14 +510,76 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
       : f)));
   }, []);
 
+  // ── the reason list, and editing it ────────────────────────────────────────────────────────────
+  // Straight off the server (`request_reasons`, live rows only, this door's). Order is the office's own.
+  const reasonEntries = useMemo(() => Object.entries(options?.reasons?.[door] || {}), [options, door]);
+  // Who may edit it. The server's answer wins; the client's permission cache only covers the gap before
+  // the options land, and /request-reasons refuses anyone it disagrees with either way.
+  const canEditReasons = options ? !!options.can_edit_reasons : canManage;
+
+  // ADD — the person types the sentence, the server derives the stable code from it. Codes are never
+  // typed here: two people inventing keys for the same reason is how one list becomes two.
+  const addReason = useCallback(async () => {
+    const label = newReason.trim();
+    if (!label || reasonBusy) return;
+    setReasonBusy(true);
+    setError(null);
+    setReasonNotice(null);
+    try {
+      const r = await api.post('/request-reasons', { door, label });
+      setOptions(await loadOptions());
+      setAdding(false);
+      setNewReason('');
+      // Select what they just added — they typed it because it is the reason they mean.
+      const code = r?.data?.data?.code;
+      if (code) setReason(code);
+    } catch (e) {
+      setError(e?.response?.data?.message || t('workflow.error.generic'));
+    } finally {
+      setReasonBusy(false);
+    }
+  }, [newReason, reasonBusy, door, loadOptions, t]);
+
+  // REMOVE — retires it server-side. Nothing is deleted: the reason stops being offered, and every
+  // ticket already filed under it still reads as what it was filed under. The server says how many
+  // those are, and that sentence is shown rather than a bare "removed".
+  const retireReason = useCallback(async (code, label) => {
+    const row = (options?.reason_rows?.[door] || []).find((x) => x.code === code);
+    if (!row?.id || reasonBusy) return;
+    setReasonBusy(true);
+    setError(null);
+    setReasonNotice(null);
+    try {
+      const r = await api.delete(`/request-reasons/${row.id}`);
+      setOptions(await loadOptions());
+      // A reason that was picked and has just been withdrawn is no longer an answer.
+      setReason((prev) => (prev === code ? '' : prev));
+      const used = r?.data?.data?.tickets_using_it || 0;
+      // Said inline rather than as a toast, because it is reassurance about what did NOT happen: the
+      // tickets filed under this reason are untouched and still read.
+      setReasonNotice(used > 0
+        ? t('workflow.sendIn.reason.removedKept', { label, n: used })
+        : t('workflow.sendIn.reason.removed', { label }));
+    } catch (e) {
+      setError(e?.response?.data?.message || t('workflow.error.generic'));
+    } finally {
+      setReasonBusy(false);
+    }
+  }, [options, door, reasonBusy, loadOptions, t]);
+
   // ── validity ───────────────────────────────────────────────────────────────────────────────────
-  const reasonList = options?.reasons?.[door] || {};
-  // The naming tab is satisfied by EITHER kind of named work — a car going in for an oil change alone is
-  // a complete answer to "why is it going in?".
-  const statementReady =
-    (mode === MODE_FAULT   && (faults.length > 0 || services.length > 0))
-    || (mode === MODE_REASON  && !!reasonCode && (reasonCode !== 'other' || !!note.trim()))
-    || (mode === MODE_NOTE    && !!note.trim());
+  // An OBSERVATION is judged on its own terms and always was: it is a note on the car, it opens nothing,
+  // and it answers no question — so it is ready when there are words in it. Stated separately here
+  // because it used to lean on the WRITE A NOTE tab's rule, and that tab is gone; leaving it to fall
+  // through would have left Save permanently dead on the observation path.
+  //
+  // Otherwise the naming tab is satisfied by EITHER kind of named work — a car going in for an oil change
+  // alone is a complete answer to "why is it going in?" — and a reason is complete on its own, now that
+  // the free-text "Something else" that needed a sentence beside it is gone.
+  const statementReady = isObservation
+    ? !!note.trim()
+    : (mode === MODE_FAULT  && (faults.length > 0 || services.length > 0))
+      || (mode === MODE_REASON && !!reasonCode);
 
   // A car with a request already in flight cannot be sent straight to a garage — the server refuses that
   // door on the same fact, so the form must say so before it is filled in rather than after it is
@@ -600,12 +693,12 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     ...(canDispatch ? [{ key: DOOR_DISPATCH,   icon: '🔧', tone: 'amber'  }] : []),
   ];
 
-  // Three tabs again: naming a service is not a different QUESTION from naming a fault, it is a different
-  // answer to the same one, so it lives in the same picker rather than a tab of its own.
+  // TWO tabs. Naming a service is not a different QUESTION from naming a fault, it is a different answer
+  // to the same one, so it lives in the same picker rather than a tab of its own — and "write a note" was
+  // withdrawn, because a free sentence is not an answer that can be counted.
   const modes = [
     { key: MODE_FAULT,  icon: '🔧' },
     { key: MODE_REASON, icon: '📋' },
-    { key: MODE_NOTE,   icon: '✍️' },
   ];
 
   const filedBy = options?.filed_by?.name || user?.name;
@@ -978,57 +1071,121 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
               </div>
             )}
 
-            {/* ── PICK A REASON ───────────────────────────────────────────────────────────────── */}
+            {/* ── PICK A REASON ─────────────────────────────────────────────────────────────────
+                The list is DATA now (request_reasons), not a constant, so it is offered exactly as the
+                server sent it and the office edits it in place. Rewording a reason rewrites nothing:
+                the CODE is what tickets store, and removing a reason retires it rather than deleting
+                it, so everything already filed under it keeps reading. */}
             {mode === MODE_REASON && (
               <div className="space-y-2">
-                {Object.entries(reasonList).map(([code, label]) => {
+                {reasonEntries.length === 0 && (
+                  <p className="rounded-lg bg-slate-50 px-3 py-3 text-center text-xs text-slate-400">
+                    {t('workflow.sendIn.reason.empty')}
+                  </p>
+                )}
+
+                {/* What removing a reason DID and did not do — the reassurance belongs beside the list
+                    that just changed, not in a toast that has already gone. */}
+                {reasonNotice && (
+                  <p className="rounded-lg bg-emerald-50 px-3 py-2 text-[11px] leading-relaxed text-emerald-800 ring-1 ring-inset ring-emerald-600/15">
+                    {reasonNotice}
+                  </p>
+                )}
+
+                {reasonEntries.map(([code, label]) => {
                   const active = reasonCode === code;
                   return (
-                    <button
+                    <div
                       key={code}
-                      type="button"
-                      onClick={() => setReason(code)}
-                      aria-pressed={active}
-                      className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-start transition
+                      className={`flex w-full items-center gap-1 rounded-xl border transition
                         ${active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                     >
-                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${active ? 'border-indigo-600' : 'border-slate-300'}`}>
-                        {active && <span className="h-2 w-2 rounded-full bg-indigo-600" />}
-                      </span>
-                      {/* The catalog answer wins when it has one; the server's English is the fallback,
-                          so a reason code added on the server shows up here without a frontend deploy. */}
-                      <span className="text-sm font-medium text-slate-800">
-                        {tf(`workflow.sendIn.reason.${door}.${code}`, label)}
-                      </span>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => setReason(code)}
+                        aria-pressed={active}
+                        className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-start"
+                      >
+                        <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${active ? 'border-indigo-600' : 'border-slate-300'}`}>
+                          {active && <span className="h-2 w-2 rounded-full bg-indigo-600" />}
+                        </span>
+                        {/* The catalog answer wins when it has one; the server's own wording is the
+                            fallback, which is what lets a reason the office just added show up here
+                            with no frontend deploy behind it. */}
+                        <span className="text-sm font-medium text-slate-800">
+                          {tf(`workflow.sendIn.reason.${door}.${code}`, label)}
+                        </span>
+                      </button>
+
+                      {/* TAKE IT OFF THE LIST — retires it. The tickets already filed under it keep
+                          their reason; it simply stops being offered from now on. */}
+                      {canEditReasons && (
+                        <button
+                          type="button"
+                          onClick={() => retireReason(code, label)}
+                          disabled={reasonBusy}
+                          title={t('workflow.sendIn.reason.removeTitle')}
+                          aria-label={t('workflow.sendIn.reason.remove')}
+                          className="me-1.5 shrink-0 rounded-lg p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                        >
+                          <Icon.X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
-                {reasonCode === 'other' && (
-                  <Textarea
-                    label={t('workflow.sendIn.reason.otherLabel')}
-                    required
-                    rows={2}
-                    maxLength={2000}
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder={t('workflow.sendIn.reason.otherPlaceholder')}
-                  />
-                )}
+
+                {/* ── ADD ONE ──────────────────────────────────────────────────────────────────
+                    Type the sentence a person would actually say. The machine key is derived from it
+                    on the server and never typed here — two people inventing codes for the same
+                    reason is how one list quietly becomes two. */}
+                {canEditReasons && (adding ? (
+                  <div className="rounded-xl border border-dashed border-indigo-300 bg-indigo-50/40 p-3">
+                    <label className="block text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
+                      {t('workflow.sendIn.reason.addLabel')}
+                    </label>
+                    <input
+                      autoFocus
+                      type="text"
+                      value={newReason}
+                      maxLength={191}
+                      onChange={(e) => setNewReason(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addReason(); } }}
+                      placeholder={t('workflow.sendIn.reason.addPlaceholder')}
+                      className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+                      {t('workflow.sendIn.reason.addHint')}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <Button size="sm" onClick={addReason} disabled={!newReason.trim() || reasonBusy} loading={reasonBusy}>
+                        {t('workflow.sendIn.reason.addSave')}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => { setAdding(false); setNewReason(''); }} disabled={reasonBusy}>
+                        {t('common.cancel')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setAdding(true); setError(null); }}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-500 transition hover:border-indigo-400 hover:bg-indigo-50/50 hover:text-indigo-700"
+                  >
+                    <Icon.Plus className="h-4 w-4" />
+                    {t('workflow.sendIn.reason.add')}
+                  </button>
+                ))}
               </div>
             )}
 
-            {/* ── WRITE A NOTE ────────────────────────────────────────────────────────────────── */}
-            {mode === MODE_NOTE && (
-              <Textarea
-                label={t('workflow.sendIn.note.label')}
-                required
-                rows={4}
-                maxLength={2000}
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder={t('workflow.sendIn.note.placeholder')}
-              />
-            )}
+            {/* WRITE A NOTE was the third answer here and is GONE. A free sentence is not an answer
+                anything can count: "why did this car go in?" asked of a thousand tickets returned a
+                thousand different sentences, which is the same nothing the withdrawn "Something else"
+                recorded. The two answers left are both countable, and the reason list is editable now —
+                so a reason that genuinely is not on the list gets ADDED to it rather than typed once
+                into a box nobody can group by. A note still rides along as DETAIL beside named work,
+                and a Driver Observation is still free text, because neither is answering this question. */}
           </div>
         )}
 

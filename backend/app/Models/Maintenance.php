@@ -737,10 +737,15 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
     ];
 
     /**
-     * WHY a car is being sent in when the requester cannot name a fault — the fixed reason list behind
-     * `request_reason_code`. The CODE is the stored fact and the only thing counted; the English here is
-     * presentation, may be reworded or translated freely, and is never what gets written to the column
-     * (see [[reason-code-contract]]).
+     * WHY a car is being sent in when the requester cannot name a fault — the reason list behind
+     * `request_reason_code`. The CODE is the stored fact and the only thing counted; the words beside it
+     * are presentation, may be reworded or translated freely, and are never what gets written to the
+     * column (see [[reason-code-contract]]).
+     *
+     * THE LIST IS DATA, NOT A CONSTANT (as of 2026-09-06). It lives in `request_reasons` — one row per
+     * reason per door — so the office can add or withdraw one without a deploy, and so the stored code
+     * can be JOINED when filtering a board or a report rather than matched against an array pasted into
+     * three files. A withdrawn reason is retired, never deleted, and still resolves to its words.
      *
      * Two lists because the two doors ask different questions. The INSPECTION list is "I can't say what's
      * wrong, but somebody should look" — every entry ends in a test drive. The DISPATCH list is "there is
@@ -751,32 +756,19 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
      * [[complaint-entity]]) and has its own front door; letting it in here would split one customer's
      * story across two entities.
      */
-    public const REQUEST_REASONS_INSPECTION = [
-        'warning_light'      => 'A warning light is on',
-        'feels_wrong'        => "It didn't feel right — I can't say what",
-        'back_from_rental'   => 'Just back from a long rental',
-        'long_idle'          => 'Sat parked for a long time',
-        'before_handover'    => 'Going out to a customer — check it first',
-        'recheck_last_repair'=> 'Check the last repair held',
-        'other'              => 'Something else',
-    ];
+    public static function requestReasons(string $door): array
+    {
+        return RequestReason::listFor($door);
+    }
 
-    public const REQUEST_REASONS_DISPATCH = [
-        'known_fault'        => 'A fault we already know — no test needed',
-        'scheduled_service'  => 'Booked service work',
-        'parts_arrived'      => 'The parts are in — going in to have them fitted',
-        'garage_callback'    => 'The garage asked for the car back',
-        'visible_damage'     => 'Visibly broken — nothing to test-drive',
-        'other'              => 'Something else',
-    ];
-
-    /** Every valid reason code, whichever door it came through. */
-    public const REQUEST_REASON_CODES = self::REQUEST_REASONS_INSPECTION + self::REQUEST_REASONS_DISPATCH;
-
-    /** Human label for a stored reason code — presentation only, never the stored fact. */
+    /**
+     * Human label for a stored reason code — presentation only, never the stored fact. Reads RETIRED
+     * reasons too: a ticket filed a year ago under a reason since withdrawn must still say what it was
+     * filed under, not show a bare code.
+     */
     public static function requestReasonLabel(?string $code): ?string
     {
-        return $code ? (self::REQUEST_REASON_CODES[$code] ?? $code) : null;
+        return $code ? (RequestReason::labels()[$code] ?? $code) : null;
     }
 
     /** Human labels for the origin — the "Source:" line on the board, cards and drawers. */

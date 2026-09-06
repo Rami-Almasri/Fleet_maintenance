@@ -87,8 +87,14 @@ class SendCarInStatementTest extends FoundationTestCase
         ])->assertStatus(422);
     }
 
-    /** A reason code is stored as the CODE; `other` records nothing on its own, so it needs the words. */
-    public function test_reason_other_requires_the_words_that_explain_it(): void
+    /**
+     * A reason code is stored as the CODE, and a reason is a complete answer on its own.
+     *
+     * `other` ("Something else") was WITHDRAWN: it was a code that recorded nothing until a sentence was
+     * typed beside it, which is exactly what the WRITE A NOTE tab already is. It is refused now — but the
+     * row was retired, not deleted, so the tickets filed under it before the withdrawal still read.
+     */
+    public function test_a_reason_stands_on_its_own_and_the_withdrawn_other_is_refused(): void
     {
         $vehicle = $this->car();
 
@@ -98,17 +104,44 @@ class SendCarInStatementTest extends FoundationTestCase
             'request_reason_code' => 'other',
         ])->assertStatus(422);
 
+        // A live reason needs nothing beside it.
         $res = $this->postJson('/api/maintenance-tickets/request', [
             'vehicle_id'          => $vehicle->id,
             'trigger_reason'      => 'test_drive',
-            'request_reason_code' => 'other',
-            'customer_complaint'  => 'It smells of burning at the lights.',
+            'request_reason_code' => 'warning_light',
         ])->assertCreated();
 
         $ticket = Maintenance::findOrFail($this->idOf($res));
         $this->assertSame(Maintenance::REPORT_MODE_REASON, $ticket->request_detail_mode);
-        $this->assertSame('other', $ticket->request_reason_code);
-        $this->assertSame('It smells of burning at the lights.', $ticket->customer_complaint);
+        $this->assertSame('warning_light', $ticket->request_reason_code);
+
+        // Withdrawn ≠ forgotten: a ticket already carrying the retired code still resolves to its words.
+        $this->assertSame('Something else', Maintenance::requestReasonLabel('other'));
+    }
+
+    /**
+     * RETIRING A REASON takes it off the picker and leaves every ticket ever filed under it readable.
+     * That is the difference between this and a DELETE, and it is the reason the list is a table.
+     */
+    public function test_retiring_a_reason_hides_it_from_the_picker_but_keeps_it_readable(): void
+    {
+        $reason = \App\Models\RequestReason::query()
+            ->forDoor(\App\Models\RequestReason::DOOR_DISPATCH)
+            ->where('code', 'garage_callback')
+            ->firstOrFail();
+
+        $this->assertArrayHasKey('garage_callback', Maintenance::requestReasons('dispatch'));
+
+        $reason->forceFill(['retired_at' => now()])->save();
+        \App\Models\RequestReason::flushCache();
+
+        $this->assertArrayNotHasKey('garage_callback', Maintenance::requestReasons('dispatch'));
+        $this->assertSame('The garage asked for the car back', Maintenance::requestReasonLabel('garage_callback'));
+
+        $this->postJson('/api/maintenance-tickets/direct-dispatch', [
+            'vehicle_id'          => $this->car()->id,
+            'request_reason_code' => 'garage_callback',
+        ])->assertStatus(422);
     }
 
     /** The two doors have different reason lists — a dispatch reason is not an inspection reason. */

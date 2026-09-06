@@ -21,7 +21,9 @@ use Illuminate\Support\Facades\Schema;
  *                          is the requester saying "this is the same thing you fixed on ticket #812",
  *                          which is a CLAIM by the requester, never a confirmed recurrence — only the
  *                          workshop confirms that (see RecurringFaultService).
- *   request_reason_code  — mode `reason`: a CODE from Maintenance::REQUEST_REASON_CODES, never English.
+ *   request_reason_code  — mode `reason`: a CODE from the `request_reasons` table, never English. (That
+ *                          list was Maintenance::REQUEST_REASON_CODES until 2026-09-06, when it became
+ *                          editable data so this column could be joined and filtered on.)
  *                          The label beside it is presentation and may be reworded or translated
  *                          without rewriting history (see [[reason-code-contract]]).
  *

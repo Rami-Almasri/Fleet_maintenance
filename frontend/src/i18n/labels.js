@@ -3345,10 +3345,11 @@ const en = {
 
       mode: {
         // One tab for named work — the picker under it holds faults AND services, services badged.
+        // `note` ("Write a note") was withdrawn: a free sentence is not an answer that can be counted,
+        // and the reason list is editable now, so a missing reason gets added to it instead.
         fault:   'Name the fault or service',
         service: 'Name the service',
         reason:  'Pick a reason',
-        note:    'Write a note',
       },
 
       history: {
@@ -3399,8 +3400,13 @@ const en = {
       },
 
       reason: {
-        // Per-code wording. These mirror Maintenance::REQUEST_REASON_CODES; the code is the stored
-        // fact and this is only how it reads, so rewording here rewrites nothing.
+        // Per-code wording for the reasons that SHIPPED. The list itself is data now (request_reasons),
+        // so a reason the office adds arrives with the server's own wording and simply has no key here —
+        // tf() falls back to it. The code is the stored fact either way, and rewording rewrites nothing.
+        //
+        // `other` ("Something else") was withdrawn: it recorded nothing without a sentence typed beside
+        // it, which is exactly what the WRITE A NOTE tab already was. Its row is retired rather than
+        // deleted, so old tickets still read — those read through the server's label, not through here.
         inspection: {
           warning_light:       'A warning light is on',
           feels_wrong:         'It didn’t feel right — I can’t say what',
@@ -3408,7 +3414,6 @@ const en = {
           long_idle:           'Sat parked for a long time',
           before_handover:     'Going out to a customer — check it first',
           recheck_last_repair: 'Check the last repair held',
-          other:               'Something else',
         },
         dispatch: {
           known_fault:       'A fault we already know — no test needed',
@@ -3416,16 +3421,21 @@ const en = {
           parts_arrived:     'The parts are in — going in to have them fitted',
           garage_callback:   'The garage asked for the car back',
           visible_damage:    'Visibly broken — nothing to test-drive',
-          other:             'Something else',
         },
-        otherLabel:       'What is it?',
-        otherPlaceholder: 'Say why this car needs to go in…',
+
+        // Maintaining the list from inside the form that uses it (office only).
+        empty:           'No reasons on this list yet.',
+        add:             'Add a reason',
+        addLabel:        'The new reason',
+        addPlaceholder:  'e.g. The customer is collecting it tomorrow',
+        addHint:         'Write it the way somebody would say it out loud. It goes on this door’s list straight away, and everything filed under it from now on can be counted.',
+        addSave:         'Add to the list',
+        remove:          'Take off the list',
+        removeTitle:     'Take this off the list. Nothing already filed under it is lost.',
+        removed:         '“{label}” is off the list.',
+        removedKept:     '“{label}” is off the list. {n} ticket(s) were filed under it and still read as that — nothing was deleted.',
       },
 
-      note: {
-        label:       'What’s going on?',
-        placeholder: 'Describe it in your own words…',
-      },
 
       // What the button will actually do, said before it is pressed.
       outcome: {
@@ -9341,7 +9351,6 @@ const ar = {
         fault:   'سمِّ العطل أو الخدمة',
         service: 'سمِّ الخدمة',
         reason:  'اختر سببًا',
-        note:    'اكتب ملاحظة',
       },
 
       history: {
@@ -9400,7 +9409,6 @@ const ar = {
           long_idle:           'بقيت متوقفة مدة طويلة',
           before_handover:     'ستخرج إلى زبون — افحصها أولًا',
           recheck_last_repair: 'تحقّق من ثبات آخر إصلاح',
-          other:               'شيء آخر',
         },
         dispatch: {
           known_fault:       'عطل نعرفه سلفًا — لا حاجة للتجربة',
@@ -9408,16 +9416,20 @@ const ar = {
           parts_arrived:     'وصلت القطع — تدخل لتركيبها',
           garage_callback:   'الكراج طلب إعادة السيارة',
           visible_damage:    'عطل ظاهر للعيان — لا شيء لتجربته',
-          other:             'شيء آخر',
         },
-        otherLabel:       'ما هو؟',
-        otherPlaceholder: 'قل لماذا تحتاج هذه السيارة للدخول…',
+
+        empty:           'لا توجد أسباب في هذه القائمة بعد.',
+        add:             'أضف سببًا',
+        addLabel:        'السبب الجديد',
+        addPlaceholder:  'مثال: الزبون سيستلمها غدًا',
+        addHint:         'اكتبه كما يقوله الشخص بلسانه. يُضاف إلى قائمة هذا الباب فورًا، وكل ما يُسجَّل تحته من الآن يمكن عدّه.',
+        addSave:         'أضف إلى القائمة',
+        remove:          'إزالة من القائمة',
+        removeTitle:     'إزالته من القائمة. لا يضيع شيء ممّا سُجِّل تحته.',
+        removed:         'تمت إزالة «{label}» من القائمة.',
+        removedKept:     'تمت إزالة «{label}» من القائمة. سُجِّلت {n} تذكرة تحته ولا تزال تُقرأ به — لم يُحذف شيء.',
       },
 
-      note: {
-        label:       'ما الذي يجري؟',
-        placeholder: 'صِفه بكلماتك…',
-      },
 
       outcome: {
         request:     'يذهب هذا إلى المكتب للمراجعة. وبعد الموافقة، يجرّب المفتش السيارة ويقرّر ما التالي.',

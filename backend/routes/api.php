@@ -31,6 +31,7 @@ use App\Http\Controllers\PartRequestController;
 use App\Http\Controllers\PartPurchaseController;
 use App\Http\Controllers\PartInvestigationController;
 use App\Http\Controllers\RecurringFaultReviewController;
+use App\Http\Controllers\RequestReasonController;
 use App\Http\Controllers\MaintenanceSwapController;
 use App\Http\Controllers\MaintenanceIntelligenceController;
 use App\Http\Controllers\MaintenanceWorkflowController;
@@ -697,6 +698,20 @@ Route::middleware('auth:sanctum')->prefix('part-investigations')->controller(Par
     Route::post('/{partInvestigation}/provide-reason', 'provideReason')->middleware('permission:parts.investigate');
     Route::post('/{partInvestigation}/approve', 'approve')->middleware('permission:parts.investigate');
     Route::post('/{partInvestigation}/reject', 'reject')->middleware('permission:parts.investigate');
+});
+
+// "Why is this car going in?" — the two reason lists the Send a Car In form offers, maintained by the
+// office instead of by a deploy. Its own prefix rather than a segment under /maintenance-tickets so it
+// can never be swallowed by that group's /{ticket} route.
+//
+// DELETE RETIRES, it does not remove: the row stays and the code keeps resolving, so a ticket filed
+// under a withdrawn reason still says what it was filed under. `restore` puts one back.
+Route::middleware('auth:sanctum')->prefix('request-reasons')->controller(RequestReasonController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:maintenance.manage');
+    Route::post('/', 'store')->middleware('permission:maintenance.manage');
+    Route::patch('/{requestReason}', 'update')->middleware('permission:maintenance.manage');
+    Route::delete('/{requestReason}', 'destroy')->middleware('permission:maintenance.manage');
+    Route::post('/{requestReason}/restore', 'restore')->middleware('permission:maintenance.manage');
 });
 
 // Fleet Maintenance Workflow — the role-driven ticket state machine (Inspector → Logistics →

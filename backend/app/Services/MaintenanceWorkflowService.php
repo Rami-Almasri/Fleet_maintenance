@@ -1013,16 +1013,12 @@ class MaintenanceWorkflowService
 
         // ── reason ────────────────────────────────────────────────────────────────────────────────
         if ($mode === Maintenance::REPORT_MODE_REASON) {
-            $list = $door === 'dispatch'
-                ? Maintenance::REQUEST_REASONS_DISPATCH
-                : Maintenance::REQUEST_REASONS_INSPECTION;
+            // The LIVE list for this door. A reason the office has since retired is not offered and is not
+            // accepted — but the code stays resolvable, so the tickets already carrying it still read.
+            $list = Maintenance::requestReasons($door === 'dispatch' ? 'dispatch' : 'inspection');
 
             if (! array_key_exists($reasonRaw, $list)) {
                 throw new WorkflowTransitionException('Pick a reason from the list.', ['field' => 'request_reason_code']);
-            }
-            // 'other' stores a code that means "not one of these" — on its own it records nothing at all.
-            if ($reasonRaw === 'other' && $noteRaw === null) {
-                throw new WorkflowTransitionException('Say what the reason is.', ['field' => 'customer_complaint']);
             }
 
             return [
@@ -1030,7 +1026,7 @@ class MaintenanceWorkflowService
                 'faults'      => null,
                 'services'    => null,
                 'reason_code' => $reasonRaw,
-                'sentence'    => $reasonRaw === 'other' ? $noteRaw : $list[$reasonRaw],
+                'sentence'    => $list[$reasonRaw],
             ];
         }
 
