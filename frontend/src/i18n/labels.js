@@ -2164,6 +2164,8 @@ const en = {
       phonePlaceholder: 'e.g. 05x xxx xxxx',
       photoLabel: 'Odometer / condition photo',
       odometerLocked: 'Locked — the car is towed, not driven, so the reading can\'t change',
+      // Shown at the GARAGE-ARRIVAL end of a towed leg, where the same lock applies for the same reason.
+      arrivalLockedHint: 'The car arrived on the back of a recovery truck, so it covered no distance of its own — the pickup reading is carried through as the arrival reading. Only the arrival photo is needed.',
       pickGarageHint: 'No garage assigned yet — pick where the recovery truck should tow the car. This action assigns it.',
       statusNote: 'The car stays Disabled (In-Maintenance) throughout the recovery. Departure is logged as now.',
     },
@@ -2697,6 +2699,8 @@ const en = {
       clearanceWithFindingsBody: 'A car with findings needs a ticket — closing the diagnostic here would record these faults and leave them with nobody to repair them. Untick anything that is not a real fault, or choose “Requires maintenance”.',
       clearanceWithFindingsCta: 'Go back to the findings',
       arrivalGate: 'Check the car in at the garage. The arrival odometer reading and its photo are required — no repairs or costs are logged here.',
+      // Towed arrival: same check-in, minus the reading — a car on a truck cannot have moved its own meter.
+      arrivalGateRecovery: 'Check the car in at the garage. It came in on a recovery truck, so there is no arrival reading to take — just the photo. No repairs or costs are logged here.',
       readyGate: 'Confirm the repair is done — the car is then ready for pickup. No odometer is needed here (the car didn’t move in the workshop); the return reading is taken at re-inspection.',
       // Time-per-fault read-out on the Mark ready screen. Nothing is entered here — the time is
       // already on the record, and this block only reports it back.
@@ -8325,6 +8329,7 @@ const ar = {
       phonePlaceholder: 'مثال: 05x xxx xxxx',
       photoLabel: 'صورة العدّاد / الحالة',
       odometerLocked: 'مقفلة — السيارة مسحوبة وليست مقودة، فلا يمكن أن تتغيّر القراءة',
+      arrivalLockedHint: 'وصلت السيارة على ظهر شاحنة الإنقاذ، فلم تقطع أي مسافة بنفسها — تُنقَل قراءة الاستلام كما هي لتكون قراءة الوصول. المطلوب هو صورة الوصول فقط.',
       pickGarageHint: 'لم يُسنَد كراج بعد — اختر إلى أين تسحب شاحنة الإنقاذ السيارة. هذا الإجراء يُسنِد الكراج.',
       statusNote: 'تبقى السيارة معطّلة (قيد الصيانة) طوال الإنقاذ. التواريخ الفارغة = اليوم.',
     },
@@ -8828,6 +8833,7 @@ const ar = {
       clearanceWithFindingsBody: 'المركبة التي عليها ملاحظات تحتاج تذكرة — إغلاق التشخيص هنا سيُسجّل هذه الأعطال ولن يتولّاها أحد. أزِل ما ليس عطلاً حقيقياً، أو اختر «تحتاج صيانة».',
       clearanceWithFindingsCta: 'العودة إلى الملاحظات',
       arrivalGate: 'سجّل وصول السيارة إلى الكراج. قراءة عدّاد الوصول وصورتها مطلوبتان — لا يُسجَّل أي إصلاح أو تكلفة هنا.',
+      arrivalGateRecovery: 'سجّل وصول السيارة إلى الكراج. وصلت على شاحنة إنقاذ، فلا توجد قراءة وصول تُؤخذ — الصورة فقط. لا يُسجَّل أي إصلاح أو تكلفة هنا.',
       readyGate: 'أكّد انتهاء الإصلاح — تصبح السيارة بعدها جاهزة للاستلام. لا حاجة للعدّاد هنا (السيارة لم تتحرّك في الورشة)؛ تُؤخذ قراءة العودة عند إعادة الفحص.',
       // كتلة «الوقت لكل عطل» في شاشة تجهيز السيارة — عرض فقط، لا إدخال.
       readyTimeTitle: 'الوقت المستغرق لكل عطل',

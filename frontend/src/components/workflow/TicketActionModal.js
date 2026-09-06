@@ -1066,6 +1066,14 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     }
   }, [action, ticket]);
 
+  // GARAGE ARRIVAL OFF A TOW — no reading is asked for. A recovery leg (ticket.is_recovery, which
+  // dispatch() resets, so it always describes the CURRENT leg) moves the car on a truck: the meter cannot
+  // have advanced, so the pickup reading IS the arrival reading. Asking for it again offers only the
+  // chance to mis-key it. The seeding effect below has already put that value in `odometer`, and it is
+  // what submit() sends — the backend still receives a reading, exactly the one it would have accepted.
+  // Requires a pickup reading to carry: without one there is nothing to lock to, so the field stays open.
+  const receiveOdometerLocked = action === 'receive' && !!ticket?.is_recovery && prevOdometer != null;
+
   // ── Mark ready: time-per-fault (READ-ONLY) ────────────────────────────────────────────────────
   // Nothing is entered here. The mechanic's time is already on the record by the time this screen
   // opens — clocked by the work sessions while the fault was being worked, or booked when the fault
@@ -1326,7 +1334,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         // Towing variant — multipart (odometer + mandatory photo + the recovery unit) is built in submit().
         return { url: `${base}/${ticket.id}/recovery-dispatch`, body: {} };
       case 'receive':
-        return { url: `${base}/${ticket.id}/under-repair`, body: { receive_odometer: odometer ? Number(odometer) : null, garage_feedback: feedback || null, expected_return_date: returnDate || null } };
+        // A towed arrival types no reading — the locked pickup value goes up instead (see the form).
+        return { url: `${base}/${ticket.id}/under-repair`, body: { receive_odometer: (receiveOdometerLocked ? (odometer || prevOdometer) : odometer) ? Number(receiveOdometerLocked ? (odometer || prevOdometer) : odometer) : null, garage_feedback: feedback || null, expected_return_date: returnDate || null } };
       case 'ready':
         return { url: `${base}/${ticket.id}/ready`, body: { garage_feedback: feedback || null } };
       case 'lineitems':
@@ -1503,8 +1512,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // acknowledgment as a normal pickup.
     if (action === 'recovery') return !odometer || Number(odometer) < 1 || !photo || compressing || !recoveryUnit.trim() || (!ticket?.vendor_id && !vendorId) || odoGateBlocked;
     // Arrival check-in ("Now at Garage"): the arrival odometer AND its photo are BOTH mandatory (the
-    // integrity gate before the car enters the workshop); acknowledge abnormal continuity too.
-    if (action === 'receive') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
+    // integrity gate before the car enters the workshop); acknowledge abnormal continuity too. On a TOWED
+    // arrival the reading isn't typed — it's the locked pickup value — so there is no continuity to
+    // acknowledge and no blank field to guard: the photo alone gates the check-in.
+    if (action === 'receive') {
+      if (receiveOdometerLocked) return !photo || compressing;
+      return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
+    }
     // Mark ready ("Maintenance complete"): no odometer/photo, no cost/parts, and no time entry — the
     // mechanic's hours are already on the record. Nothing on this screen can block the confirmation.
     if (action === 'ready') return false;
@@ -1635,8 +1649,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           if (recoveryPhone.trim()) fd.append('recovery_unit_phone', recoveryPhone.trim());
           if (!ticket?.vendor_id && vendorId) fd.append('vendor_id', String(Number(vendorId)));
         } else if (action === 'receive') {
-          // Arrival check-in — the mandatory arrival odometer + its photo, plus optional intake notes.
-          fd.append('receive_odometer', String(Number(odometer)));
+          // Arrival check-in — the arrival odometer + its photo, plus optional intake notes. On a towed
+          // arrival the reading was never typed: it's the pickup value the form showed locked, sent here
+          // unchanged so the backend still gets the reading it requires (and reads a 0 km delta, which is
+          // exactly what a tow produces).
+          fd.append('receive_odometer', String(Number(receiveOdometerLocked ? (odometer || prevOdometer) : odometer)));
           if (feedback) fd.append('garage_feedback', feedback);
           if (returnDate) fd.append('expected_return_date', returnDate);
         } else if (action === 'ready') {
@@ -2798,20 +2815,43 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         {action === 'receive' && (
           <>
             <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-600/10">
-              {t('workflow.hint.arrivalGate')}
+              {t(receiveOdometerLocked ? 'workflow.hint.arrivalGateRecovery' : 'workflow.hint.arrivalGate')}
             </div>
-            <Input
-              label={t('workflow.field.arrivalOdometerKm')}
-              type="number"
-              min="1"
-              required
-              value={odometer}
-              onChange={(e) => setOdometer(e.target.value)}
-              placeholder={ticket?.dispatch_odometer ? t('workflow.ph.dispatchedAt', { km: Number(ticket.dispatch_odometer).toLocaleString() }) : t('workflow.ph.odometerExample2')}
-            />
-            <OdometerContinuityHint previous={prevOdometer} continuity={continuity} confirmed={odoConfirmed} onConfirm={setOdoConfirmed} noteRequired={odoNoteRequired} note={odoNote} onNote={setOdoNote} ignoreTolerance={ignoreOdoTolerance} t={t} />
+            {/* A TOWED leg asks for no arrival reading. The car rode in on the back of a truck: it turned
+                no wheels of its own between the pickup and this moment, so there is nothing for the
+                supervisor to read off a meter — only a number to re-type, which can only introduce a typo
+                into a chain that was already correct. The pickup reading is carried through and shown
+                locked, the same way the recovery DISPATCH form locks it, so both ends of the tow speak
+                with one voice. A driven leg keeps the real question (and its continuity gate). Falls back
+                to the editable field if the tow left no pickup reading to carry. */}
+            {receiveOdometerLocked ? (
+              <div>
+                <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.arrivalOdometerKm')}</span>
+                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+                  <Icon.Gauge className="h-4 w-4 shrink-0 text-slate-400" />
+                  <span className="font-mono font-semibold text-slate-700">{Number(odometer || prevOdometer).toLocaleString()} {t('workflow.stage.kmShort')}</span>
+                  <span className="ms-auto text-[11px] text-slate-400">{t('workflow.recovery.odometerLocked')}</span>
+                </div>
+                <p className="mt-1.5 text-xs text-slate-400">{t('workflow.recovery.arrivalLockedHint')}</p>
+              </div>
+            ) : (
+              <>
+                <Input
+                  label={t('workflow.field.arrivalOdometerKm')}
+                  type="number"
+                  min="1"
+                  required
+                  value={odometer}
+                  onChange={(e) => setOdometer(e.target.value)}
+                  placeholder={ticket?.dispatch_odometer ? t('workflow.ph.dispatchedAt', { km: Number(ticket.dispatch_odometer).toLocaleString() }) : t('workflow.ph.odometerExample2')}
+                />
+                <OdometerContinuityHint previous={prevOdometer} continuity={continuity} confirmed={odoConfirmed} onConfirm={setOdoConfirmed} noteRequired={odoNoteRequired} note={odoNote} onNote={setOdoNote} ignoreTolerance={ignoreOdoTolerance} t={t} />
+              </>
+            )}
+            {/* The photo stays mandatory on both branches — on a towed arrival it is the ONLY evidence the
+                car reached the garage, and it doubles as the condition record of how it came off the truck. */}
             <div>
-              <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.odometerPhoto')}<Req /></span>
+              <span className="mb-1 block text-sm font-medium text-slate-700">{t(receiveOdometerLocked ? 'workflow.recovery.photoLabel' : 'workflow.field.odometerPhoto')}<Req /></span>
               {photoTile}
             </div>
             <Textarea label={t('workflow.field.garageFeedback')} value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder={t('workflow.ph.garageIntake')} />

@@ -135,6 +135,21 @@ export function resolveAction(tk) {
   if (tk.workflow_status === 'awaiting_dispatch' && tk.transfer_transport_method === 'recovery') {
     return { action: 'recovery', perm: ['maintenance.logistics', 'maintenance.delegate'], variant: 'danger' };
   }
+  // THE ANSWER GIVEN AT THE DOOR (sent_to_garage.transport). Somebody stood next to this car, was asked
+  // "can it be driven?", and said no — the whole reason TransportChoice is asked at the moment of
+  // commitment rather than discovered by a driver at the kerb. Until this was read here, that answer
+  // changed nothing about the pickup: the card still opened the DRIVER dispatch form, which demands a
+  // fresh odometer reading and a photo of it from a car that will never move under its own power, and
+  // assigns a human custodian to a tow. Same two stages as the breakdown pair above, because it is the
+  // same fact about the car, only learned at a different door.
+  if (tk.sent_to_garage?.transport === 'recovery') {
+    if (tk.workflow_status === 'inspection_pending') {
+      return { action: 'recovery', perm: 'maintenance.delegate', variant: 'danger' };
+    }
+    if (tk.workflow_status === 'awaiting_dispatch') {
+      return { action: 'recovery', perm: ['maintenance.logistics', 'maintenance.delegate'], variant: 'danger' };
+    }
+  }
   return ACTION[tk.workflow_status];
 }
 
