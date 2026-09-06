@@ -32,6 +32,7 @@ import FindingsPicker from './FindingsPicker';
 import { reasonText as findingHoldReason } from './FindingApprovalPanel';
 import FaultDetailPicker from './FaultDetailPicker';
 import SystemChecks, { buildCheckResults, checkFindings } from './SystemChecks';
+import SuggestedChecks from './SuggestedChecks';
 import { buildDetails, findingsMissingLocation, withDetails } from '../../lib/faultLocations';
 import RequiredPartsEditor, { cleanRequiredParts } from './RequiredPartsEditor';
 import DispatchPlan from './DispatchPlan';
@@ -44,7 +45,7 @@ import { compressImage, formatBytes } from '../../lib/imageCompression';
 import { evaluateContinuity, needsConfirm, needsNote, isHardBlocked, stageIgnoresTolerance, stageRequiresIncrease, STAGE } from '../../lib/odometerContinuity';
 import OdometerContinuityHint from './OdometerContinuityHint';
 import SignaturePad from './SignaturePad';
-import { isPaused, ORIGIN_LABEL } from './meta';
+import { isPaused, ORIGIN_LABEL, heldFindings, findingHoldBlocks } from './meta';
 import { useAuth } from '../../auth/AuthContext';
 
 // Enterprise Handover Workflow — CONTRACT with backend/config/maintenance_handover.php. Small, fixed
@@ -165,34 +166,6 @@ const FAULT_SEVERITY_OPTS = [
   { value: 'moderate', emoji: '🟡' },
   { value: 'routine', emoji: '🟢' },
 ];
-
-// ── WHAT A HELD FINDING DOES NOT STOP ───────────────────────────────────────────────────────────────
-//
-// While a finding is held for approval the server refuses EVERY staged transition
-// (MaintenanceWorkflowService::assertTransition → FindingApprovalService::assertNothingPending), so the
-// modal must not go on offering a form whose Save is already decided. It used to: the Assign Garage step
-// rendered the amber "⏸ Awaiting approval" chip on the finding and then let a supervisor pick a garage,
-// pick a driver and press Save, only for the server to refuse it — the blocker discovered after the work
-// of filling the form rather than before.
-//
-// Listed the OTHER way round on purpose. These are the actions that do NOT route through
-// assertTransition, so blocking them here would refuse something the server allows:
-//   finding / followup   — writing to the ticket, not moving it; `finding` is also how a held finding
-//                          gets corrected in the first place, so it must stay open
-//   lineitems            — the invoice reconciliation, explicitly valid in any state
-//   pause / resume /
-//   markReturned         — custody checkpoints that guard on workflow_status directly
-//   temporarilyRelease
-//   and its six legs     — the car leaving and coming back; the ticket stays at its stage throughout
-//   delegate / typechange — reassignment and reclassification, neither of which is a move
-// Everything else moves the ticket, and while the hold stands, nothing moves.
-const FINDING_HOLD_EXEMPT = new Set([
-  'finding', 'followup', 'lineitems', 'delegate', 'typechange',
-  'pause', 'resume', 'markReturned',
-  'temporarilyRelease', 'cancelRelease', 'assignReleaseMove', 'startReleaseMove',
-  'arriveAtDestination', 'requestReleaseReturn', 'assignReleaseReturn', 'startReleaseReturn',
-  'returnFromRelease',
-]);
 
 // Submit-button tone per action (visual only). The footer further overrides this
 // for the branching decisions (reinspect pass/fail, decide requires/clear).
@@ -802,6 +775,21 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // alongside trigger_reason = customer_reported, but that reason is no longer offered anywhere in this
   // modal (INSPECTION_TRIGGER_REASONS is test_drive | periodic) — a customer issue is a Complaint now.
   const [symptoms, setSymptoms] = useState([]); // selected finding tags (library picks + custom)
+  // Which catalog category the picker should open next, because a suggestion the engine could only place
+  // at category level was tapped. The nonce is what lets the same category be re-opened after it's closed.
+  const [focusCategory, setFocusCategory] = useState(null);
+  // A tap on a suggested check is a SHORTCUT INTO THE PICKER, never a finding of its own. A real catalog
+  // keyword goes straight in (and toggles off if it was tapped by mistake); a category-only suggestion
+  // just opens that system's list so the inspector chooses the word — the engine never invents one.
+  const pickSuggestedCheck = (s) => {
+    if (s?.selectable && s.chip) {
+      setSymptoms((prev) => (prev.some((v) => v.toLowerCase() === String(s.chip).toLowerCase())
+        ? prev.filter((v) => v.toLowerCase() !== String(s.chip).toLowerCase())
+        : [...prev, s.chip]));
+      return;
+    }
+    if (s?.picker_category) setFocusCategory((prev) => ({ key: s.picker_category, nonce: (prev?.nonce || 0) + 1 }));
+  };
   // SYSTEM CHECKS — the inspector's structured answer to each obligation the platform raised on this
   // car: { [requirementId]: { result_code, decision_code, finding_keyword } }. Radios only; there is
   // deliberately nothing here he has to type. See [[SystemChecks]] and VehicleCheckRequirement.
@@ -1876,6 +1864,17 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // Findings an approved check will contribute, shown in the findings step so a fault the inspector
   // did not tap never appears unexplained.
   const checkBornFindings = checkFindings(requiredChecks, checkAnswers);
+  // "No maintenance needed" is an answer only a report with NOTHING on it can give. Both sources of a
+  // fault count: the findings the inspector tapped AND the ones an answered system check will raise on
+  // submit. Derived once so the card, the step's ✓ and the submit gate cannot disagree — the bug this
+  // replaces was a step 4 that printed "✓ No maintenance needed · the car is good to go" over a report
+  // listing three faults, because the clearance branch was hard-coded complete.
+  // The car whose history the suggested checks are read from — the ticket's vehicle, or the one being
+  // picked on an intake that has no ticket yet.
+  const suggestedChecksVehicleId = ticket?.vehicle_id ?? (vehicleId ? Number(vehicleId) : null);
+  const findingsOnReport = symptoms.length + checkBornFindings.length;
+  const clearanceUnavailable = action === 'decide' && findingsOnReport > 0;
+  const clearanceContradiction = clearanceUnavailable && decision === 'none';
   // Flat catalog vocabulary, for the one check type whose catalog cannot name the fault itself.
   const findingKeywordList = useMemo(
     () => (findingsCatalog || []).flatMap((c) => c.keywords || []),
@@ -1920,8 +1919,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // THE HOLD, read on the way IN. `pending_finding_approvals` is the same list the drawer's red deck
   // alert and the approve/reject panel render from, so all three screens name the same findings for the
   // same reason and one cannot say "held" while another offers a Save.
-  const findingHold = (ticket?.pending_finding_approvals || []);
-  const holdBlocks = findingHold.length > 0 && !FINDING_HOLD_EXEMPT.has(action);
+  const findingHold = heldFindings(ticket);
+  const holdBlocks = findingHoldBlocks(ticket, action);
 
   // Submit-button label: the branching steps spell out their decision; the rest use the action's submit verb.
   const submitLabel = action === 'reinspect'
@@ -2117,7 +2116,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 // Every system check must also have a result, or the step is not done however the
                 // findings look: an unanswered obligation is the one thing this screen must not allow
                 // to slide past ([[VehicleCheckRequirement]]).
-                (requiresMaintenance ? symptoms.length > 0 : symptoms.length === 0)
+                // recordsFault, not requiresMaintenance: a DEFERRAL records a real fault too, so a
+                // postponed repair with findings is a complete step, not an empty one.
+                (recordsFault ? symptoms.length > 0 : findingsOnReport === 0)
                   && checkPlan.unanswered.length === 0,
               )}
               title={t('workflow.decideStep.findingsTitle')}
@@ -2136,7 +2137,17 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 lang={lang}
               />
 
-              {inspectChecklist.length > 0 && (
+              {/* WHAT TO LOOK AT ON THIS CAR — from the car's OWN record, not a fixed list. The step used
+                  to print the same three items (Battery / Fluids / Brakes) on every idle vehicle, which is
+                  why "check the battery" appeared on cars whose battery nothing had ever flagged.
+                  VehicleSuggestedChecksService answers it per vehicle from two evidence sources — the
+                  faults this car keeps coming back for, and the upkeep it is already over — and the fixed
+                  post-idle list rides along inside that panel, under its own heading, as the agenda it is.
+                  Tappable here (and only here): the inspector is the one who decides a suggestion is real.
+                  Falls back to the ticket's own checklist when the car isn't identified yet. */}
+              {suggestedChecksVehicleId ? (
+                <SuggestedChecks vehicleId={suggestedChecksVehicleId} onPick={pickSuggestedCheck} />
+              ) : inspectChecklist.length > 0 && (
                 <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3">
                   <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-sky-700">
                     <Icon.Shield className="h-3.5 w-3.5" /> {t('workflow.field.inspectChecklistTitle')}
@@ -2151,7 +2162,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   </ul>
                 </div>
               )}
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} required={requiredFindings} requiredNote={t('Required by the oil follow-up — the recall exists because this car needs an oil change.')} suggested={dataSuggested} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="test_findings" />
+              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} required={requiredFindings} requiredNote={t('Required by the oil follow-up — the recall exists because this car needs an oil change.')} suggested={dataSuggested} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="test_findings" focusCategory={focusCategory} />
               {/* Faults the answered system checks will add on submit. Shown because they are NOT in
                   the picker above — the inspector never tapped them — and a fault appearing on the
                   ticket that nobody selected reads as a bug rather than as his own decision. */}
@@ -2247,11 +2258,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               {...stepProps(
                 4,
                 decision === 'none'
-                  ? t('workflow.decision.noNeed')
+                  // A clearance standing over findings is NOT a settled answer, and the summary line must
+                  // not read like one: it names the contradiction instead of "No maintenance needed".
+                  ? (clearanceContradiction
+                    ? t('workflow.decision.noNeedConflict', { n: findingsOnReport })
+                    : t('workflow.decision.noNeed'))
                   : faultSeverity
                   ? `${t(`workflow.decision.${deferred ? 'deferred' : 'requires'}`)} · ${t(`workflow.faultSeverity.${faultSeverity}`)}`
                   : t(`workflow.decision.${deferred ? 'deferred' : 'requires'}`),
-                recordsFault ? (!!faultSeverity && !deferralIncomplete) : true,
+                recordsFault ? (!!faultSeverity && !deferralIncomplete) : !clearanceContradiction,
               )}
               title={t('workflow.decideStep.decisionTitle')}
               hint={t('workflow.decideStep.decisionHint')}
@@ -2266,17 +2281,32 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   { value: 'deferred', label: t('workflow.decision.deferred'), sub: t('workflow.decision.deferredSub'), on: 'bg-amber-500 text-white ring-amber-500', subOn: 'text-amber-50' },
                   { value: 'none', label: t('workflow.decision.noNeed'), sub: t('workflow.decision.noNeedSub'), on: 'bg-emerald-600 text-white ring-emerald-600', subOn: 'text-emerald-100' },
                 ].map((opt) => {
-                  const active = decision === opt.value;
+                  // The clearance is withdrawn the moment the report carries a finding — it is not an
+                  // answer this report can give. It stays visible (so the inspector sees the third door
+                  // exists) but greyed, unclickable, and never rendered as the chosen answer: a green
+                  // "the car is good to go" over a list of faults is the screen lying about itself.
+                  const unavailable = opt.value === 'none' && clearanceUnavailable;
+                  const active = decision === opt.value && !unavailable;
                   return (
                     <button
                       key={opt.value}
                       type="button"
-                      onClick={() => setDecision(opt.value)}
+                      disabled={unavailable}
+                      onClick={() => { if (!unavailable) setDecision(opt.value); }}
                       aria-pressed={active}
-                      className={`rounded-xl px-4 py-3 text-start text-sm font-semibold ring-1 transition ${active ? opt.on : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}
+                      aria-disabled={unavailable}
+                      className={`rounded-xl px-4 py-3 text-start text-sm font-semibold ring-1 transition ${
+                        unavailable
+                          ? 'cursor-not-allowed bg-slate-50 text-slate-400 ring-slate-200'
+                          : active
+                          ? opt.on
+                          : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'
+                      }`}
                     >
                       <span className="block">{opt.label}</span>
-                      <span className={`mt-0.5 block text-xs font-normal ${active ? opt.subOn : 'text-slate-400'}`}>{opt.sub}</span>
+                      <span className={`mt-0.5 block text-xs font-normal ${unavailable ? 'text-slate-400' : active ? opt.subOn : 'text-slate-400'}`}>
+                        {unavailable ? t('workflow.decision.noNeedUnavailable', { n: findingsOnReport }) : opt.sub}
+                      </span>
                     </button>
                   );
                 })}
@@ -2366,12 +2396,14 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               )}
               {/* The contradiction, said where it is made. A refusal the inspector only meets at a greyed-out
                   submit button is a puzzle; here it names the faults that are in the way and what to do. */}
-              {clearanceWithFindings ? (
+              {clearanceContradiction ? (
                 <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
-                  <p className="font-semibold">{t('workflow.hint.clearanceWithFindingsTitle', { n: symptoms.length })}</p>
+                  <p className="font-semibold">{t('workflow.hint.clearanceWithFindingsTitle', { n: findingsOnReport })}</p>
                   <p className="mt-0.5 leading-snug">{t('workflow.hint.clearanceWithFindingsBody')}</p>
                   <ul className="mt-1.5 flex flex-wrap gap-1">
-                    {symptoms.map((s) => (
+                    {/* Both sources named — a fault raised by an answered system check is as much in the
+                        way as one the inspector tapped, and hiding it makes the block unexplainable. */}
+                    {[...symptoms, ...checkBornFindings].map((s) => (
                       <li key={s} className="rounded-full bg-white px-2 py-0.5 font-medium text-amber-900 ring-1 ring-amber-200">{s}</li>
                     ))}
                   </ul>

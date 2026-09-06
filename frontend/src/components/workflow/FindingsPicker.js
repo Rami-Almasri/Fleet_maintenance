@@ -137,7 +137,7 @@ function Chip({ label, tone, kind, kindLabel, t, active, locked, lockedTitle, re
 // FindingsAiSuggestion): a Yes/No given on a real car during a real inspection is ground truth about
 // the vocabulary, and is filed apart from admin experiments on the keyword-library page. They are
 // optional — the picker works identically without them, the verdicts just lose their provenance.
-export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], onChange, locked = [], required = [], requiredNote = null, onSiteOnly = false, onSiteKeywords = [], suggested = [], statusConditions = [], ticketId = null, vehicleId = null, aiContext = 'test_findings' }) {
+export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], onChange, locked = [], required = [], requiredNote = null, onSiteOnly = false, onSiteKeywords = [], suggested = [], statusConditions = [], ticketId = null, vehicleId = null, aiContext = 'test_findings', focusCategory = null }) {
   const { t, tf, lang } = useI18n();
   const [custom, setCustom] = useState('');
   const [query, setQuery] = useState('');
@@ -304,6 +304,15 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
     if (preset.length) setOpenCats(new Set(preset));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allCategories]);
+
+  // A suggestion the engine could only place at CATEGORY level ("this car keeps coming back on brakes",
+  // with no catalog keyword for the wording its history used) leads here: open that system's accordion so
+  // a person picks the keyword. The engine never invents one ([[findings-vocabulary-contract]]).
+  // Keyed on `.nonce` so asking for the same category twice reopens it after the inspector closed it.
+  useEffect(() => {
+    if (!focusCategory?.key) return;
+    setOpenCats((prev) => new Set(prev).add(focusCategory.key));
+  }, [focusCategory?.key, focusCategory?.nonce]);
 
   // Ready-entry-point row — the exact keyword(s) this ticket was system-flagged for (an oil change /
   // battery / tyre service the car's data says is DUE), from DiagnosticGateService. One tap confirms it
