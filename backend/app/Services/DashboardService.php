@@ -1562,7 +1562,7 @@ class DashboardService
         // two different things depending on which tab was open.
         $fw  = $this->resolveRepeatWindow($faultWindow);
         $key = 'repeats:v2:' . $windowDays . ':' . $limit . ':' . implode(',', $only)
-             . ':' . $fw['days'] . ':' . ($fw['from'] ?? '') . ':' . ($fw['to'] ?? '');
+             . ':' . $fw['days'] . ':' . ($fw['from'] ?? '') . ':' . ($fw['to'] ?? '') . ':' . ($fw['source'] ?? '');
 
         return $this->remember($key, self::CACHE_TTL, function () use ($windowDays, $limit, $only, $faultWindow) {
             $sections = [];
@@ -1688,17 +1688,39 @@ class DashboardService
             [$from, $to] = [$to, $from];
         }
 
+        // WHICH LEDGER, alongside WHEN. Two ledgers record this fleet's faults — the imported workshop log
+        // and this system's own ticket workflow — and they do not agree about the fleet: the log is years
+        // of history nobody typed into a ticket, the workflow is what we have watched happen since. A
+        // reader auditing one of them needs to be able to ask for it alone.
+        //
+        // 'sheet' and 'system' are INCLUSIVE of returns both ledgers saw: a return the log recorded is a
+        // log return whether or not a ticket also caught it. Reading them exclusively would drop the
+        // best-evidenced returns in the fleet out of BOTH filters, which is the one answer neither reader
+        // is asking for. Anything else means no filter.
+        $source = in_array($in['source'] ?? null, ['sheet', 'system'], true) ? $in['source'] : null;
+
         if ($from || $to) {
-            return ['days' => 0, 'from' => $from, 'to' => $to];
+            return ['days' => 0, 'from' => $from, 'to' => $to, 'source' => $source];
         }
 
         $days = max(0, (int) ($in['days'] ?? 0));
 
         return [
-            'days' => $days,
-            'from' => $days > 0 ? Carbon::now()->subDays($days)->toDateString() : null,
-            'to'   => null,
+            'days'   => $days,
+            'from'   => $days > 0 ? Carbon::now()->subDays($days)->toDateString() : null,
+            'to'     => null,
+            'source' => $source,
         ];
+    }
+
+    /** Does one return's provenance satisfy the chosen ledger filter? Null = no filter, everything passes. */
+    private static function matchesRepeatSource(?string $filter, string $sourceCode): bool
+    {
+        return match ($filter) {
+            'sheet'  => $sourceCode === 'SHEET' || $sourceCode === 'BOTH',
+            'system' => $sourceCode === 'SYSTEM' || $sourceCode === 'BOTH',
+            default  => true,
+        };
     }
 
     /**
@@ -1714,16 +1736,26 @@ class DashboardService
      */
     private function aggregateRepeatFaults(array $sweep, array $w): array
     {
-        $rows = array_filter($sweep['returns'] ?? [], fn ($r) => (! $w['from'] || $r['at'] >= $w['from'])
+        $inDates = array_filter($sweep['returns'] ?? [], fn ($r) => (! $w['from'] || $r['at'] >= $w['from'])
             && (! $w['to'] || $r['at'] <= $w['to']));
+
+        // THE MIX IS COUNTED BEFORE THE LEDGER FILTER, deliberately. It is what the filter control itself
+        // reads — "the log holds 331 of these, the workflow 23" — and a mix recomputed after filtering
+        // would report the slice back to itself: pick Sheet, and the control would claim the system had
+        // nothing, which is exactly the false conclusion the filter exists to let a reader test.
+        $sources = ['sheet' => 0, 'system' => 0, 'both' => 0];
+        foreach ($inDates as $r) {
+            $code = strtolower($r['source_code']);
+            $sources[$code] = ($sources[$code] ?? 0) + 1;
+        }
+
+        $rows = array_filter($inDates, fn ($r) => self::matchesRepeatSource($w['source'] ?? null, $r['source_code']));
 
         $byFault = [];
         $cars = [];
-        $sources = ['sheet' => 0, 'system' => 0, 'both' => 0];
 
         foreach ($rows as $r) {
             $cars[$r['vehicle_id']] = true;
-            $sources[strtolower($r['source_code'])] = ($sources[strtolower($r['source_code'])] ?? 0) + 1;
 
             $key = $r['fault_key'];
             $byFault[$key] ??= ['key' => $key, 'label' => $r['fault_label'], 'returns' => 0,
@@ -1802,7 +1834,12 @@ class DashboardService
                     ->sortByDesc(fn ($c) => [$c['count'], $c['last_seen']])->values()->all()])
                 ->all(),
             // Echoed back so the card can state the slice it is ranking rather than silently showing one.
-            'window'            => $w + ['total_returns' => count($sweep['returns'] ?? [])],
+            // `in_range` is the date slice BEFORE the ledger filter, so the two narrowings can be named
+            // separately: "84 of 354 returns · 23 of those 84 are the system's".
+            'window'            => $w + [
+                'total_returns' => count($sweep['returns'] ?? []),
+                'in_range'      => count($inDates),
+            ],
         ];
     }
 
@@ -2033,6 +2070,60 @@ class DashboardService
      * @return array<int,array<string,mixed>>
      */
     /**
+     * THE WHOLE CARD, THREE LEVELS DEEP, IN ONE READ — the payload behind "Download report".
+     *
+     * On screen the drill-down is lazy: a reader opens the one row they are arguing about. A report is the
+     * opposite question ("give me everything under this date range so I can send it"), and answering it by
+     * having the browser fan out one request per row and one per car would be dozens of round trips whose
+     * results could straddle a cache expiry — half the file counted under one sweep, half under the next.
+     *
+     * So it is composed HERE, by re-entering the very same three methods the card calls. Not a fourth query
+     * shaped "close enough": the file a manager forwards must carry the same numbers as the screen they
+     * forwarded it from, and the only way to guarantee that is to run the same code.
+     *
+     * @param  array<int,string>  $only  sections the caller is allowed to read
+     * @return array{window_days:int, sections:array<string,array<string,mixed>>}
+     */
+    public function repeatReport(
+        int $windowDays = self::REPEAT_WINDOW_DAYS,
+        int $limit = 6,
+        array $only = ['faults', 'parts', 'services'],
+        array $faultWindow = [],
+        int $carsPerLabel = 10,
+    ): array {
+        $carsPerLabel = max(1, min(50, $carsPerLabel));
+        $base         = $this->repeats($windowDays, $limit, $only, $faultWindow);
+
+        $sections = [];
+        foreach ($base['sections'] as $key => $section) {
+            $rows = [];
+            foreach ($section['items'] ?? [] as $item) {
+                $cars = $this->repeatCars($key, (string) $item['label'], $windowDays, $carsPerLabel, $faultWindow);
+
+                $vehicles = [];
+                foreach ($cars['items'] as $car) {
+                    $events = $this->repeatEvents($key, (string) $item['label'], (int) $car['id'], $windowDays, $faultWindow);
+                    $vehicles[] = $car + [
+                        'counted' => $events['counted'],
+                        'events'  => $events['items'],
+                    ];
+                }
+
+                $rows[] = $item + [
+                    // The panel's own totals, carried so the file can say "top 10 of 38 cars" instead of
+                    // letting a truncated list read as the whole set — exactly as the panel does on screen.
+                    'car_count' => $cars['cars'],
+                    'vehicles'  => $vehicles,
+                ];
+            }
+
+            $sections[$key] = ['items' => $rows] + $section;
+        }
+
+        return ['window_days' => $base['window_days'], 'sections' => $sections];
+    }
+
+    /**
      * Drill-down for ONE row of the repeat leaderboard: "which cars are behind this?"
      *
      * The card ranks THINGS; this ranks the CARS under one of them, which is the question a supervisor
@@ -2058,7 +2149,7 @@ class DashboardService
 
         $fw  = $this->resolveRepeatWindow($faultWindow);
         $key = 'repeat-cars:v2:' . $section . ':' . mb_strtolower($label) . ':' . $windowDays . ':' . $limit
-             . ':' . $fw['days'] . ':' . ($fw['from'] ?? '') . ':' . ($fw['to'] ?? '');
+             . ':' . $fw['days'] . ':' . ($fw['from'] ?? '') . ':' . ($fw['to'] ?? '') . ':' . ($fw['source'] ?? '');
 
         return $this->remember($key, self::CACHE_TTL, function () use ($section, $label, $windowDays, $limit, $empty, $faultWindow) {
             $by = match ($section) {
@@ -2216,7 +2307,7 @@ class DashboardService
 
         $fw  = $this->resolveRepeatWindow($faultWindow);
         $key = 'repeat-events:v2:' . $section . ':' . mb_strtolower($label) . ':' . $vehicleId . ':' . $windowDays
-             . ':' . $fw['days'] . ':' . ($fw['from'] ?? '') . ':' . ($fw['to'] ?? '');
+             . ':' . $fw['days'] . ':' . ($fw['from'] ?? '') . ':' . ($fw['to'] ?? '') . ':' . ($fw['source'] ?? '');
 
         return $this->remember($key, self::CACHE_TTL, function () use ($section, $label, $vehicleId, $windowDays, $empty, $faultWindow) {
             $v = DB::table('vehicles')->where('id', $vehicleId)->select('id', 'plate_no', 'make', 'model')->first();
@@ -2399,6 +2490,8 @@ class DashboardService
                 default            => [null, null],
             };
 
+            $sourceCode = $onSheet && $onTicket ? 'BOTH' : ($onTicket ? 'SYSTEM' : 'SHEET');
+
             $out[] = [
                 'at'       => $link['first'],
                 // What the workshop actually wrote, else where the car was — never the bar's own label,
@@ -2407,10 +2500,14 @@ class DashboardService
                 'source'   => $onSheet && $onTicket ? 'both' : ($onTicket ? 'ticket' : 'sheet'),
                 'gap_days' => $link['gap_days'],
                 // The first episode is the fault happening, not the fault coming back — and a return
-                // outside the active date filter is still history, just not history this view counted.
+                // outside the active date filter, or out of the ledger being audited, is still history,
+                // just not history this view counted. The episode STAYS VISIBLE either way: a gap reads
+                // as nonsense without the visit it was measured from, and silently dropping the other
+                // ledger's episodes would make the remaining gaps wrong rather than filtered.
                 'counted'  => $i > 0
                     && (! $w['from'] || $link['first'] >= $w['from'])
-                    && (! $w['to'] || $link['first'] <= $w['to']),
+                    && (! $w['to'] || $link['first'] <= $w['to'])
+                    && self::matchesRepeatSource($w['source'] ?? null, $sourceCode),
                 'in_window' => (! $w['from'] || $link['first'] >= $w['from'])
                     && (! $w['to'] || $link['first'] <= $w['to']),
                 'garage'   => $link['garages'][0] ?? null,

@@ -5510,6 +5510,51 @@ const phrasesAr = {
   'Open this record in the timeline': 'افتح هذا السجل في الخط الزمني',
   'Open the maintenance contract': 'افتح عقد الصيانة',
 
+  // …and the downloadable report built from that same card: the button, and every line printed inside the
+  // file itself. The file is the thing that leaves the building, so it must read as Arabic end to end.
+  'Download report': 'تنزيل التقرير',
+  'Preparing…': 'جارٍ التحضير…',
+  'Download every row, the cars under it and their records as one HTML file':
+    'نزّل كل بند، والسيارات تحته، وسجلّاتها في ملف HTML واحد',
+  'Could not build the report right now.': 'تعذّر إنشاء التقرير الآن.',
+  'Fleet report': 'تقرير الأسطول',
+  'The fault that returned after it was repaired': 'العطل الذي عاد بعد إصلاحه',
+  'The part that went on the same car twice': 'القطعة التي رُكّبت على السيارة نفسها مرّتين',
+  'The service that was done again too soon': 'الخدمة التي أُعيدت قبل أوانها',
+  'Again within {n} days': 'تكرّرت خلال {n} يوم',
+  'Generated {when}': 'أُنشئ في {when}',
+  'Since {from}': 'منذ {from}',
+  'Up to {to}': 'حتى {to}',
+  'The last {n} days': 'آخر {n} يوم',
+  '{n} things came back': '{n} بنود عادت',
+  'worst: {phrase}': 'الأسوأ: {phrase}',
+  '1 return': 'عودة واحدة',
+  'and 1 more car': 'وسيارة أخرى',
+  'Nothing came back in this period.': 'لم يعد أي شيء في هذه الفترة.',
+  'Nothing to report for this period.': 'لا شيء يُذكر في هذه الفترة.',
+  'Every line here is a recorded fact — a dated visit, purchase or recurrence — read from the ledgers named under each section. Nothing is predicted or scored.':
+    'كل سطر هنا واقعة مسجَّلة — زيارة أو شراء أو تكرار بتاريخه — مقروءة من السجلات المذكورة تحت كل قسم. لا شيء متوقَّع ولا مُقيَّم.',
+  'The date on each record links back to the system it was read from.':
+    'التاريخ في كل سجل يعيدك إلى مصدره في النظام.',
+  'Click the name to see the records': 'اضغط الاسم لعرض السجلات',
+  // Which ledger to read: the imported workshop log, this system's own records, or both.
+  // ('Workshop log' and 'This system' are already translated further down this file.)
+  'Recorded in': 'مسجَّل في',
+  'Every return, whichever ledger recorded it': 'كل حالات العودة، أيًّا كان السجل الذي دوّنها',
+  'Returns the imported workshop log recorded — including ones this system also saw':
+    'حالات العودة المدوّنة في سجل الورشة المستورد — بما فيها ما رصده هذا النظام أيضًا',
+  'Returns this system recorded itself, through the ticket workflow — including ones the log also has':
+    'حالات العودة التي دوّنها هذا النظام بنفسه عبر مسار التذاكر — بما فيها ما ورد في السجل أيضًا',
+  'the workshop log only': 'سجل الورشة فقط',
+  'this system only': 'هذا النظام فقط',
+  'The workshop log only': 'سجل الورشة فقط',
+  'This system only': 'هذا النظام فقط',
+  'Filtered to: {ledger}': 'مقصور على: {ledger}',
+  'Faults: {ledger}': 'الأعطال: {ledger}',
+  'Open everything': 'افتح الكل',
+  'Close everything': 'أغلق الكل',
+  'Or click any name to open just that one.': 'أو اضغط أي اسم لفتحه وحده.',
+
   // Chronic Fault Watchdog — the provenance line under each previously-seen fault at the test-drive
   // bench. The technician must be able to tell imported history from what this system recorded itself.
   'Sheet history: {n}': 'سجل الورشة: {n}',

@@ -30,6 +30,7 @@ import { Skeleton } from '../ui/Skeleton';
 import { SectionCard } from '../ui/Table';
 import { InfoTip } from '../ui/Tooltip';
 import { num } from '../../lib/format';
+import { downloadRepeatReport } from '../../lib/repeatReportHtml';
 import { useI18n } from '../../i18n/I18nContext';
 
 // The "again within" gap for the parts and services tabs. 30 days is the operational default; the rest
@@ -285,7 +286,7 @@ function RepeatCarPanel({ detail, tone, t, num, section, label, windowDays, faul
 }
 
 export default function RepeatLeaderboard({ limit = 6 }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [tab, setTab] = useState('faults');
   const [windowDays, setWindowDays] = useState(30);
   // The faults tab's own date filter. Defaults to all time: the card's job is "what does not stay
@@ -295,6 +296,10 @@ export default function RepeatLeaderboard({ limit = 6 }) {
   const [faultFrom, setFaultFrom] = useState('');
   const [faultTo, setFaultTo] = useState('');
   const [customOpen, setCustomOpen] = useState(false);
+  // WHICH LEDGER. '' = both. The two do not agree about this fleet — the workshop log is years of imported
+  // history, this system is what it has watched happen since — so "does the log say this, or do we?" is a
+  // question a reader has to be able to ask, rather than one the card answers for them by merging.
+  const [faultSource, setFaultSource] = useState('');
 
   // An explicit range wins over the preset — the backend applies the same rule, so the control and the
   // number can never disagree about which filter is live.
@@ -303,9 +308,16 @@ export default function RepeatLeaderboard({ limit = 6 }) {
     fault_days: ranged ? 0 : faultDays,
     fault_from: faultFrom || undefined,
     fault_to: faultTo || undefined,
+    fault_source: faultSource || undefined,
   };
   // Part of every cache key below: a list fetched under one window must never be reused under another.
-  const faultSig = `${faultParams.fault_days}:${faultFrom}:${faultTo}`;
+  const faultSig = `${faultParams.fault_days}:${faultFrom}:${faultTo}:${faultSource}`;
+  // The download, and whether it is in flight. One request that expands all three levels server-side —
+  // never a fan-out from here, whose pieces could straddle a cache expiry and land in one file counted two
+  // different ways.
+  const [reporting, setReporting] = useState(false);
+  const [reportError, setReportError] = useState(false);
+
   // Which row is open, and the fetched cars behind each one. Keyed by tab+label+window because all three
   // change what the answer is — reusing a cached parts list after the window moved would be a lie.
   const [openLabel, setOpenLabel] = useState(null);
@@ -377,6 +389,32 @@ export default function RepeatLeaderboard({ limit = 6 }) {
     }
   };
 
+  // Download the whole card as a standalone file: every row, the cars under each, and the records under
+  // each car — the third level being the entire point, since a bar persuades nobody and four dated log
+  // rows under one plate end the argument. Deeper and wider than the screen (20 rows, 25 cars) because a
+  // document has no fold; the filters in the header still govern what is in it.
+  const downloadReport = async () => {
+    if (reporting) return;
+    setReporting(true);
+    setReportError(false);
+    try {
+      const res = await api.get('/Dashboard/repeat-report', {
+        params: { window_days: windowDays, limit: 20, cars: 25, ...faultParams },
+      });
+      downloadRepeatReport(res.data.data || {}, {
+        t,
+        lang,
+        windowDays,
+        source: faultSource || null,
+        range: { from: faultFrom || null, to: faultTo || null, days: ranged ? 0 : faultDays },
+      });
+    } catch {
+      setReportError(true);
+    } finally {
+      setReporting(false);
+    }
+  };
+
   if (!loading && !error && available.length === 0) return null;
 
   return (
@@ -390,49 +428,68 @@ export default function RepeatLeaderboard({ limit = 6 }) {
       subtitle={t('Not what happens most — what does not stay fixed')}
       bodyClass="px-4 pb-4 pt-1 sm:px-5"
       actions={
-        active && active.key !== 'faults' ? (
-          <div className="inline-flex rounded-lg bg-slate-100 p-0.5" title={t('Maximum days between the two')}>
-            {WINDOWS.map((w) => (
-              <button
-                key={w}
-                type="button"
-                onClick={() => setWindowDays(w)}
-                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
-                  windowDays === w ? 'bg-white text-slate-900 shadow-soft' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                {t('{n}d', { n: w })}
-              </button>
-            ))}
-          </div>
-        ) : active ? (
-          // The faults tab's own filter: WHEN the car came back, not how close two visits were.
-          <div className="flex items-center gap-1.5">
-            <div className="inline-flex rounded-lg bg-slate-100 p-0.5" title={t('When the car came back')}>
-              {FAULT_RANGES.map((r) => (
+        active ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {active.key !== 'faults' ? (
+              <div className="inline-flex rounded-lg bg-slate-100 p-0.5" title={t('Maximum days between the two')}>
+                {WINDOWS.map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => setWindowDays(w)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+                      windowDays === w ? 'bg-white text-slate-900 shadow-soft' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    {t('{n}d', { n: w })}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              // The faults tab's own filter: WHEN the car came back, not how close two visits were.
+              <>
+                <div className="inline-flex rounded-lg bg-slate-100 p-0.5" title={t('When the car came back')}>
+                  {FAULT_RANGES.map((r) => (
+                    <button
+                      key={r.days}
+                      type="button"
+                      onClick={() => { setFaultDays(r.days); setFaultFrom(''); setFaultTo(''); setCustomOpen(false); }}
+                      className={`rounded-md px-2 py-1 text-xs font-semibold transition ${
+                        !ranged && faultDays === r.days
+                          ? 'bg-white text-slate-900 shadow-soft'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {t(r.label)}
+                    </button>
+                  ))}
+                </div>
                 <button
-                  key={r.days}
                   type="button"
-                  onClick={() => { setFaultDays(r.days); setFaultFrom(''); setFaultTo(''); setCustomOpen(false); }}
-                  className={`rounded-md px-2 py-1 text-xs font-semibold transition ${
-                    !ranged && faultDays === r.days
-                      ? 'bg-white text-slate-900 shadow-soft'
-                      : 'text-slate-500 hover:text-slate-700'
+                  onClick={() => setCustomOpen((v) => !v)}
+                  title={t('Pick an exact date range')}
+                  className={`rounded-lg p-1.5 text-xs font-semibold transition ${
+                    ranged ? 'bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200' : 'bg-slate-100 text-slate-500 hover:text-slate-700'
                   }`}
                 >
-                  {t(r.label)}
+                  <Icon.Calendar className="h-3.5 w-3.5" />
                 </button>
-              ))}
-            </div>
+              </>
+            )}
+
+            {/* Offered on every tab, not just the open one: the file carries all three ledgers, because
+                the reader it is sent to did not choose a tab. The filters above still govern it. */}
             <button
               type="button"
-              onClick={() => setCustomOpen((v) => !v)}
-              title={t('Pick an exact date range')}
-              className={`rounded-lg p-1.5 text-xs font-semibold transition ${
-                ranged ? 'bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200' : 'bg-slate-100 text-slate-500 hover:text-slate-700'
-              }`}
+              onClick={downloadReport}
+              disabled={reporting}
+              title={t('Download every row, the cars under it and their records as one HTML file')}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
             >
-              <Icon.Calendar className="h-3.5 w-3.5" />
+              {reporting
+                ? <Icon.Refresh className="h-3.5 w-3.5 animate-spin" />
+                : <Icon.Download className="h-3.5 w-3.5" />}
+              {reporting ? t('Preparing…') : t('Download report')}
             </button>
           </div>
         ) : null
@@ -498,6 +555,52 @@ export default function RepeatLeaderboard({ limit = 6 }) {
         </div>
       )}
 
+      {/* WHICH LEDGER PROVED IT. Faults only — the parts and services tabs each read a single ledger and
+          have nothing to choose between. Each option carries its own count, so the control doubles as the
+          answer to "how much of this is imported history?" before it is ever clicked; the counts come from
+          the date slice BEFORE this filter, so picking one never makes the others read as empty. */}
+      {active?.key === 'faults' && section?.sources && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            {t('Recorded in')}
+          </span>
+          {[
+            { key: '', label: t('Both'), n: (section.sources.sheet || 0) + (section.sources.system || 0) + (section.sources.both || 0),
+              tip: t('Every return, whichever ledger recorded it') },
+            { key: 'sheet', label: t('Workshop log'), n: (section.sources.sheet || 0) + (section.sources.both || 0),
+              tip: t('Returns the imported workshop log recorded — including ones this system also saw') },
+            { key: 'system', label: t('This system'), n: (section.sources.system || 0) + (section.sources.both || 0),
+              tip: t('Returns this system recorded itself, through the ticket workflow — including ones the log also has') },
+          ].map((o) => {
+            const on = faultSource === o.key;
+            return (
+              <button
+                key={o.key || 'both'}
+                type="button"
+                onClick={() => setFaultSource(o.key)}
+                title={o.tip}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition ring-1 ${
+                  on
+                    ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
+                    : 'bg-white text-slate-500 ring-slate-200 hover:text-slate-700 hover:ring-slate-300'
+                }`}
+              >
+                {o.label}
+                <span className={`tabular-nums text-[11px] font-bold ${on ? 'text-indigo-400' : 'text-slate-300'}`}>
+                  {num(o.n)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {reportError && (
+        <p className="mb-2 text-[11px] font-medium text-rose-600">
+          {t('Could not build the report right now.')}
+        </p>
+      )}
+
       {/* A filtered count must never read as the whole fleet. Shown only when a filter is actually
           narrowing something — on "All" there is nothing to disclose. */}
       {active?.key === 'faults' && section?.window && section.window.total_returns > section.total && (
@@ -510,6 +613,11 @@ export default function RepeatLeaderboard({ limit = 6 }) {
             <> · {section.window.to
               ? t('{from} to {to}', { from: section.window.from, to: section.window.to })
               : t('since {from}', { from: section.window.from })}</>
+          )}
+          {/* Two narrowings, named separately — a reader who set only the date filter must not be left
+              wondering whether the ledger did the rest of the cutting. */}
+          {faultSource && (
+            <> · {faultSource === 'sheet' ? t('the workshop log only') : t('this system only')}</>
           )}
         </p>
       )}

@@ -192,14 +192,19 @@ class DashboardController extends Controller
      * Read once, here, so all THREE levels of the drill-down are scoped by the same rule. A bar filtered
      * to 90 days whose car list and record list were not would contradict the number the reader clicked.
      *
-     * @return array{days:int, from:?string, to:?string}
+     * WHICH LEDGER rides along with it for the same reason: `fault_source` = sheet | system (anything else
+     * means both), so a reader auditing the imported workshop log alone gets a bar, a car list and a set
+     * of counted records that all agree they are talking about the log.
+     *
+     * @return array{days:int, from:?string, to:?string, source:?string}
      */
     private function faultWindow(Request $request): array
     {
         return [
-            'days' => max(0, (int) $request->query('fault_days', 0)),
-            'from' => $request->query('fault_from') ?: null,
-            'to'   => $request->query('fault_to') ?: null,
+            'days'   => max(0, (int) $request->query('fault_days', 0)),
+            'from'   => $request->query('fault_from') ?: null,
+            'to'     => $request->query('fault_to') ?: null,
+            'source' => $request->query('fault_source') ?: null,
         ];
     }
 
@@ -229,6 +234,47 @@ class DashboardController extends Controller
             return ResponseHelper::SuccessResponse(
                 $dashboard->repeats($windowDays, $limit, $only, $this->faultWindow($request)),
                 'Repeat leaderboards retrieved successfully',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * The whole card, expanded, for the file behind "Download report".
+     *
+     * Gated exactly like `repeats()` above — per SECTION, on the permission that owns its ledger — because
+     * a downloadable file is the easiest thing in the system to forward. A user without `parts.view` gets a
+     * report with no parts in it, not a report with the parts ledger in a footnote.
+     */
+    public function repeatReport(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $windowDays = min(365, max(1, (int) $request->query('window_days', DashboardService::REPEAT_WINDOW_DAYS)));
+            $limit      = min(20, max(1, (int) $request->query('limit', 6)));
+            // How many cars are printed under each row. Higher than the card's 10 because paper has no
+            // fold — but still capped, or one bad label could walk the whole fleet.
+            $cars       = min(50, max(1, (int) $request->query('cars', 10)));
+
+            $user = $request->user();
+            $only = array_values(array_filter([
+                $user?->can('maintenance.recurring.view') ? 'faults' : null,
+                $user?->can('parts.view') ? 'parts' : null,
+                $user?->can('maintenance.view') ? 'services' : null,
+            ]));
+
+            if (! $only) {
+                return ResponseHelper::SuccessResponse(
+                    ['window_days' => $windowDays, 'sections' => []],
+                    'Repeat report retrieved successfully',
+                    200
+                );
+            }
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->repeatReport($windowDays, $limit, $only, $this->faultWindow($request), $cars),
+                'Repeat report retrieved successfully',
                 200
             );
         } catch (\Exception $e) {
