@@ -141,6 +141,39 @@ export function resolveAction(tk) {
 // Does the user hold the permission(s) a card action needs (array = any-of)?
 export const allows = (can, perm) => (Array.isArray(perm) ? perm.some(can) : can(perm));
 
+// ── THE FINDING HOLD — A FREEZE, NOT A PLACE ────────────────────────────────────────────────────────
+//
+// A finding the car's own data disagrees with stops the ticket WHERE IT STANDS: the server refuses every
+// staged transition (MaintenanceWorkflowService::assertTransition → FindingApprovalService::
+// assertNothingPending) until an approver decides. The ticket does NOT move to a holding stage — it keeps
+// its real one, because "Needs Dispatch, frozen" and "Under Repair, frozen" are different situations and
+// collapsing them would lose where the car physically is, and because a stage you are moved INTO has to
+// remember where to put you back. Nothing here is ever stranded: rejecting is always the way out.
+//
+// So the hold is expressed the way every other blocker on this board is — a badge and a dead CTA on the
+// card that still sits in its own lane, exactly like custodyBlocked() and the open-faults gate below.
+//
+// Listed as the actions the hold does NOT stop, mirroring the server: these are the endpoints that never
+// route through assertTransition, so blocking them here would refuse what the backend allows.
+export const FINDING_HOLD_EXEMPT = new Set([
+  // Writing to the ticket rather than moving it. `finding` is also how a held finding gets corrected,
+  // so it must stay open — otherwise the hold could only ever be resolved by an approver.
+  'finding', 'followup', 'lineitems', 'delegate', 'typechange',
+  // Custody checkpoints — they guard on workflow_status directly, not through the transition table.
+  'pause', 'resume', 'markReturned',
+  // Temporary release and its six legs: the car leaves and comes back, the ticket keeps its stage.
+  'temporarilyRelease', 'cancelRelease', 'assignReleaseMove', 'startReleaseMove',
+  'arriveAtDestination', 'requestReleaseReturn', 'assignReleaseReturn', 'startReleaseReturn',
+  'returnFromRelease',
+]);
+
+/** Findings on this ticket still waiting on a decision. The same list the drawer and the panel read. */
+export const heldFindings = (tk) => tk?.pending_finding_approvals || [];
+
+/** Does the hold stop THIS action? `null` asks the blunt question "is this ticket frozen at all?". */
+export const findingHoldBlocks = (tk, action = null) =>
+  heldFindings(tk).length > 0 && (action === null || !FINDING_HOLD_EXEMPT.has(action));
+
 // Custody gates — a return/arrival leg may only be completed by the SAME driver who took the car,
 // enforced on the backend so the button reflects the rule instead of letting anyone else tap it and
 // bounce off a 422. Two legs are gated:
