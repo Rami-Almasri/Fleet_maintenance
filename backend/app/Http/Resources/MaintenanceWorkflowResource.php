@@ -652,6 +652,34 @@ class MaintenanceWorkflowResource extends JsonResource
                 'auto_context'      => $t->review_auto_context ?: null,
             ],
 
+            /**
+             * "IT DOESN'T NEED TESTING — IT NEEDS A GARAGE." The decision to skip the test drive, if one
+             * was ever made on this ticket. Null on every car that went in the ordinary way, which is
+             * what makes its presence the answer to "was this car committed to a workshop undiagnosed?".
+             *
+             * The reason ships as CODE + label together: the code is what anything counting these must
+             * read, the label is presentation and is resolved even for a reason the office has since
+             * retired (see [[reason-code-contract]]).
+             */
+            'sent_to_garage' => $t->sent_to_garage_at ? [
+                'at'             => optional($t->sent_to_garage_at)->toIso8601String(),
+                'by'             => $t->relationLoaded('sentToGarageBy') ? $t->sentToGarageBy?->name : null,
+                'reason_code'    => $t->sent_to_garage_reason_code,
+                'reason_label'   => Maintenance::requestReasonLabel($t->sent_to_garage_reason_code),
+                // HOW the car travels: a company driver, or a recovery truck for one nobody can drive.
+                // Null = nobody said, which the dispatch screen must show as a question, never as "driver".
+                'transport'       => $t->sent_to_garage_transport,
+                'transport_label' => Maintenance::transportLabel($t->sent_to_garage_transport),
+                // WHICH TRUCK, on a tow. Null means the decision was made before one was booked — the
+                // list shows that as something still to chase, never as though nobody needed to know.
+                'recovery_unit'   => $t->sent_to_garage_transport === Maintenance::TRANSPORT_RECOVERY
+                    ? $t->recovery_unit_name
+                    : null,
+                'recovery_phone'  => $t->sent_to_garage_transport === Maintenance::TRANSPORT_RECOVERY
+                    ? $t->recovery_unit_phone
+                    : null,
+            ] : null,
+
             // The CALLER'S OWN "remind me later" on this request, if they set one — never anyone else's.
             // Two Controllers looking at the same card each see their own reminder or none, which is what
             // makes "remind ME" honest. Populated by the review queue (which pre-loads them in one query);

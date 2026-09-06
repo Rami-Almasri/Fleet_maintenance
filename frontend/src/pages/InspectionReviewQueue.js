@@ -28,8 +28,10 @@ import { useI18n } from '../i18n/I18nContext';
 import { EmptyState } from '../components/ui/Misc';
 import { Skeleton } from '../components/ui/Skeleton';
 import SendCarInModal from '../components/workflow/SendCarInModal';
+import TransportChoice from '../components/workflow/TransportChoice';
 import ComplaintIntakeModal from '../components/workflow/ComplaintIntakeModal';
 import SuggestedChecks from '../components/workflow/SuggestedChecks';
+import NoteLines, { noteFacts } from '../components/workflow/NoteLines';
 import { num, fmtDate, fmtClock } from '../lib/format';
 // The oil change is recorded identically wherever it is recorded from — one dialog, one write path.
 import { OilChangeDialog } from './reminders/OilProjection';
@@ -851,7 +853,7 @@ function OilFollowUpNote({ ctx, onRecordOilChange }) {
   );
 }
 
-function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCancelReminder, onRecordOilChange, ackBusy, remindBusy, highlight }) {
+function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRemind, onCancelReminder, onRecordOilChange, ackBusy, remindBusy, highlight }) {
   const { t, tf } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const reasonTone = REASON_TONE[tk.trigger_reason] || 'slate';
@@ -892,7 +894,13 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
 
   const sev = tk.fault_severity ? SEV_META[tk.fault_severity] : null;
   const complaint = (tk.customer_complaint || '').trim();
-  const isLong = complaint.length > 140;
+  // The note is a list of separate facts, not a paragraph — a system request can carry the routine
+  // agenda, the overdue clock AND an oil follow-up in one string. Split it so the card shows one
+  // line per fact, and clamp by FACTS rather than by characters so a collapsed card always cuts
+  // between two facts instead of mid-sentence.
+  const complaintFacts = noteFacts(complaint);
+  const isLong = complaintFacts.length > 2 || complaint.length > 140;
+  const shownFacts = isLong && !expanded ? complaintFacts.slice(0, 2) : complaintFacts;
   const identityBits = [tk.vehicle_year, tk.vehicle_code && `#${tk.vehicle_code}`].filter(Boolean);
 
   // Km driven since the last oil service (server computes it from the vehicle's service anchor).
@@ -973,7 +981,7 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
                 ? t('Flagged reason')
                 : fromObservation ? t('What the driver observed') : t('What the driver reported')}
             </p>
-            <p className={`text-xs italic text-slate-600 ${isLong && !expanded ? 'line-clamp-2' : ''}`}>“{complaint}”</p>
+            <NoteLines facts={shownFacts} quote className="text-xs italic text-slate-600" />
             {isLong && (
               <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-0.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">
                 {expanded ? t('Show less') : t('Show more')}
@@ -1180,8 +1188,18 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
             <Button variant="danger" onClick={() => onReject(tk)}>
               <Icon.XCircle className="h-4 w-4" /> {t('Reject')}
             </Button>
+            {/* THE THIRD ANSWER. "Yes" to a request was a single button and it meant one thing: send the
+                car to Abu Maroof to be driven. But the commonest yes on this queue is the other one —
+                the fault is already known, the parts are in, the garage asked for it back — and it had
+                nowhere to be said. Somebody who had already decided "straight to the garage" was pointed
+                at this card and found only Approve on it, so pressing the one forward button started the
+                test drive they had just said was unnecessary. Both yeses are on the card now, and they
+                say which is which. */}
+            <Button variant="warning" onClick={() => onDispatch(tk)}>
+              <Icon.Wrench className="h-4 w-4" /> {tf('reviewQueue.toGarage', 'Straight to the garage')}
+            </Button>
             <Button variant="success" onClick={() => onApprove(tk)}>
-              <Icon.Check className="h-4 w-4" /> {t('Approve & send')}
+              <Icon.Check className="h-4 w-4" /> {tf('reviewQueue.toTest', 'Send for a test drive')}
             </Button>
           </>
         )}
@@ -1230,10 +1248,151 @@ function ApproveModal({ ticket, onClose, onDone }) {
           : t('Abu Maroof will receive this request with everything already on the card.')}
       </p>
       {ticket.customer_complaint && (
-        <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-sm italic text-slate-600 ring-1 ring-inset ring-slate-100">
-          “{ticket.customer_complaint}”
-        </p>
+        <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-sm italic text-slate-600 ring-1 ring-inset ring-slate-100">
+          <NoteLines value={ticket.customer_complaint} quote />
+        </div>
       )}
+    </Modal>
+  );
+}
+
+/**
+ * "It doesn't need testing — it needs a garage." The third answer to a request, and the one this queue
+ * had no way of giving: the request is converted where it stands into a Needs Dispatch ticket, so the
+ * card the requester is watching survives the decision and no test drive ever happens.
+ *
+ * THREE THINGS ARE ASKED, and each is asked because somebody downstream needs the answer:
+ *   - WHY no test is needed — a code from the garage-door reason list, so "we skipped 40 tests this
+ *     month because the parts had arrived" is a countable fact rather than a guess. Optional: the card
+ *     often already names the work, and forcing a code beside it only invites a meaningless one.
+ *   - HOW the car travels — driver or recovery. The supervisor who picks the garage inherits it.
+ *   - The decider's own words, appended to the request's thread rather than written over the
+ *     reporter's.
+ */
+function SendToGarageModal({ ticket, onClose, onDone }) {
+  const { tf } = useI18n();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const [reason, setReason] = useState('');
+  const [transport, setTransport] = useState(null);
+  // The towing unit, if it is already arranged. Cleared by TransportChoice the moment the answer stops
+  // being "recovery", so a ticket can never claim a driver and a truck at once.
+  const [unit, setUnit] = useState({ name: '', phone: '' });
+  // The garage door's reason list, LIVE off `request_reasons` — the office edits it and this picker
+  // follows, with no deploy in between. Best-effort: a failed fetch just leaves the reasons unasked
+  // rather than blocking a decision somebody has already made.
+  const [reasons, setReasons] = useState([]);
+
+  useEffect(() => {
+    let alive = true;
+    api.get('/maintenance-tickets/request-options')
+      .then((r) => {
+        if (!alive) return;
+        const list = r?.data?.data?.reasons?.dispatch || {};
+        setReasons(Object.entries(list).map(([code, label]) => ({ code, label })));
+      })
+      .catch(() => { if (alive) setReasons([]); });
+    return () => { alive = false; };
+  }, []);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/maintenance-tickets/${ticket.id}/review/dispatch`, {
+        customer_complaint: note.trim() || null,
+        request_reason_code: reason || null,
+        transport: transport || null,
+        recovery_unit_name: transport === 'recovery' ? (unit.name.trim() || null) : null,
+        recovery_unit_phone: transport === 'recovery' ? (unit.phone.trim() || null) : null,
+      });
+      onDone(tf('reviewQueue.toGarageDone', 'Sent straight to the garage — a supervisor picks the garage next'));
+    } catch (e) {
+      toast.error(e.response?.data?.message || tf('reviewQueue.toGarageFail', 'Could not send this car to the garage'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={tf('reviewQueue.toGarageTitle', 'Straight to the garage — no test drive')}
+      subtitle={`${ticket.plate || `#${ticket.id}`} · ${tf('reviewQueue.toGarageLands', 'Goes to Needs Dispatch')}`}
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>{tf('reviewQueue.cancel', 'Cancel')}</Button>
+          <Button variant="warning" onClick={submit} loading={busy}>
+            <Icon.Wrench className="h-4 w-4" /> {tf('reviewQueue.toGarage', 'Straight to the garage')}
+          </Button>
+        </>
+      )}
+    >
+      {/* Say what will physically happen to the car, not what the engine will do to the record. */}
+      <p className="text-sm text-slate-600">
+        {tf(
+          'reviewQueue.toGarageBlurb',
+          'Nobody needs to test-drive this one. It goes to the supervisors as it stands — the same request, everything already on the card — and they pick the garage. Abu Maroof is not sent out.',
+        )}
+      </p>
+      {ticket.customer_complaint && (
+        <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-sm italic text-slate-600 ring-1 ring-inset ring-slate-100">
+          <NoteLines value={ticket.customer_complaint} quote />
+        </div>
+      )}
+
+      {/* WHY no test — the countable half of this decision. */}
+      {reasons.length > 0 && (
+        <div className="mt-3">
+          <p className="mb-1.5 text-xs font-semibold text-slate-600">
+            {tf('reviewQueue.toGarageWhy', 'Why does it not need a test? (optional)')}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {reasons.map((r) => {
+              const active = reason === r.code;
+              return (
+                <button
+                  key={r.code}
+                  type="button"
+                  disabled={busy}
+                  aria-pressed={active}
+                  onClick={() => setReason(active ? '' : r.code)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition disabled:opacity-50 ${
+                    active
+                      ? 'bg-amber-500 text-white ring-amber-500'
+                      : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {r.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3">
+        <TransportChoice
+          value={transport}
+          onChange={setTransport}
+          unit={unit}
+          onUnit={setUnit}
+          disabled={busy}
+          tf={tf}
+        />
+      </div>
+
+      <div className="mt-3">
+        <Textarea
+          label={tf('reviewQueue.toGarageNote', 'Anything to add? (optional)')}
+          rows={2}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder={tf('reviewQueue.toGarageNotePh', 'e.g. the parts arrived — it just needs fitting')}
+          disabled={busy}
+        />
+      </div>
     </Modal>
   );
 }
@@ -1711,6 +1870,173 @@ function ParkedCard({ row }) {
   );
 }
 
+/**
+ * EVERY CAR THAT SKIPPED A TEST DRIVE — the accountability half of the third answer.
+ *
+ * The queue beside this one answers "what still needs deciding". This one exists only once a decision
+ * is made, and answers the question nothing else could: which cars were committed to a workshop with
+ * nobody having driven them, WHO said so, and WHY. It is the call worth auditing — it trades a day of
+ * diagnosis for one person's judgement — and a decision that leaves no list behind cannot be reviewed
+ * by anybody.
+ *
+ * Both doors on one list on purpose. A ticket born on the garage door and a request converted at this
+ * gate are the same fact about the fleet; splitting them would let each look rarer than it is.
+ */
+function SentToGaragePanel() {
+  const { t, tf } = useI18n();
+  const [days, setDays] = useState(30);
+  const [transport, setTransport] = useState('all');
+
+  const fetcher = useCallback(
+    async () => (await api.get('/maintenance-tickets/sent-to-garage', { params: { days } })).data.data,
+    [days],
+  );
+  const { data, loading, error } = useFetch(fetcher, [days]);
+
+  const rows = useMemo(() => data || [], [data]);
+  const shown = useMemo(
+    () => (transport === 'all' ? rows : rows.filter((r) => (r.sent_to_garage?.transport || 'unsaid') === transport)),
+    [rows, transport],
+  );
+
+  // The chips are counts first and filters second — "9 by recovery" is itself the finding on a fleet
+  // where recovery is supposed to be rare.
+  const byTransport = useMemo(() => {
+    const n = { driver: 0, recovery: 0, unsaid: 0 };
+    rows.forEach((r) => { n[r.sent_to_garage?.transport || 'unsaid'] += 1; });
+    return n;
+  }, [rows]);
+
+  const chips = [
+    { key: 'all',      label: tf('review.sentToGarage.allChip', 'All'),              n: rows.length },
+    { key: 'driver',   label: `🚗 ${tf('workflow.task.transportDriver', 'Company Driver')}`,  n: byTransport.driver },
+    { key: 'recovery', label: `🛻 ${tf('workflow.task.transportRecovery', 'Recovery Truck')}`, n: byTransport.recovery },
+    { key: 'unsaid',   label: tf('review.sentToGarage.unsaidChip', 'Not said'),      n: byTransport.unsaid },
+  ].filter((c) => c.key === 'all' || c.n > 0);
+
+  const WINDOWS = [
+    { key: 7,   label: tf('review.sentToGarage.days7', 'Last 7 days') },
+    { key: 30,  label: tf('review.sentToGarage.days30', 'Last 30 days') },
+    { key: 90,  label: tf('review.sentToGarage.days90', 'Last 3 months') },
+    { key: 365, label: tf('review.sentToGarage.days365', 'Last year') },
+  ];
+
+  return (
+    <div role="tabpanel" id="panel-sent" aria-labelledby="tab-sent" className="space-y-4">
+      <p className="text-xs text-slate-500">
+        {tf(
+          'review.sentToGarage.blurb',
+          'Cars that went to a workshop without anyone test-driving them first — either sent in that way, or a test request that somebody answered with “no test needed”. Each row says who decided it, why, and how the car travelled.',
+        )}
+      </p>
+
+      {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{String(error)}</div>}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {chips.map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            onClick={() => setTransport(c.key)}
+            aria-pressed={transport === c.key}
+            className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition ${
+              transport === c.key
+                ? 'bg-amber-50 text-amber-800 ring-amber-300'
+                : 'bg-white text-slate-500 ring-slate-200 hover:text-slate-800'
+            }`}
+          >
+            {c.label} <span className="tabular-nums opacity-60">{c.n}</span>
+          </button>
+        ))}
+        <span className="ms-auto flex flex-wrap items-center gap-1.5">
+          {WINDOWS.map((w) => (
+            <button
+              key={w.key}
+              type="button"
+              onClick={() => setDays(w.key)}
+              aria-pressed={days === w.key}
+              className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition ${
+                days === w.key
+                  ? 'bg-slate-800 text-white ring-slate-800'
+                  : 'bg-white text-slate-500 ring-slate-200 hover:text-slate-800'
+              }`}
+            >
+              {w.label}
+            </button>
+          ))}
+        </span>
+      </div>
+
+      {loading && rows.length === 0 && <Skeleton className="h-24 w-full" />}
+
+      {!loading && shown.length === 0 ? (
+        <EmptyState
+          icon={<Icon.Wrench className="h-7 w-7" />}
+          title={tf('review.sentToGarage.emptyTitle', 'Nothing skipped a test')}
+          message={tf('review.sentToGarage.emptyBody', 'No car went to a workshop undiagnosed in this window.')}
+        />
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {shown.map((tk) => {
+            const d = tk.sent_to_garage || {};
+            return (
+              <div key={tk.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <Link to={`/maintenance-workflow/${tk.id}`} className="block truncate text-sm font-semibold text-slate-800 hover:underline">
+                      {tk.plate || `#${tk.id}`} · {tk.car}
+                    </Link>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      {tf('review.sentToGarage.by', 'Sent by')} <span className="font-semibold text-slate-700">{d.by || t('Unknown')}</span>
+                      {d.at ? ` · ${fmtDate(d.at)} ${fmtClock(d.at)}` : ''}
+                    </p>
+                  </div>
+                  {/* HOW IT TRAVELLED. Stated even when nobody said, because "not said" is the answer a
+                      supervisor has to chase before the car can move. */}
+                  <Badge tone={d.transport === 'recovery' ? 'amber' : d.transport ? 'slate' : 'red'}>
+                    {d.transport === 'recovery'
+                      ? `🛻 ${tf('workflow.task.transportRecovery', 'Recovery Truck')}`
+                      : d.transport
+                        ? `🚗 ${tf('workflow.task.transportDriver', 'Company Driver')}`
+                        : tf('review.sentToGarage.unsaidChip', 'Not said')}
+                  </Badge>
+                </div>
+
+                {/* WHICH TRUCK. A tow with no unit logged is not a mistake — it is a job still to do,
+                    and saying so is the difference between the list reporting and the list being used. */}
+                {d.transport === 'recovery' && (
+                  <div className="mt-1.5 text-[11px] text-slate-500">
+                    {d.recovery_unit ? (
+                      <>
+                        🛻 <span className="font-semibold text-slate-700">{d.recovery_unit}</span>
+                        {d.recovery_phone ? ` · ${d.recovery_phone}` : ''}
+                      </>
+                    ) : (
+                      <span className="text-rose-600">
+                        {tf('review.sentToGarage.noUnit', 'Towing unit not logged yet')}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* WHY. The code's label, or the sentence somebody typed when no code fit. */}
+                <p className="mt-2 rounded-lg bg-amber-50/70 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-900 ring-1 ring-inset ring-amber-500/20">
+                  <span className="font-semibold">{tf('review.sentToGarage.why', 'Why no test:')}</span>{' '}
+                  {d.reason_label || tk.customer_complaint || tf('review.sentToGarage.noReason', 'Not recorded')}
+                </p>
+
+                <p className="mt-1.5 text-[11px] text-slate-400">
+                  {tf('review.sentToGarage.stage', 'Now')}: {tk.status_label || tk.workflow_status}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ParkedInShopPanel() {
   const { tf } = useI18n();
   const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/parked-in-shop')).data.data, []);
@@ -2047,7 +2373,7 @@ export default function InspectionReviewQueue() {
   const { t, tf } = useI18n();
   const { can } = usePermissions();
   const canManage = can('maintenance.manage');
-  const [modal, setModal] = useState(null); // { action: 'approve'|'reject'|'remind'|'request'|'complaint', ticket }
+  const [modal, setModal] = useState(null); // { action: 'approve'|'dispatch'|'reject'|'remind'|'request'|'complaint', ticket }
   const [vehicles, setVehicles] = useState([]);
 
   const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/pending-review')).data.data, []);
@@ -2238,12 +2564,18 @@ export default function InspectionReviewQueue() {
             tabs={[
               { key: 'awaiting', label: tf('review.tabs.awaiting', 'Awaiting review'), badge: awaiting.length, icon: <Icon.Clock className="h-4 w-4" /> },
               { key: 'withdrawn', label: tf('review.tabs.inShop', 'Needs a test — done by OM'), icon: <Icon.Wrench className="h-4 w-4" /> },
+              // The decisions this queue has already made the other way: cars sent to a workshop with
+              // nobody driving them. Its own tab because it is a different question — not "what do I
+              // decide?" but "what did we decide, and who decided it?".
+              { key: 'sent', label: tf('review.tabs.sentToGarage', 'Sent straight to the garage'), icon: <Icon.Truck className="h-4 w-4" /> },
               { key: 'countdown', label: tf('review.tabs.countdown', 'When each car is due'), icon: <Icon.Calendar className="h-4 w-4" /> },
             ]}
           />
 
           {activeTab === 'countdown' ? (
             <FleetCountdownPanel />
+          ) : activeTab === 'sent' ? (
+            <SentToGaragePanel />
           ) : activeTab === 'awaiting' ? (
             <div role="tabpanel" id="panel-awaiting" aria-labelledby="tab-awaiting" className="space-y-6">
               {awaiting.length === 0 ? (
@@ -2286,6 +2618,7 @@ export default function InspectionReviewQueue() {
                         key={tk.id}
                         tk={tk}
                         onApprove={(t) => setModal({ action: 'approve', ticket: t })}
+                        onDispatch={(t) => setModal({ action: 'dispatch', ticket: t })}
                         onReject={(t) => setModal({ action: 'reject', ticket: t })}
                         onAcknowledge={onAcknowledge}
                         onRemind={(t) => setModal({ action: 'remind', ticket: t })}
@@ -2312,6 +2645,10 @@ export default function InspectionReviewQueue() {
 
       {modal?.action === 'approve' && (
         <ApproveModal ticket={modal.ticket} onClose={() => setModal(null)} onDone={onDone} />
+      )}
+      {/* The third answer: no test drive, straight to Needs Dispatch. Same row, converted where it stands. */}
+      {modal?.action === 'dispatch' && (
+        <SendToGarageModal ticket={modal.ticket} onClose={() => setModal(null)} onDone={onDone} />
       )}
       {modal?.action === 'reject' && (
         <RejectModal ticket={modal.ticket} onClose={() => setModal(null)} onDone={onDone} />

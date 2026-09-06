@@ -64,9 +64,17 @@ class MaintenanceWorkflowService
     private const TRANSITIONS = [
         // Stage -1 → Stage 0: the Controller (Lin/Marwa) reviews a Driver/system-generated request —
         // approve sends it on to the Inspector exactly as before; reject terminates it.
-        Maintenance::WF_PENDING_REVIEW => [Maintenance::WF_INSPECTION_REQUESTED, Maintenance::WF_REVIEW_REJECTED],
+        //
+        // THE THIRD ANSWER at this gate: "it doesn't need testing, it needs a garage" — the request is
+        // converted where it stands into a Needs Dispatch ticket (inspection_pending) and no test drive
+        // ever happens. See dispatchInsteadOfTest(). Without this move the only forward button on a
+        // review card was Approve, so a person who had already decided "straight to the garage" had no
+        // way to say it and the car was funnelled into a test drive they did not ask for.
+        Maintenance::WF_PENDING_REVIEW => [Maintenance::WF_INSPECTION_REQUESTED, Maintenance::WF_REVIEW_REJECTED, Maintenance::WF_INSPECTION_PENDING],
         // Stage 0 → Stage 1: the Inspector picks up a Driver's request and starts the test drive.
-        Maintenance::WF_INSPECTION_REQUESTED => [Maintenance::WF_INSPECTION_DIAGNOSTIC],
+        // …or the same third answer, one stage later: the request is with the Inspector but nobody needs
+        // him to drive it — it goes straight to the dispatch queue instead (dispatchInsteadOfTest()).
+        Maintenance::WF_INSPECTION_REQUESTED => [Maintenance::WF_INSPECTION_DIAGNOSTIC, Maintenance::WF_INSPECTION_PENDING],
         // Stage 1 → Stage 2 decision: a diagnostic either becomes a ticket (in-shop → the dispatch
         // queue, OR on-site → the mobile lane) or is cleared. The Repair-Location choice at the Decide
         // step picks which committed branch it enters.
@@ -901,8 +909,17 @@ class MaintenanceWorkflowService
             // can_supersede — the garage door will stand the open request DOWN and open a ticket instead.
             //                 Not once the Inspector holds it: that is assigned work, and a ticket opened
             //                 behind his back would compete with him for the same car.
+            // can_send_to_garage — the garage door will CONVERT this very request into a Needs Dispatch
+            //                 ticket (dispatchInsteadOfTest) instead of opening a second one. This is what
+            //                 keeps "🔧 straight to the garage" answerable on a car that already has a
+            //                 request open: false only while the Inspector is actually driving it, where
+            //                 the test is already happening and his report lands it in that same queue.
             'can_add'        => true,
             'can_supersede'  => $ticket->workflow_status === Maintenance::WF_PENDING_REVIEW,
+            'can_send_to_garage' => in_array($ticket->workflow_status, [
+                Maintenance::WF_PENDING_REVIEW,
+                Maintenance::WF_INSPECTION_REQUESTED,
+            ], true),
             'requested_by'   => $ticket->requester?->name ?? $ticket->driver,
             'requested_at'   => $ticket->requested_at?->toIso8601String(),
             'note'           => $ticket->customer_complaint,
@@ -1609,6 +1626,16 @@ class MaintenanceWorkflowService
             $held = Maintenance::openWorkflow()->where('vehicle_id', $vehicleId)
                 ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)
                 ->orderByDesc('id')->first();
+
+            // WHAT IS ACTUALLY HOLDING THE CAR. An APPROVED request opens the car's maintenance contract
+            // the moment it is passed to the Inspector, so a car with nothing booked but a test drive
+            // reads as "held" right here — and answering that with "it is already in the pipeline" hides
+            // the one thing the person can do about it. When no committed ticket exists, the hold IS the
+            // request, so it is refused with the message that names the way through (guard 2's).
+            if (! $held && ($request = $this->liveInspectionRequest($vehicleId))) {
+                throw $this->refuseSecondTicketOver($request);
+            }
+
             throw new WorkflowTransitionException(
                 'This car is already in the maintenance pipeline — it cannot be sent in twice.',
                 array_filter([
@@ -1628,12 +1655,14 @@ class MaintenanceWorkflowService
         //      has been answered by the only authority that could answer it, so the suggestion is retired
         //      and this ticket goes ahead. Refusing instead would leave the human decision nowhere to go
         //      and the car sitting in a review queue nobody can honestly decide.
+        //      The refusal that remains is only ever about opening a SECOND ticket. "Straight to the
+        //      garage" is never refused as a decision: when the request is one the Inspector holds, the
+        //      client sends it to dispatchInsteadOfTest() instead, which converts that very request into
+        //      a Needs Dispatch ticket. This branch is the backstop for anyone who calls the raw endpoint
+        //      anyway, and it names the way through rather than leaving them at a wall.
         [$inFlight, $superseded] = $this->weighInFlightRequest($vehicleId, 'dispatch');
         if ($inFlight) {
-            throw new WorkflowTransitionException(
-                'The inspector is already on this car — settle that inspection instead of opening a second ticket.',
-                ['field' => 'vehicle_id', 'ticket_id' => $inFlight->id, 'state' => $inFlight->workflow_status]
-            );
+            throw $this->refuseSecondTicketOver($inFlight);
         }
 
         // Same four ways of saying why, judged against the DISPATCH reason list — the one whose entries
@@ -1641,7 +1670,12 @@ class MaintenanceWorkflowService
         // door that accepts a named SERVICE: work that is due has nothing to test-drive.
         $statement = $this->requestStatement($data + ['vehicle_id' => $vehicleId], 'dispatch');
 
-        return DB::transaction(function () use ($vehicle, $vehicleId, $statement, $actor, $superseded) {
+        // HOW the car gets there — a company driver, or a recovery truck for one nobody can drive. Asked
+        // at the moment of the decision because the person sending it in is the one who knows, and the
+        // supervisor picking the garage inherits the answer instead of guessing at it.
+        $transport = $this->assertTransport($data['transport'] ?? null);
+
+        return DB::transaction(function () use ($vehicle, $vehicleId, $statement, $actor, $superseded, $transport, $data) {
             $ticket = new Maintenance();
             $ticket->origin          = Maintenance::ORIGIN_MANUAL;
             $ticket->vehicle_id      = $vehicleId;
@@ -1673,6 +1707,13 @@ class MaintenanceWorkflowService
             $ticket->requested_at = Carbon::now();
             $ticket->responsible  = $actor->name;
 
+            // THE SAME DECISION RECORD the review gate writes. A ticket born here skipped a test drive
+            // just as surely as a converted request did — nobody diagnosed this car — so it carries the
+            // same four facts and turns up in the same filter. On THIS door the reason the car is going
+            // in and the reason it is skipping the test are the one answer, so the statement's own code
+            // stands as both rather than asking the same question twice.
+            $this->stampSentToGarage($ticket, $actor, $statement['reason_code'], $transport, $data);
+
             // The named faults become the ticket's findings so the supervisor has something to dispatch.
             // Sourced as `inspector` because that is the finding-source contract's word for "found by us,
             // before the garage saw it" (Maintenance::FINDING_SOURCES has exactly two values), and this
@@ -1682,55 +1723,7 @@ class MaintenanceWorkflowService
             // Faults and services are APPENDED to one findings list, each carrying its own kind — the
             // ticket may legitimately hold both ("it pulls left and it's due an oil change"), and an
             // assignment here instead of an append would silently drop whichever came first.
-            $findings = [];
-
-            if ($statement['faults']) {
-                // `kind` + `catalog_id` / `catalog_slug` are the keys EventClassificationService reads to
-                // classify a finding authoritatively (classification_source = catalog) rather than by
-                // guessing at its wording. A repeat-claim row carries no catalog id, so it falls through
-                // to the resolver exactly as a legacy symptom always has.
-                $findings = array_map(fn ($f) => [
-                    'text'         => $f['text'],
-                    'category_key' => $f['category_key'],
-                    'kind'         => \App\Models\MaintenanceTask::KIND_FAULT,
-                    'catalog_id'   => $f['fault_catalog_id'],
-                    'catalog_slug' => $f['slug'],
-                    'severity'     => $f['severity'],
-                    'source'       => Maintenance::FINDING_INSPECTOR,
-                    // The cause they picked rides onto the finding HERE and only here. This door is held
-                    // by diagnostic/dispatch authority and there is no inspector coming behind it, so the
-                    // pick is a diagnosis and belongs in the field the Diagnosis step writes. On the
-                    // inspection door the same pick stays a suspicion on `reported_faults`, because the
-                    // Inspector has not looked at the car yet.
-                    'root_cause'    => $f['suspected_cause'],
-                    'root_cause_id' => $f['suspected_cause_id'],
-                    'at'           => Carbon::now()->toIso8601String(),
-                ], $statement['faults']);
-            }
-
-            // The named services become findings on exactly the same footing, and this is the whole point
-            // of asking which service rather than accepting "booked service work": a supervisor now has a
-            // job to dispatch and the garage is told what to do in writing.
-            //
-            // `kind = service` is what keeps them honest downstream. Every one of these rows becomes a
-            // maintenance_task classified from the ServiceCatalog (classification_source = catalog), so it
-            // is counted in cost, history and profitability and excluded from Top Faults, recurrence and
-            // the health score — see docs/Service-vs-Fault-Domain-Separation.md. No severity: planned work
-            // is not graded, and a prefill hint here would be inventing one.
-            if ($statement['services']) {
-                $findings = array_merge($findings, array_map(fn ($s) => [
-                    'text'         => $s['text'],
-                    'category_key' => $s['category_key'],
-                    'kind'         => \App\Models\MaintenanceTask::KIND_SERVICE,
-                    'catalog_id'   => $s['service_catalog_id'],
-                    'catalog_slug' => $s['slug'],
-                    'severity'     => null,
-                    'source'       => Maintenance::FINDING_INSPECTOR,
-                    'at'           => Carbon::now()->toIso8601String(),
-                ], $statement['services']));
-            }
-
-            $ticket->findings = $findings ?: null;
+            $ticket->findings = $this->promoteStatementToFindings($statement['faults'], $statement['services']) ?: null;
 
             $ticket->save();
 
@@ -1755,23 +1748,24 @@ class MaintenanceWorkflowService
 
             $this->cascade($ticket->vehicle_id);
 
-            $this->log->record($ticket, VehicleLogEvent::EVENT_REPORT_FILED, $actor, [
-                'description' => 'Sent straight to the garage — no test drive'
-                                . ($ticket->customer_complaint ? ': “' . $ticket->customer_complaint . '”' : '')
-                                . ' (by ' . $actor->name . ')',
-                'meta'        => [
-                    'trigger_reason'      => $ticket->trigger_reason,
-                    'request_origin'      => Maintenance::SOURCE_WORKSHOP,
-                    'requested_by'        => $actor->name,
-                    'request_detail_mode' => $statement['mode'],
-                    'request_reason_code' => $statement['reason_code'],
-                    'reported_faults'     => $statement['faults'],
-                    'requested_services'  => $statement['services'],
-                    'source'              => 'direct_dispatch',
-                    // Which system suggestion this decision answered, when it answered one — the link that
-                    // makes "why did that card vanish?" answerable from either end.
-                    'superseded_request_id' => $superseded?->id,
-                ],
+            // The SAME timeline row the review gate writes — one event type for "a car went to a garage
+            // with nobody diagnosing it", however it got there, so the filter that lists them lists all
+            // of them. The statement itself rides in the meta because on this door it is the whole of
+            // what was said about the car.
+            $this->logSentToGarage($ticket, $actor, $statement['reason_code'], $transport, $ticket->customer_complaint, [
+                'source'              => 'direct_dispatch',
+                'trigger_reason'      => $ticket->trigger_reason,
+                'request_origin'      => Maintenance::SOURCE_WORKSHOP,
+                'requested_by'        => $actor->name,
+                'request_detail_mode' => $statement['mode'],
+                'reported_faults'     => $statement['faults'],
+                'requested_services'  => $statement['services'],
+                // Was there a test on the table at all? On this door, only when the scanner had already
+                // suggested one and this decision answered it.
+                'overruled_test'      => $superseded !== null,
+                // Which system suggestion this decision answered, when it answered one — the link that
+                // makes "why did that card vanish?" answerable from either end.
+                'superseded_request_id' => $superseded?->id,
             ]);
 
             // Hand off to the Supervisors (Waleed/Abdullah): this car needs a garage. Warning, not
@@ -1790,6 +1784,469 @@ class MaintenanceWorkflowService
                 'icon'     => 'wrench',
                 'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'direct_dispatch' => true],
             ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * The reason a car is going STRAIGHT TO A GARAGE, judged against the live dispatch list. Optional —
+     * a named fault is already an answer, and forcing a code beside it would only invite a meaningless
+     * one — but if given it must be a real code, because a code nothing in the system knows is worth
+     * less than no code at all (see [[reason-code-contract]]).
+     */
+    private function assertDispatchReason(?string $code): ?string
+    {
+        $code = $this->clean($code);
+        if ($code === null) {
+            return null;
+        }
+
+        if (! array_key_exists($code, Maintenance::requestReasons('dispatch'))) {
+            throw new WorkflowTransitionException('Pick a reason from the list.', ['field' => 'request_reason_code']);
+        }
+
+        return $code;
+    }
+
+    /**
+     * HOW the car will physically travel — a company driver, or a recovery truck for one nobody can
+     * drive. Optional: the person sending it in may not know yet, and a default here would be a claim
+     * about the car's condition that nobody made. Two values only, from the one shared vocabulary.
+     */
+    private function assertTransport(?string $transport): ?string
+    {
+        $transport = $this->clean($transport);
+        if ($transport === null) {
+            return null;
+        }
+
+        if (! in_array($transport, Maintenance::TRANSPORTS, true)) {
+            throw new WorkflowTransitionException(
+                'Say how the car travels: a company driver, or a recovery truck.',
+                ['field' => 'transport']
+            );
+        }
+
+        return $transport;
+    }
+
+    /**
+     * WRITE THE DECISION ONTO THE TICKET. Both doors that skip a test drive land here, so "who decided
+     * this car did not need to be driven, and why?" has exactly one shape wherever it is asked from.
+     *
+     * Never overwritten: the first person to commit the car is the one who made this call, and a later
+     * edit to a ticket must not quietly reassign it. (Nothing calls this twice today — the state guards
+     * see to that — but the rule belongs next to the write, not in the caller's head.)
+     */
+    private function stampSentToGarage(Maintenance $ticket, User $actor, ?string $reasonCode, ?string $transport, array $recovery = [], ?Carbon $at = null): void
+    {
+        if ($ticket->sent_to_garage_at) {
+            return;
+        }
+
+        $ticket->sent_to_garage_at          = $at ?: Carbon::now();
+        $ticket->sent_to_garage_by          = $actor->id;
+        $ticket->sent_to_garage_reason_code = $reasonCode;
+        $ticket->sent_to_garage_transport   = $transport;
+
+        // THE TOWING UNIT, when the person sending the car in already knows it. Written onto the SAME
+        // fields the Recovery dispatch step writes — not a second copy — so the supervisor's form opens
+        // already filled in rather than asking a question that has been answered once already.
+        //
+        // Only on the recovery choice, and never emptied: switching the decision to "driver" must not
+        // quietly erase a tow somebody had booked. Optional throughout — "this car has to be towed" is
+        // a fact about the car and stands whether or not a truck has been called yet; the Recovery
+        // dispatch form still demands the unit at the moment the tow actually happens.
+        if ($transport === Maintenance::TRANSPORT_RECOVERY) {
+            if ($unit = $this->clean($recovery['recovery_unit_name'] ?? null)) {
+                $ticket->recovery_unit_name = $unit;
+            }
+            if ($phone = $this->clean($recovery['recovery_unit_phone'] ?? null)) {
+                $ticket->recovery_unit_phone = $phone;
+            }
+        }
+    }
+
+    /**
+     * THE TIMELINE ROW for that decision — one sentence a person can read a year later, and the meta an
+     * investigator can filter on.
+     *
+     * The sentence names all three facts deliberately: WHO decided, WHY (the reason in words, resolved
+     * from the code at write time so a retired reason still reads), and HOW the car goes. A row that
+     * says only "sent to the garage" answers none of the questions this event exists to answer.
+     */
+    private function logSentToGarage(Maintenance $ticket, User $actor, ?string $reasonCode, ?string $transport, ?string $note, array $extraMeta = []): void
+    {
+        $reasonLabel = $reasonCode ? Maintenance::requestReasonLabel($reasonCode) : null;
+        $transportLabel = Maintenance::transportLabel($transport);
+
+        $line = 'Sent straight to the garage — no test drive (by ' . $actor->name . ')';
+        if ($reasonLabel) {
+            $line .= ' · why: ' . $reasonLabel;
+        }
+        if ($transportLabel) {
+            $line .= ' · goes by: ' . $transportLabel;
+            // Which truck. On a tow this is the operational fact the row is read for six months later,
+            // when somebody is matching a towing company's invoice to the trips it actually made.
+            if ($transport === Maintenance::TRANSPORT_RECOVERY && $ticket->recovery_unit_name) {
+                $line .= ' (' . $ticket->recovery_unit_name . ')';
+            }
+        }
+        if ($note) {
+            $line .= ' · “' . $note . '”';
+        }
+
+        $this->log->record($ticket, VehicleLogEvent::EVENT_SENT_STRAIGHT_TO_GARAGE, $actor, [
+            'description' => $line,
+            'meta'        => array_merge([
+                'decided_by'    => $actor->name,
+                'decided_by_id' => $actor->id,
+                // The CODE is the fact; the label rides along only so the row still reads if the office
+                // retires the reason later (see [[reason-code-contract]]).
+                'reason_code'   => $reasonCode,
+                'reason_label'  => $reasonLabel,
+                'transport'     => $transport,
+                // Null on a tow nobody has booked yet — an honest "not logged", never a guess. The
+                // Recovery dispatch step fills it in when the truck is actually arranged.
+                'recovery_unit'  => $transport === Maintenance::TRANSPORT_RECOVERY ? $ticket->recovery_unit_name : null,
+                'recovery_phone' => $transport === Maintenance::TRANSPORT_RECOVERY ? $ticket->recovery_unit_phone : null,
+                'note'          => $note,
+            ], $extraMeta),
+        ]);
+    }
+
+    /**
+     * The refusal to open a SECOND ticket on a car that already has a request in flight — and, in the
+     * same breath, the way through.
+     *
+     * Refusing a duplicate ticket is right; refusing the DECISION was the bug. "Straight to the garage"
+     * is answerable on every one of these cars — it is applied to the open request instead of opening a
+     * second ticket (dispatchInsteadOfTest) — so the refusal says which door to use rather than reading
+     * as "you cannot do this". `send_to_garage` is computed by the same rule that endpoint enforces, so
+     * a client that hit this by racing a colleague can retry down the right road instead of guessing.
+     *
+     * One implementation, thrown from both guards: they are the same fact seen from two angles (an
+     * approved request holds the car through its maintenance contract), and two wordings for one
+     * situation is how the same dead end grows back somewhere else.
+     */
+    private function refuseSecondTicketOver(Maintenance $inFlight): WorkflowTransitionException
+    {
+        $driving = $inFlight->workflow_status === Maintenance::WF_INSPECTION_DIAGNOSTIC;
+
+        return new WorkflowTransitionException(
+            $driving
+                ? 'The inspector is test-driving this car right now — his report sends it to the garage when he is done.'
+                : 'This car already has a request open — send THAT one straight to the garage rather than opening a second ticket.',
+            [
+                'field'          => 'vehicle_id',
+                'ticket_id'      => $inFlight->id,
+                'state'          => $inFlight->workflow_status,
+                'send_to_garage' => ! $driving,
+            ]
+        );
+    }
+
+    /**
+     * The named work on a statement, turned into the ticket's FINDINGS — the rows a supervisor actually
+     * dispatches. One implementation, because both ways into the dispatch queue must produce identical
+     * work: the garage door at birth (openDirectDispatch) and a request converted at the review gate
+     * (dispatchInsteadOfTest). Two copies of this mapping is how a fault promoted on one path and the
+     * same fault promoted on the other quietly stop classifying the same way.
+     *
+     * Sourced as `inspector` because that is the finding-source contract's word for "found by us, before
+     * the garage saw it" (Maintenance::FINDING_SOURCES has exactly two values), and both callers are held
+     * by people with that authority. Severity is the catalog's PREFILL hint, never a grade — the grade is
+     * still set by the person entitled to set it.
+     *
+     * Faults and services are APPENDED to ONE list, each carrying its own kind — a ticket may legitimately
+     * hold both ("it pulls left and it's due an oil change"), and an assignment instead of an append would
+     * silently drop whichever came first.
+     *
+     * @param  array<int,array>|null $faults    normalizeReportedFaults() rows (or the same shape read back
+     *                                          off a ticket's stored `reported_faults`)
+     * @param  array<int,array>|null $services  normalizeRequestedServices() rows
+     * @return array<int,array>
+     */
+    private function promoteStatementToFindings(?array $faults, ?array $services): array
+    {
+        $now      = Carbon::now()->toIso8601String();
+        $findings = [];
+
+        if ($faults) {
+            // `kind` + `catalog_id` / `catalog_slug` are the keys EventClassificationService reads to
+            // classify a finding authoritatively (classification_source = catalog) rather than by
+            // guessing at its wording. A repeat-claim row carries no catalog id, so it falls through
+            // to the resolver exactly as a legacy symptom always has.
+            $findings = array_map(fn ($f) => [
+                'text'         => $f['text'] ?? null,
+                'category_key' => $f['category_key'] ?? null,
+                'kind'         => \App\Models\MaintenanceTask::KIND_FAULT,
+                'catalog_id'   => $f['fault_catalog_id'] ?? null,
+                'catalog_slug' => $f['slug'] ?? null,
+                'severity'     => $f['severity'] ?? null,
+                'source'       => Maintenance::FINDING_INSPECTOR,
+                // The cause they picked rides onto the finding HERE and only here. Both callers are the
+                // garage decision and there is no inspector coming behind either of them, so the pick is
+                // a diagnosis and belongs in the field the Diagnosis step writes. While the same claim is
+                // still only a REQUEST it stays a suspicion on `reported_faults`, because nobody has
+                // looked at the car yet.
+                'root_cause'    => $f['suspected_cause'] ?? null,
+                'root_cause_id' => $f['suspected_cause_id'] ?? null,
+                'at'            => $now,
+            ], array_values($faults));
+        }
+
+        // The named services become findings on exactly the same footing, and this is the whole point
+        // of asking which service rather than accepting "booked service work": a supervisor now has a
+        // job to dispatch and the garage is told what to do in writing.
+        //
+        // `kind = service` is what keeps them honest downstream. Every one of these rows becomes a
+        // maintenance_task classified from the ServiceCatalog (classification_source = catalog), so it
+        // is counted in cost, history and profitability and excluded from Top Faults, recurrence and
+        // the health score — see docs/Service-vs-Fault-Domain-Separation.md. No severity: planned work
+        // is not graded, and a prefill hint here would be inventing one.
+        if ($services) {
+            $findings = array_merge($findings, array_map(fn ($s) => [
+                'text'         => $s['text'] ?? null,
+                'category_key' => $s['category_key'] ?? null,
+                'kind'         => \App\Models\MaintenanceTask::KIND_SERVICE,
+                'catalog_id'   => $s['service_catalog_id'] ?? null,
+                'catalog_slug' => $s['slug'] ?? null,
+                'severity'     => null,
+                'source'       => Maintenance::FINDING_INSPECTOR,
+                'at'           => $now,
+            ], array_values($services)));
+        }
+
+        // A row with no words on it is not a job anyone can dispatch — drop it rather than hand the
+        // supervisor a blank line.
+        return array_values(array_filter($findings, fn ($f) => $this->clean($f['text']) !== null));
+    }
+
+    /**
+     * THE THIRD ANSWER TO AN OPEN REQUEST — "it doesn't need testing, it needs a garage."
+     *
+     * THE BUG THIS CLOSES. A request in flight used to have exactly two answers: approve (→ the Inspector
+     * test-drives it) or reject (→ nothing happens). So a person who opened the Send a Car In form, chose
+     * 🔧 STRAIGHT TO THE GARAGE — NO TEST DRIVE and hit a car that already had a request open was refused,
+     * pointed at that request's card, and found only an Approve button on it. Pressing the one forward
+     * button on the screen started the very test drive they had just said was unnecessary. The decision
+     * they made was not wrong and it was not unavailable — it had nowhere to be recorded.
+     *
+     * WHAT THIS DOES. It converts the request WHERE IT STANDS into a Needs Dispatch ticket
+     * (inspection_pending), the same stage openDirectDispatch() gives birth at. The same row moves — it is
+     * not withdrawn and re-opened — so the requester's card, its statement, its history and every link to
+     * it survive the decision. Whoever asked simply gets a better answer than they asked for: the car is
+     * going to a workshop rather than to a test drive.
+     *
+     * THE TWO STATES IT ACCEPTS, and why both:
+     *   - `pending_review` — nobody has decided anything. This is the review gate's third button.
+     *   - `inspection_requested` — approved and sitting with the Inspector, who has NOT started driving.
+     *     Assigned work, so he is told it was stood down; but a car whose fault is already known does not
+     *     become undiagnosable because a hand-off happened, and leaving it stuck was the whole complaint.
+     *   - `inspection_diagnostic` — the Inspector is driving the car RIGHT NOW. Refused: the answer to
+     *     "is a test needed?" is being produced as we speak, and his report already lands the ticket in
+     *     this exact queue. Cancelling a drive from another screen would throw away the diagnosis and
+     *     leave the odometer chain open behind it.
+     *
+     * WHAT IT IS NOT: a reclassification. trigger_reason, the original statement and who filed it are
+     * left exactly as they are — the ticket records why the car went in, and that has not changed. Only
+     * the route to the workshop has.
+     *
+     * @param array{customer_complaint?:?string, reported_faults?:array, requested_services?:array, request_reason_code?:?string} $data
+     */
+    public function dispatchInsteadOfTest(Maintenance $ticket, array $data, User $actor): Maintenance
+    {
+        // THE DECISION'S OWN REASON, and it is not the request's reason. The request says why the car is
+        // going in at all ("a warning light is on"); this says why it is going STRAIGHT TO A GARAGE ("the
+        // parts are in"). On a converted request those genuinely differ, so the decision's reason gets
+        // its own field and the requester's answer is left exactly as they gave it.
+        $reasonCode = $this->assertDispatchReason($data['request_reason_code'] ?? null);
+        $transport  = $this->assertTransport($data['transport'] ?? null);
+
+        // A statement sent ALONGSIDE the decision (the garage door in the Send a Car In form carries one)
+        // is merged onto the open request first, exactly as a second report would be — the person named
+        // work while deciding, and that naming is what the supervisor will dispatch. NAMED WORK ONLY: the
+        // reason code above is the decision's, not a second answer to the requester's question, so it is
+        // deliberately not passed through the statement rules (which would refuse it beside a named fault).
+        //
+        // Checked against the ticket's CURRENT state before merging, so a decision that is about to be
+        // refused does not half-apply: the wording of a car nobody is allowed to reroute must not change
+        // because somebody tried. (The authoritative check is the locked one below; this only stops the
+        // side effect from landing ahead of it.)
+        $statementSent = (bool) (($data['reported_faults'] ?? null) || ($data['requested_services'] ?? null));
+
+        if ($statementSent && in_array($ticket->workflow_status, [Maintenance::WF_PENDING_REVIEW, Maintenance::WF_INSPECTION_REQUESTED], true)) {
+            $ticket = $this->addToOpenRequest(
+                $ticket,
+                array_diff_key($data, ['request_reason_code' => true]),
+                $actor,
+                'dispatch'
+            );
+        } else {
+            $statementSent = false;
+        }
+
+        return DB::transaction(function () use ($ticket, $data, $actor, $statementSent, $reasonCode, $transport) {
+            $locked = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+            $from   = $locked->workflow_status;
+
+            // The Inspector is in the car. Nothing here is worth interrupting a diagnosis that is already
+            // producing the answer — and his report lands the ticket at Needs Dispatch anyway.
+            if ($from === Maintenance::WF_INSPECTION_DIAGNOSTIC) {
+                throw new WorkflowTransitionException(
+                    'The inspector is test-driving this car right now — his report sends it to the garage when he is done.',
+                    ['workflow_status' => $from]
+                );
+            }
+
+            if (! in_array($from, [Maintenance::WF_PENDING_REVIEW, Maintenance::WF_INSPECTION_REQUESTED], true)) {
+                throw new WorkflowTransitionException('This request has already been decided.', [
+                    'workflow_status' => $from,
+                ]);
+            }
+
+            $this->assertTransition($locked, Maintenance::WF_INSPECTION_PENDING);
+
+            $now  = Carbon::now();
+            $note = $this->clean($data['customer_complaint'] ?? null);
+
+            $locked->workflow_status = Maintenance::WF_INSPECTION_PENDING;
+            // Parked ('IN'): the car is not at the garage yet, so it must not read as an open garage
+            // event — identical to a ticket born on the garage door.
+            $locked->event_status = 'IN';
+
+            // A decision was made on a request that was waiting for one, so it is stamped as reviewed —
+            // the queue must not keep offering a card nobody still has to decide. A request already past
+            // the gate keeps the reviewer who passed it; overwriting them would rewrite who approved what.
+            if ($from === Maintenance::WF_PENDING_REVIEW) {
+                $locked->reviewed_by    = $actor->id;
+                $locked->reviewed_at    = $now;
+                $locked->review_sent_at = $now;
+            }
+
+            // THE DECISION ITSELF, on the ticket and not only in the log: who overruled the test, why,
+            // and how the car travels. On the ticket because three different screens ask for it — the
+            // board card, the supervisor's dispatch step, and the filter that lists every car that
+            // skipped a test — and a log line is not something any of them can join on.
+            $this->stampSentToGarage($locked, $actor, $reasonCode, $transport, $data, $now);
+            // The reviewer's own words, appended and attributed — never written over the requester's
+            // statement, which is the fact this ticket was opened on (see addToOpenRequest).
+            //
+            // Skipped when a statement was merged a moment ago: that merge already folded this same note
+            // into the sentence it appended, and writing it a second time would print the decider's words
+            // twice on the one card.
+            if ($note !== null && ! $statementSent) {
+                $locked->customer_complaint = trim(
+                    ($locked->customer_complaint ? $locked->customer_complaint . ' · ' : '')
+                    . $actor->name . ': ' . $note
+                );
+            }
+
+            // WHAT THE SUPERVISOR WILL DISPATCH. The claim on the request was a suspicion while a test
+            // drive was still coming; committing the car to a workshop is what turns it into work. Merged,
+            // never replaced: a ticket may already carry findings (a check attached at approval), and the
+            // same fault must not appear twice on the job sheet.
+            $existing = is_array($locked->findings) ? $locked->findings : [];
+            $seen     = [];
+            foreach ($existing as $f) {
+                $key = mb_strtolower(trim((string) ($f['text'] ?? '')));
+                if ($key !== '') {
+                    $seen[$key] = true;
+                }
+            }
+            foreach ($this->promoteStatementToFindings($locked->reported_faults, $locked->requested_services) as $f) {
+                $key = mb_strtolower(trim((string) $f['text']));
+                if (! isset($seen[$key])) {
+                    $seen[$key]  = true;
+                    $existing[]  = $f;
+                }
+            }
+            $locked->findings = $existing ?: null;
+            $locked->save();
+            $ticket = $locked;
+
+            // Promote them into routable work — a ticket at Needs Dispatch with nothing on it is a ticket
+            // a supervisor cannot act on. No-op when the request only ever carried a reason or a note,
+            // exactly as on the garage door: the sentence is the instruction in that case.
+            if ($ticket->findings) {
+                app(MaintenanceTaskService::class)->syncFromFindings($ticket, $actor);
+            }
+
+            // A committed visit gets its contract, like every other committed ticket. Idempotent — a
+            // request approved earlier already opened one, and this links to it rather than stacking a second.
+            $this->openMaintenanceContract($ticket, $actor);
+
+            $this->cascade($ticket->vehicle_id);
+
+            // The request has been decided, so every "remind me to look at this again" on it is now noise.
+            $this->reviewReminders->cancelOnDecision($ticket);
+
+            $this->logSentToGarage($ticket, $actor, $reasonCode, $transport, $note, [
+                'source' => 'dispatch_instead_of_test',
+                // WHICH TEST WAS CALLED OFF — the stage the request was pulled out of. "Waiting for the
+                // office" and "already with the inspector" are two different decisions and the timeline
+                // must not read them as one.
+                'from'   => $from,
+                // The request this answered was raised by somebody (or by the scanner) — say so, so
+                // "why did this never get its test drive?" is answerable from the row itself.
+                'requested_by'   => $ticket->driver,
+                'request_origin' => $ticket->request_origin,
+                'overruled_test' => true,
+            ]);
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $quote   = $ticket->customer_complaint ? ' — “' . $ticket->customer_complaint . '”' : '';
+
+            // Hand off to the Supervisors (Waleed/Abdullah): this car needs a garage. Same alert the
+            // garage door fires, because from here on it IS a garage-door ticket.
+            $this->notifier->notifyByPermission(self::NOTIFY_DISPATCHER, [
+                'type'     => 'maint_direct_dispatch',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => 'Needs a garage · ' . $this->label($vehicle),
+                'body'     => trim($actor->name . ' sent ' . $this->label($vehicle)
+                                . ' straight in — no test drive needed' . $quote . '. Pick a garage.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':inspection_pending',
+                'icon'     => 'wrench',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'direct_dispatch' => true],
+            ], $actor->id);
+
+            // The Inspector was holding this one. Tell him it is off his list — assigned work that
+            // vanishes silently is how somebody drives to a car that has already gone.
+            if ($from === Maintenance::WF_INSPECTION_REQUESTED) {
+                $this->notifier->notifyByPermission(self::NOTIFY_INSPECTOR, [
+                    'type'     => 'maint_test_stood_down',
+                    'category' => 'maintenance',
+                    'severity' => 'info',
+                    'title'    => 'No test drive needed · ' . $this->label($vehicle),
+                    'body'     => trim($actor->name . ' sent ' . $this->label($vehicle)
+                                    . ' straight to a garage — you do not need to test-drive it.'),
+                    'url'      => $this->link($ticket),
+                    'key'      => 'maint_wf:' . $ticket->id . ':test_stood_down',
+                    'icon'     => 'wrench',
+                    'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no],
+                ], $actor->id);
+            }
+
+            // And tell whoever asked for the test what became of their request.
+            if ($ticket->requested_by && $ticket->requested_by !== $actor->id) {
+                $requester = User::find($ticket->requested_by);
+                if ($requester) {
+                    $this->notifier->notifyUser($requester, [
+                        'type'     => 'maint_review_dispatched',
+                        'category' => 'maintenance',
+                        'severity' => 'info',
+                        'title'    => 'Your request is going straight to a garage · ' . $this->label($vehicle),
+                        'body'     => 'No test drive needed — it is waiting for a supervisor to pick the garage.',
+                        'url'      => $this->link($ticket),
+                        'key'      => 'maint_wf:' . $ticket->id . ':review_dispatched',
+                        'icon'     => 'wrench',
+                    ]);
+                }
+            }
 
             return $ticket->load($this->eager());
         });
@@ -1816,12 +2273,18 @@ class MaintenanceWorkflowService
      *     review keeps awaiting it. Adding detail is not a decision and must never look like one.
      *
      * Returns the OPEN request, so every caller's response is a ticket the client can link to.
+     *
+     * $door names WHICH reason list the addition is judged against — the two doors ask different
+     * questions and offer different answers, so a statement typed on the garage door must be validated
+     * against the garage door's list even when what it lands on is an inspection request
+     * (dispatchInsteadOfTest passes 'dispatch'). It changes nothing else: the reason code that was first
+     * answered still stands, whichever door the addition arrived through.
      */
-    private function addToOpenRequest(Maintenance $open, array $data, User $actor): Maintenance
+    private function addToOpenRequest(Maintenance $open, array $data, User $actor, string $door = 'inspection'): Maintenance
     {
         // Validated exactly as a fresh request is — same exclusivity, same fault provenance. An addition
         // is held to the vocabulary rules, or it would be the back door around them.
-        $statement = $this->requestStatement($data + ['vehicle_id' => $open->vehicle_id], 'inspection');
+        $statement = $this->requestStatement($data + ['vehicle_id' => $open->vehicle_id], $door);
 
         return DB::transaction(function () use ($open, $statement, $actor) {
             $ticket = Maintenance::where('id', $open->id)->lockForUpdate()->firstOrFail();
@@ -2154,6 +2617,39 @@ class MaintenanceWorkflowService
      * sign-off, so they're included here too (tagged via is_legacy_unreviewed on the resource) with an
      * Acknowledge action instead of Approve/Reject.
      */
+    /**
+     * EVERY CAR THAT SKIPPED A TEST DRIVE — the filter behind the review queue's third tab.
+     *
+     * The review queue answers "what still needs deciding". This answers the question that only exists
+     * once the decision is made: which cars went to a workshop with nobody having driven them, who said
+     * so, and why. It is the accountability half of the third answer — a decision that leaves no list
+     * behind is a decision nobody can audit, and this is exactly the call worth auditing: it is the one
+     * that trades a day of diagnosis for somebody's judgement.
+     *
+     * Both doors, deliberately. A ticket born on the garage door and a request converted at the review
+     * gate are the same fact about the fleet ("this car was committed to a workshop undiagnosed"), and
+     * splitting them across two screens would let each look rarer than it is.
+     *
+     * @param  int   $days   how far back to look. The decision matters while the visit is live and for a
+     *                       while after; a year of them is a report, not a queue.
+     * @param  array $filter transport => driver|recovery, reason => a dispatch reason code
+     */
+    public function sentStraightToGarage(int $days = 30, array $filter = [])
+    {
+        $query = Maintenance::whereNotNull('sent_to_garage_at')
+            ->where('sent_to_garage_at', '>=', Carbon::now()->subDays(max(1, $days)))
+            ->with(array_merge($this->eager(), ['sentToGarageBy:id,name']));
+
+        if ($transport = $this->clean($filter['transport'] ?? null)) {
+            $query->where('sent_to_garage_transport', $transport);
+        }
+        if ($reason = $this->clean($filter['reason'] ?? null)) {
+            $query->where('sent_to_garage_reason_code', $reason);
+        }
+
+        return $query->orderByDesc('sent_to_garage_at')->limit(300)->get();
+    }
+
     public function pendingReview()
     {
         // Re-count before serving: sweep out requests reality already answered — a car that went into

@@ -2067,6 +2067,13 @@ class MaintenanceWorkflowController extends Controller
                 'requested_services.*.slug'             => ['nullable', 'string', 'max:64'],
                 'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::requestReasons(RequestReason::DOOR_DISPATCH)))],
                 'customer_complaint'                    => ['nullable', 'string', 'max:2000'],
+                // HOW the car gets to the garage — a company driver, or a recovery truck. Recorded with
+                // the decision so the supervisor picking the garage inherits it instead of guessing.
+                'transport'                             => ['nullable', 'string', Rule::in(Maintenance::TRANSPORTS)],
+                // …and the towing unit, when it is already arranged — same fields the Recovery dispatch
+                // step writes, so that form opens filled in instead of asking again.
+                'recovery_unit_name'                    => ['nullable', 'string', 'max:191'],
+                'recovery_unit_phone'                   => ['nullable', 'string', 'max:40'],
             ]);
 
             $ticket = $this->workflow->openDirectDispatch($data, $request->user());
@@ -2524,6 +2531,61 @@ class MaintenanceWorkflowController extends Controller
     }
 
     /**
+     * THE THIRD ANSWER — "this doesn't need a test drive, it needs a garage."
+     *
+     * Converts the open request into a Needs Dispatch ticket where it stands (no test drive, no second
+     * ticket), which is what makes 🔧 "Straight to the garage" answerable on a car that already has a
+     * request open. Before this, the only forward button on such a request was Approve, and pressing it
+     * started the very test drive the person had just said was unnecessary.
+     *
+     * Gated to `maintenance.initiate|maintenance.manage` — the SAME authority the garage door itself
+     * carries (/direct-dispatch), because this is that decision, made about a car that already has a
+     * request open. Deliberately wider than approve/reject: the Inspector holds `initiate`, and "I don't
+     * need to drive this, send it in" is exactly his call to make about work assigned to him.
+     *
+     * The optional statement is the one typed on the garage door of the Send a Car In form; it is merged
+     * onto the request before the conversion, so work named while deciding becomes work to dispatch.
+     */
+    public function dispatchReview(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'customer_complaint'                    => ['nullable', 'string', 'max:2000'],
+                'reported_faults'                       => ['nullable', 'array', 'max:6'],
+                'reported_faults.*.fault_catalog_id'    => ['nullable', 'integer'],
+                'reported_faults.*.slug'                => ['nullable', 'string', 'max:64'],
+                'reported_faults.*.text'                => ['nullable', 'string', 'max:255'],
+                'reported_faults.*.category_key'        => ['nullable', 'string', 'max:64'],
+                'reported_faults.*.repeat_of_ticket_id' => ['nullable', 'integer'],
+                'reported_faults.*.root_cause_id'       => ['nullable', 'integer'],
+                'requested_services'                      => ['nullable', 'array', 'max:6'],
+                'requested_services.*.service_catalog_id' => ['nullable', 'integer'],
+                'requested_services.*.slug'               => ['nullable', 'string', 'max:64'],
+                // WHY IT SKIPS THE TEST, from the DISPATCH list — not the inspection one, and not the
+                // same question as why the car is going in at all. Stored in its own column so the
+                // requester's answer survives beside this one.
+                'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::requestReasons(RequestReason::DOOR_DISPATCH)))],
+                // HOW it travels — a company driver, or a recovery truck for a car nobody can drive.
+                'transport'                             => ['nullable', 'string', Rule::in(Maintenance::TRANSPORTS)],
+                // …and WHICH truck, when it is already known. The SAME two fields the Recovery dispatch
+                // step writes, so answering here fills that form in rather than duplicating it. Optional:
+                // "this car has to be towed" is true whether or not a truck has been called yet, and the
+                // Recovery form still demands the unit at the moment the tow actually happens.
+                'recovery_unit_name'                    => ['nullable', 'string', 'max:191'],
+                'recovery_unit_phone'                   => ['nullable', 'string', 'max:40'],
+            ]);
+
+            $ticket = $this->workflow->dispatchInsteadOfTest($ticket, $data, $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Sent straight to the garage — waiting for a supervisor to pick the garage',
+                200
+            );
+        });
+    }
+
+    /**
      * Reject a pending inspection request — terminates it, nothing sent externally.
      *
      * `rejection_code` is the countable WHY (see Maintenance::REVIEW_REJECTION_REASONS); `rejection_reason`
@@ -2543,6 +2605,28 @@ class MaintenanceWorkflowController extends Controller
 
             $ticket = $this->workflow->rejectInspectionReview($ticket, $data, $request->user());
             return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Inspection request rejected', 200);
+        });
+    }
+
+    /**
+     * THE FILTER — every car sent to a workshop without a test drive, both doors, newest first.
+     *
+     * Read-only and gated to `maintenance.view`: this is the accountability list, and the people who
+     * need to read it (a manager asking why a car came back for the same fault) are not always the
+     * people entitled to make the decision.
+     */
+    public function sentToGarage(Request $request)
+    {
+        return $this->run(function () use ($request) {
+            $data = $request->validate([
+                'days'      => ['nullable', 'integer', 'min:1', 'max:365'],
+                'transport' => ['nullable', 'string', Rule::in(Maintenance::TRANSPORTS)],
+                'reason'    => ['nullable', 'string', 'max:64'],
+            ]);
+
+            $tickets = $this->workflow->sentStraightToGarage((int) ($data['days'] ?? 30), $data);
+
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::collection($tickets), 'OK', 200);
         });
     }
 

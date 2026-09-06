@@ -21,6 +21,17 @@ class VehicleLogEvent extends Model
     public const EVENT_REVIEW_APPROVED    = 'review_approved'; // approveInspectionReview(): Controller (Lin/Marwa) approved → sent to the Inspector
     public const EVENT_REVIEW_REJECTED    = 'review_rejected'; // rejectInspectionReview(): Controller (Lin/Marwa) rejected — nothing sent externally
     public const EVENT_DIAGNOSTIC_STARTED = 'diagnostic_started'; // UC-1 open()/startDiagnostic(): Inspector starts a test drive
+    /**
+     * A TEST DRIVE WAS OVERRULED. Somebody — the system or a person — asked for this car to be driven,
+     * and somebody else decided it did not need to be: it went straight to a garage instead
+     * (dispatchInsteadOfTest), or was sent there without a test ever being asked for (openDirectDispatch).
+     *
+     * Its OWN type rather than the generic `report_filed` it used to share, because the question it
+     * answers is asked on its own and asked often: who decided this car did not need to be looked at,
+     * and why? A row filed under "report filed" cannot be found by anyone asking that. The meta carries
+     * the whole decision — who, the reason CODE, how the car travels, and which stage it was pulled out of.
+     */
+    public const EVENT_SENT_STRAIGHT_TO_GARAGE = 'sent_straight_to_garage';
     public const EVENT_REPORT_FILED       = 'report_filed';       // UC-2 submitReport(requires=true): ticket born
     public const EVENT_DIAGNOSTIC_CLEARED = 'diagnostic_cleared'; // UC-2 submitReport(requires=false): no work needed
     // UC-2 submitReport(decision=deferred): a real fault, recorded whole, with the repair postponed to a

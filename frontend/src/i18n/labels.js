@@ -2725,7 +2725,12 @@ const en = {
       inFlightAdd: 'One request per car — so this goes onto the one that’s already open instead of starting a second. Say what you found and we’ll add it, then take you to the request so you can approve it.',
       // Same fact on the other door: the car can't be committed to a garage while its own request is
       // still being decided — the open one has to be settled first, not raced.
-      inFlightDispatchBlocked: 'This car can’t be sent to a garage while that request is still open — settle it there first, and it can go straight out from the same ticket.',
+      // Shown ONLY while the inspector is actually driving the car. Not a refusal of the decision — the
+      // test this door exists to skip is already happening, and what he finds sends the car to a garage
+      // anyway. Every other state now has a way through (see inFlightDispatchConvert).
+      inFlightDispatchBlocked: 'The inspector is test-driving this car right now. Nothing to skip — when he’s done, what he finds sends it straight to a garage.',
+      // The request is open but nobody is in the car. Say exactly what this button will do to it.
+      inFlightDispatchConvert: 'No second ticket: this answers the request that’s already open. It becomes the garage ticket, the test drive is called off, and the supervisors are asked to pick a garage.',
       // The one case where the open request does NOT stand in the way: the system suggested a test for a
       // car that is out on hire. Nobody has been in that car — you have. Sending it in answers the
       // suggestion, so it is stood down rather than left waiting in a queue nobody can honestly decide.
@@ -2772,6 +2777,10 @@ const en = {
       deferredSub: 'Fault recorded, follow up later — no garage, no dispatch, the car stays rentable',
       noNeed: '✓ No maintenance needed',
       noNeedSub: 'The car is good to go',
+      // Shown INSTEAD of "good to go" once the report carries findings: the answer is not available,
+      // and the card says why rather than staying tickable and being refused at the submit button.
+      noNeedUnavailable: 'Not available — {n} finding(s) are listed on this report',
+      noNeedConflict: 'Conflicts with {n} finding(s)',
       requiresOpen: 'Requires maintenance · open ticket',
       deferredOpen: 'Deferred · follow up later',
       noClose: 'No maintenance · close',
@@ -3130,6 +3139,16 @@ const en = {
       periodic: 'Routine',
       driver_reported: 'Driver',
     },
+    // The board card's own words for the finding hold. The ticket keeps its lane, so the card has to say
+    // what it is really waiting on — otherwise "Needs Dispatch" reads as "a supervisor should pick a
+    // garage", which is the one thing that cannot happen while this stands.
+    card: {
+      findingHeld: '{list} — waiting on a manager’s approval before this ticket can move',
+      findingHeldBadge: {
+        one: 'Needs approval',
+        other: 'Needs approval · {n}',
+      },
+    },
     cardAction: {
       triage: 'Handle complaint',
       start: 'Start test',
@@ -3316,6 +3335,18 @@ const en = {
       reinspectFail: 'Send {who} back to the supervisor and flag its garage for {count} unfixed fault(s)? This re-queues the car for another garage trip.',
       reinspectPass: 'Pass the re-inspection and return {who} to the available fleet?',
     },
+    // ── Driver or recovery truck (TransportChoice) ─────────────────────────────────────────────
+    // Asked wherever a car is committed to a trip to a garage. The two ANSWERS reuse the transfer
+    // dialog's own words (workflow.task.transport*) — one vocabulary for one question about one car —
+    // and only the intake-specific wording lives here.
+    transport: {
+      recoveryIntakeHint: 'This car will be towed, not driven. Log the unit now if it is already arranged — the supervisor’s dispatch screen opens with it filled in. If not, they will be asked for it before the car leaves.',
+      unitName: 'Recovery unit name / ID',
+      unitNamePh: 'e.g. Recovery Truck #05 or Al-Salem Towing Co.',
+      unitPhone: 'Operator mobile (optional)',
+      unitPhonePh: 'e.g. 05x xxx xxxx',
+    },
+
     // ── Send a car in (SendCarInModal) ─────────────────────────────────────────────────────────
     // Two doors, one question ("why?"), three exclusive ways of answering it. The wording deliberately
     // avoids engine vocabulary — no "trigger", no "origin", no "statement" — and says what will
@@ -3405,7 +3436,7 @@ const en = {
         // tf() falls back to it. The code is the stored fact either way, and rewording rewrites nothing.
         //
         // `other` ("Something else") was withdrawn: it recorded nothing without a sentence typed beside
-        // it, which is exactly what the WRITE A NOTE tab already was. Its row is retired rather than
+        // it, which is exactly what the WRITE A NOTE tab already is. Its row is retired rather than
         // deleted, so old tickets still read — those read through the server's label, not through here.
         inspection: {
           warning_light:       'A warning light is on',
@@ -3443,6 +3474,10 @@ const en = {
         office:      'This is your own call, so it doesn’t wait for review — it goes straight to the inspector and he’s notified now.',
         observation: 'This is recorded as a note on the car. Nothing is booked and no ticket opens unless you tick the box above.',
         dispatch:    'This skips the test drive. A ticket opens right away at Needs Dispatch and the supervisors are asked to pick a garage — the car counts as in maintenance from now.',
+        // The same landing, one open request out of the way. Said separately because what happens to
+        // THAT request is the part nobody can guess: it is not left standing and nobody is sent to drive
+        // the car.
+        dispatchConvert: 'This car already has a test open. Sending it to the garage answers that request instead of starting a second one: it becomes the garage ticket, no test drive happens, and the supervisors are asked to pick a garage.',
       },
 
       submit: {
@@ -3456,6 +3491,7 @@ const en = {
         request:  'Sent — the office will review it and the inspector takes it from there.',
         dispatch: 'Sent in — waiting for a supervisor to pick the garage.',
         added:    'Added to the request that was already open — here it is.',
+        dispatchConverted: 'Sent in — the test that was open on this car is off, and a supervisor picks the garage next.',
       },
     },
     success: {
@@ -5142,6 +5178,20 @@ const en = {
     dueFor: 'What this request is due for',
     outSince: 'Out since',
     opened: 'Opened',
+    // THE TWO YESES. A request used to have one forward button and it meant "send it to be driven",
+    // so the commonest decision on this queue — the fault is known, it just needs a workshop — had
+    // nowhere to be said and people pressed the test-drive button to express it. Both are on the card
+    // now, and each says which one it is.
+    toTest: 'Send for a test drive',
+    toGarage: 'Straight to the garage',
+    toGarageTitle: 'Straight to the garage — no test drive',
+    toGarageLands: 'Goes to Needs Dispatch',
+    toGarageBlurb: 'Nobody needs to test-drive this one. It goes to the supervisors as it stands — the same request, everything already on the card — and they pick the garage. Abu Maroof is not sent out.',
+    toGarageNote: 'Anything to add? (optional)',
+    toGarageNotePh: 'e.g. the parts arrived — it just needs fitting',
+    toGarageWhy: 'Why does it not need a test? (optional)',
+    toGarageDone: 'Sent straight to the garage — a supervisor picks the garage next',
+    toGarageFail: 'Could not send this car to the garage',
     detail: {
       currentKm: 'Current mileage',
       intervalKm: 'Service interval',
@@ -5185,7 +5235,30 @@ const en = {
     tabs: {
       awaiting: 'Awaiting review',
       inShop: 'Needs a test — done by OM',
+      // The decisions this queue has already made the other way — its own tab, because it answers a
+      // different question: not "what do I decide?" but "what did we decide, and who decided it?".
+      sentToGarage: 'Sent straight to the garage',
       countdown: 'When each car is due',
+    },
+    // The accountability list behind that third answer. Every string here names a FACT about a
+    // decision — who, why, how — because a list that only said "6 cars" would be a count, not a review.
+    sentToGarage: {
+      blurb: 'Cars that went to a workshop without anyone test-driving them first — either sent in that way, or a test request that somebody answered with “no test needed”. Each row says who decided it, why, and how the car travelled.',
+      allChip: 'All',
+      unsaidChip: 'Not said',
+      by: 'Sent by',
+      why: 'Why no test:',
+      noReason: 'Not recorded',
+      // A tow with no unit logged is not a mistake — it is a job still to do, and the list says so
+      // rather than leaving a blank that reads as "nobody needed to know".
+      noUnit: 'Towing unit not logged yet',
+      stage: 'Now',
+      days7: 'Last 7 days',
+      days30: 'Last 30 days',
+      days90: 'Last 3 months',
+      days365: 'Last year',
+      emptyTitle: 'Nothing skipped a test',
+      emptyBody: 'No car went to a workshop undiagnosed in this window.',
     },
   },
 
@@ -8775,7 +8848,8 @@ const ar = {
       inFlightNote: 'ما تم الإبلاغ عنه: «{note}»',
       inFlightBlocked: 'طلب واحد لكل سيارة — لا حاجة للإبلاغ عنها مرة أخرى. إن كان لديك ما تضيفه، أبلغ المكتب ليُضاف إلى الطلب المفتوح.',
       inFlightAdd: 'طلب واحد لكل سيارة — لذلك سيُضاف هذا إلى الطلب المفتوح بدل فتح طلب ثانٍ. قل ما وجدته وسنضيفه، ثم ننقلك إلى الطلب لتوافق عليه.',
-      inFlightDispatchBlocked: 'لا يمكن إرسال هذه السيارة إلى كراج والطلب المفتوح لم يُبتّ فيه بعد — احسم ذلك الطلب أولًا، ومنه تخرج السيارة مباشرة.',
+      inFlightDispatchBlocked: 'المفتش يجرّب هذه السيارة الآن. لا شيء لتخطّيه — وعندما ينتهي، ما يجده يرسلها إلى الكراج مباشرة.',
+      inFlightDispatchConvert: 'لا تذكرة ثانية: هذا يجيب على الطلب المفتوح أصلًا. يتحوّل إلى تذكرة الكراج، ويُلغى الفحص التجريبي، ويُطلب من المشرفين اختيار الكراج.',
       inFlightSupersede: 'النظام اقترح هذا الفحص من تلقاء نفسه — لم يكن أحد قد قاد السيارة. أنت قدتها، وما تقوله هنا يُجيب على الاقتراح: يُسحَب ذلك الاقتراح وتمضي السيارة بكلامك أنت. تابع.',
       inFlightObservation: 'لا يزال بإمكانك تسجيل ملاحظتك — الملاحظة سجلّ على السيارة، وليست طلبًا ثانيًا.',
       inFlightObservationRaise: 'يوجد طلب مفتوح لهذه السيارة، لذا لا يمكن لهذه الملاحظة أن ترفع طلبًا جديدًا.',
@@ -8815,6 +8889,8 @@ const ar = {
       deferredSub: 'العطل مسجَّل والمتابعة لاحقًا — بلا كراج ولا إرسال، وتبقى السيارة قابلة للتأجير',
       noNeed: '✓ لا تحتاج صيانة',
       noNeedSub: 'السيارة جاهزة للعمل',
+      noNeedUnavailable: 'غير متاح — يوجد {n} ملاحظة مسجّلة في هذا التقرير',
+      noNeedConflict: 'يتعارض مع {n} ملاحظة',
       requiresOpen: 'تحتاج صيانة · فتح تذكرة',
       deferredOpen: 'مؤجَّلة · متابعة لاحقًا',
       noClose: 'لا صيانة · إغلاق',
@@ -9148,6 +9224,17 @@ const ar = {
       periodic: 'دورية',
       driver_reported: 'السائق',
     },
+    card: {
+      findingHeld: '{list} — بانتظار موافقة المسؤول قبل أن تتحرّك البطاقة',
+      findingHeldBadge: {
+        zero: 'لا شيء بانتظار الموافقة',
+        one: 'يحتاج موافقة',
+        two: 'يحتاج موافقة · بندان',
+        few: 'يحتاج موافقة · {n}',
+        many: 'يحتاج موافقة · {n}',
+        other: 'يحتاج موافقة · {n}',
+      },
+    },
     cardAction: {
       triage: 'معالجة الشكوى',
       start: 'ابدأ الفحص',
@@ -9323,6 +9410,14 @@ const ar = {
       reinspectFail: 'إرجاع {who} إلى المشرف وتسجيل فشل الكراج في {count} عطل غير مُصلَّح؟ سيعيد ذلك إدراج السيارة لرحلة كراج أخرى.',
       reinspectPass: 'اجتياز إعادة الفحص وإرجاع {who} إلى أسطول السيارات المتاحة؟',
     },
+    transport: {
+      recoveryIntakeHint: 'هذه السيارة ستُسحب ولن تُقاد. سجّل الوحدة الآن إن كانت مرتّبة — فتُفتح شاشة المشرف وهي مملوءة. وإن لم تكن، فسيُطلب منه تسجيلها قبل خروج السيارة.',
+      unitName: 'اسم/رقم وحدة السحب',
+      unitNamePh: 'مثال: شاحنة سحب رقم ٠٥ أو شركة السالم للسحب',
+      unitPhone: 'جوال المشغّل (اختياري)',
+      unitPhonePh: 'مثال: ٠٥x xxx xxxx',
+    },
+
     // «أدخِل السيارة» — بابان، وسؤال واحد («لماذا؟») وأربع طرق للإجابة، لا تُجمع اثنتان منها.
     sendIn: {
       title:    'أدخِل هذه السيارة',
@@ -9436,6 +9531,7 @@ const ar = {
         office:      'هذا قرارك أنت، فلا ينتظر مراجعة — يذهب مباشرةً إلى المفتش وقد تم إشعاره الآن.',
         observation: 'يُسجَّل هذا كملاحظة على السيارة. لا يُحجز شيء ولا تُفتح تذكرة ما لم تُفعِّل الخيار أعلاه.',
         dispatch:    'يتخطّى هذا تجربة القيادة. تُفتح تذكرة فورًا عند «بانتظار الإرسال» ويُطلب من المشرفين اختيار كراج — وتُحتسب السيارة في الصيانة من الآن.',
+        dispatchConvert: 'لهذه السيارة فحص مفتوح أصلًا. إرسالها إلى الكراج يجيب على ذلك الطلب بدل فتح طلب ثانٍ: يصير هو تذكرة الكراج، ولا تحدث تجربة قيادة، ويُطلب من المشرفين اختيار كراج.',
       },
 
       submit: {
@@ -9449,6 +9545,7 @@ const ar = {
         request:  'أُرسل — سيراجعه المكتب ثم يتولّاه المفتش.',
         dispatch: 'أُرسلت — بانتظار اختيار المشرف للكراج.',
         added:    'أُضيف إلى الطلب المفتوح أصلًا — وها هو.',
+        dispatchConverted: 'أُرسلت — أُلغي الفحص الذي كان مفتوحًا على هذه السيارة، والتالي أن يختار المشرف الكراج.',
       },
     },
     success: {
@@ -11058,6 +11155,16 @@ const ar = {
     dueFor: 'ما الذي يستحقّه هذا الطلب',
     outSince: 'خارج منذ',
     opened: 'فُتح',
+    toTest: 'أرسِلها لتجربة القيادة',
+    toGarage: 'إلى الكراج مباشرة',
+    toGarageTitle: 'إلى الكراج مباشرة — بلا تجربة قيادة',
+    toGarageLands: 'تذهب إلى «بانتظار الإرسال»',
+    toGarageBlurb: 'لا أحد يحتاج إلى تجربة هذه السيارة. تذهب إلى المشرفين كما هي — الطلب نفسه وكل ما على البطاقة — ويختارون الكراج. ولا يُرسَل أبو معروف.',
+    toGarageNote: 'هل تريد إضافة شيء؟ (اختياري)',
+    toGarageNotePh: 'مثال: وصلت القطع — تحتاج فقط إلى تركيب',
+    toGarageWhy: 'لماذا لا تحتاج إلى تجربة؟ (اختياري)',
+    toGarageDone: 'أُرسلت إلى الكراج مباشرة — والتالي أن يختار المشرف الكراج',
+    toGarageFail: 'تعذّر إرسال هذه السيارة إلى الكراج',
     detail: {
       currentKm: 'العدّاد الحالي',
       intervalKm: 'فترة الخدمة',
@@ -11098,7 +11205,24 @@ const ar = {
     tabs: {
       awaiting: 'بانتظار المراجعة',
       inShop: 'تحتاج اختباراً — يقوم به OM',
+      sentToGarage: 'أُرسلت إلى الكراج مباشرة',
       countdown: 'موعد استحقاق كل سيارة',
+    },
+    sentToGarage: {
+      blurb: 'سيارات ذهبت إلى الورشة دون أن يجرّبها أحد — إمّا أُرسلت هكذا، أو طلب فحص أجاب عليه أحدهم بـ«لا حاجة إلى تجربة». كل سطر يقول من قرّر، ولماذا، وكيف انتقلت السيارة.',
+      allChip: 'الكل',
+      unsaidChip: 'لم يُحدَّد',
+      by: 'أرسلها',
+      why: 'لماذا بلا تجربة:',
+      noReason: 'غير مسجّل',
+      noUnit: 'لم تُسجَّل شاحنة السحب بعد',
+      stage: 'الآن',
+      days7: 'آخر ٧ أيام',
+      days30: 'آخر ٣٠ يوماً',
+      days90: 'آخر ٣ أشهر',
+      days365: 'آخر سنة',
+      emptyTitle: 'لم تتخطَّ أي سيارة التجربة',
+      emptyBody: 'لم تذهب أي سيارة إلى الورشة بلا تشخيص خلال هذه المدة.',
     },
   },
 

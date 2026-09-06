@@ -89,6 +89,9 @@ const WF_STAGE = {
   diagnostic_started:   'Test',
   report_filed:         'Test',
   diagnostic_cleared:   'Test',
+  // The test that never happened, because somebody decided it was not needed. Same column as the other
+  // test rows — it is an answer to the same question — and the row's own words say which answer.
+  sent_straight_to_garage: 'Test',
   garage_assigned:      'Select garage',
   dispatched:           'OUT',
   under_repair:         'In garage',

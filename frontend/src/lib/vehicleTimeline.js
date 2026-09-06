@@ -48,8 +48,12 @@ export const typeMeta = (kind) => TYPE_META[kind] || TYPE_META.system;
 // Raw event_type → investigation kind. Anything unlisted falls through to the category/source heuristics
 // in eventKind(). Mirrors the VehicleLogEvent + LogisticsTaskEvent + InspectionRecord event vocabularies.
 const EVENT_KIND = {
-  // Test drive / diagnostic
+  // Test drive / diagnostic — including the decision NOT to have one. `sent_straight_to_garage` files
+  // here rather than under `dispatch` on purpose: it is an answer to "did anybody drive this car?", and
+  // an investigator scanning the test-drive rows for a car that came back twice needs to see the times
+  // the answer was no. The row itself says who decided it and why.
   inspection_requested: 'test_drive', diagnostic_started: 'test_drive', diagnostic_cleared: 'test_drive',
+  sent_straight_to_garage: 'test_drive',
   // Inspection / readiness / condition
   pre_inspection: 'inspection', post_inspection: 'inspection', condition_graded: 'inspection',
   readiness_confirmed: 'inspection', readiness_override: 'inspection',
@@ -536,7 +540,9 @@ const PART_ORDER_EVENTS = new Set(['part_requested', 'part_purchased', 'parts_or
 const REPAIR_START_EVENTS = new Set(['under_repair']);
 const REPAIR_END_EVENTS = new Set(['ready']);
 const TRANSFER_EVENTS = new Set(['dispatched', 'task_transferred']);
-const TICKET_START_EVENTS = new Set(['report_filed', 'inspection_requested', 'garage_assigned', 'dispatched', 'under_repair']);
+// A car sent straight to a garage opens a visit exactly as a filed report does — it is a ticket
+// starting, and leaving it out would make those visits look like they began at the garage assignment.
+const TICKET_START_EVENTS = new Set(['report_filed', 'inspection_requested', 'sent_straight_to_garage', 'garage_assigned', 'dispatched', 'under_repair']);
 const TICKET_END_EVENTS = new Set(['ready', 'closed', 'task_resolved']);
 
 // Every figure derived from the CURRENTLY-FILTERED events, so the strip re-computes as filters change.

@@ -753,6 +753,10 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::get('/invoice-matching', 'invoiceMatchingQueue')->middleware('permission:maintenance.view');
     // Inspection Request Review Gate — Controllers' (Lin & Marwa) queue. STATIC — must precede /{ticket}.
     Route::get('/pending-review', 'reviewQueue')->middleware('permission:maintenance.manage');
+    // EVERY CAR THAT SKIPPED A TEST DRIVE — who decided it, why, and how it travelled. The accountability
+    // half of the "straight to the garage" answer; read-only, so it is gated to `maintenance.view` rather
+    // than to the authority that makes the decision. STATIC — must precede /{ticket}.
+    Route::get('/sent-to-garage', 'sentToGarage')->middleware('permission:maintenance.view');
     // The rules behind system-raised requests — powers the queue's "when & why the system asks for a
     // test" explainer with the LIVE thresholds. STATIC — must precede /{ticket}.
     Route::get('/review-gate-rules', 'reviewGateRules')->middleware('permission:maintenance.manage');
@@ -822,6 +826,12 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // (→ sent to the Inspector, exactly as before) or reject (→ terminated, nothing sent).
     Route::post('/{ticket}/review/approve', 'approveReview')->middleware('permission:maintenance.manage');
     Route::post('/{ticket}/review/reject', 'rejectReview')->middleware('permission:maintenance.manage');
+    // THE THIRD ANSWER at the same gate — "it doesn't need testing, it needs a garage". Converts the open
+    // request into a Needs Dispatch ticket where it stands: no test drive, no second ticket. Gated to the
+    // SAME authority as the garage door itself (/direct-dispatch) rather than to review authority alone,
+    // because it IS that decision — and the Inspector, who holds `initiate`, is entitled to say it about a
+    // request assigned to him.
+    Route::post('/{ticket}/review/dispatch', 'dispatchReview')->middleware('permission:maintenance.initiate|maintenance.manage');
     // "Remind me about this request later" — personal to the caller, books nothing for anyone else and
     // changes nothing about the request itself, so it needs no more authority than reviewing does.
     Route::post('/{ticket}/review/remind', 'remindReview')->middleware('permission:maintenance.manage');

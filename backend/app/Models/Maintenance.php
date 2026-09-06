@@ -108,6 +108,22 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
     // choice existed.
     public const TRANSPORT_DRIVER   = 'driver';
     public const TRANSPORT_RECOVERY = 'recovery';
+
+    /**
+     * The two ways a car physically gets to a garage — one vocabulary, shared by the transfer leg and by
+     * the intake decision (`sent_to_garage_transport`). Two lists would be two answers to "can this car
+     * move under its own power?", which is a question about the car and can only have one.
+     */
+    public const TRANSPORTS = [self::TRANSPORT_DRIVER, self::TRANSPORT_RECOVERY];
+
+    /** Human label for a transport choice — presentation only; the stored fact is the key. */
+    public static function transportLabel(?string $method): ?string
+    {
+        return $method ? ([
+            self::TRANSPORT_DRIVER   => 'Company driver',
+            self::TRANSPORT_RECOVERY => 'Recovery truck',
+        ][$method] ?? $method) : null;
+    }
     public const WF_UNDER_REPAIR       = 'under_repair';             // UC-4: garage received the car
     // Supervisor Video-Review gate: the garage has FINISHED the repair and sent its video (uploaded to
     // the ticket by Waleed/Abdullah). Before the car returns to service, a supervisor reviews that video
@@ -517,10 +533,23 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
             || $this->workflow_status === self::WF_ON_SITE_PENDING;
     }
 
-    /** True when the car was moved to the garage by a Recovery (towing) unit rather than a driver. */
+    /**
+     * True when the car goes to the garage on a TOW rather than under its own power.
+     *
+     * TWO WAYS TO KNOW, and the earlier one matters most. A named towing unit has always meant a
+     * recovery — that is the tow actually booked. But the DECISION comes first: the person sending the
+     * car in says "this one can't be driven" at intake, often before any truck is called. Reading only
+     * the unit name meant that decision was invisible until somebody booked a truck, so the supervisor
+     * was shown the ordinary driver dispatch form for a car nobody could drive, and the tow was
+     * discovered by a driver standing next to it.
+     *
+     * So the intake choice counts too. The Recovery dispatch form still demands the unit name at the
+     * moment the tow actually happens — this only makes sure the car is routed to that form.
+     */
     public function isRecovery(): bool
     {
-        return $this->recovery_unit_name !== null && trim((string) $this->recovery_unit_name) !== '';
+        return ($this->recovery_unit_name !== null && trim((string) $this->recovery_unit_name) !== '')
+            || $this->sent_to_garage_transport === self::TRANSPORT_RECOVERY;
     }
 
     /**
@@ -1124,6 +1153,9 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
         // sent to the Inspector.
         'reviewed_by', 'reviewed_at', 'review_notes', 'review_rejection_reason', 'review_rejection_code', 'review_sent_at',
         'review_auto_context',
+        // "It doesn't need testing — it needs a garage." Who overruled the test, why (a CODE from the
+        // dispatch reason list), and how the car will travel. Set by both doors that skip the test drive.
+        'sent_to_garage_at', 'sent_to_garage_by', 'sent_to_garage_reason_code', 'sent_to_garage_transport',
         'follow_ups',
         // Stage-timing anchors — durations are subtraction over these (see migration).
         'test_started_at', 'returned_at',
@@ -1220,6 +1252,7 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
         'requested_at'         => 'datetime',
         'reviewed_at'          => 'datetime',
         'review_sent_at'       => 'datetime',
+        'sent_to_garage_at'    => 'datetime',
         'last_state_change_at' => 'datetime',
         'paused_at'            => 'datetime',
         'vehicle_returned_at'  => 'datetime',
@@ -1579,6 +1612,12 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
     public function reviewer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'reviewed_by');
+    }
+
+    /** The person who decided this car did not need a test drive and sent it straight to a garage. */
+    public function sentToGarageBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'sent_to_garage_by');
     }
 
     /** Who recorded the final (deferred) repair cost after the ticket was closed. */

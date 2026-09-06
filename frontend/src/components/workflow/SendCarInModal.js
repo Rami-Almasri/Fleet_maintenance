@@ -52,6 +52,9 @@ import Button from '../ui/Button';
 import Icon from '../ui/Icon';
 import { Textarea } from '../ui/Field';
 import VehicleStatusSelect from './VehicleStatusSelect';
+// Driver or recovery truck — the same two buttons the review card asks with, so the one question about
+// a car's condition is never asked two different ways.
+import TransportChoice from './TransportChoice';
 // One normaliser for the Symptom → Root-Cause key, shared with the Diagnosis step — two copies of this
 // rule is how the intake panel and the Inspector's picker quietly start quoting different lists.
 import { normalizeSymptom } from './RootCausePicker';
@@ -328,6 +331,10 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   const [reasonCode, setReason]   = useState('');
   const [note, setNote]           = useState('');
   const [observationRaise, setObservationRaise] = useState(false);
+  // Garage door only: how the car physically gets there. Null until somebody says — see TransportChoice.
+  // `unit` is the towing unit on the recovery answer, cleared by the picker the moment it stops being one.
+  const [transport, setTransport] = useState(null);
+  const [unit, setUnit] = useState({ name: '', phone: '' });
 
   const navigate = useNavigate();
   const [options, setOptions] = useState(null);     // { fault_groups, fault_causes, reasons, filed_by, … }
@@ -589,17 +596,37 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   // been decided on the open request yet, so committing the car to a workshop answers it outright and it
   // is stood down on submit. Not once the Inspector holds it — that is assigned work.
   const canSupersede = !!inFlight?.can_supersede;
+  // THE OTHER WAY THROUGH, and the one that closes the trap this form used to set. When the open request
+  // is already the Inspector's, a new ticket must not be opened behind his back — but the DECISION
+  // ("no test needed, it needs a garage") is still a legitimate one, so it is applied to that very
+  // request instead: it is converted into a Needs Dispatch ticket and no test drive happens. The server
+  // computes the flag (`can_send_to_garage`) from the same rule the endpoint enforces; it is false only
+  // while he is actually driving the car, where the test is already under way and his report lands the
+  // ticket in that same dispatch queue anyway.
+  const canConvert = !!inFlight?.can_send_to_garage && !canSupersede && door === DOOR_DISPATCH;
   // The request door ADDS to an open request rather than opening a second one, so an open request is not
   // a refusal there — it only changes what the button does and what happens next. That holds for the
   // scanner's own suggestion too, and identically whether the car is on hire or in the yard: its list of
-  // checks is kept and this report is written underneath it. The one genuine dead end left is the garage
-  // door while the Inspector already holds the car: that is assigned work.
+  // checks is kept and this report is written underneath it. The garage door has no dead end left either
+  // (see canConvert) except the one that is not a refusal at all: the Inspector is driving the car right
+  // now, so the test this door exists to skip is already happening.
   const isAdding = !isObservation && !!inFlight && door === DOOR_INSPECTION;
-  const blocked = !isObservation && !!inFlight && !isAdding && !canSupersede;
+  // What is left after all three ways through — adding to it, standing it down, or converting it — is
+  // the ONE state where the garage door genuinely has nothing to do: the Inspector is driving the car
+  // this second. Nothing is refused there either; the answer to "does it need a test?" is being produced
+  // as we speak, and his report puts the car in the dispatch queue when it is.
+  const blocked = !isObservation && !!inFlight && !isAdding && !canSupersede && !canConvert;
   const disabled = saving || !vehicleId || blocked || !statementReady;
 
   // ── submit ─────────────────────────────────────────────────────────────────────────────────────
   // Named work (either kind, or both) OR a reason code — never both sides, which the server also refuses.
+  // The towing unit rides along ONLY on the recovery answer — sending a unit name beside "company
+  // driver" would leave the ticket claiming both a driver and a truck.
+  const recoveryBody = () => (transport === 'recovery' ? {
+    recovery_unit_name:  unit.name.trim()  || null,
+    recovery_unit_phone: unit.phone.trim() || null,
+  } : {});
+
   const statementBody = () => ({
     reported_faults:     mode === MODE_FAULT && faults.length   ? faults   : undefined,
     requested_services:  mode === MODE_FAULT && services.length ? services : undefined,
@@ -641,9 +668,33 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
 
       // B) Straight to the garage — born at Needs Dispatch, waiting on a supervisor's garage choice.
       if (door === DOOR_DISPATCH) {
+        // B1) …except when the car already has a request the Inspector holds. A SECOND ticket must not
+        //     be opened behind him — but this decision is not a second ticket, it is a better answer to
+        //     the one already open, so it is applied to that request: it converts to Needs Dispatch and
+        //     the test drive never happens. Anything named here rides along and becomes the work the
+        //     supervisor dispatches. This is the path that used to be a refusal ending at an Approve
+        //     button — the one that started the very test drive this door exists to skip.
+        if (canConvert && inFlight?.ticket_id) {
+          await api.post(`/maintenance-tickets/${inFlight.ticket_id}/review/dispatch`, {
+            customer_complaint: note.trim() || null,
+            // On THIS door a reason is the decision's reason ("the parts are in"), which is exactly what
+            // the conversion endpoint stores — so it travels as itself rather than inside the statement.
+            request_reason_code: mode === MODE_REASON ? reasonCode : undefined,
+            transport: transport || null,
+            ...recoveryBody(),
+            ...statementBody(),
+          });
+          onDone?.(t('workflow.sendIn.success.dispatchConverted'));
+          return;
+        }
+
         await api.post('/maintenance-tickets/direct-dispatch', {
           vehicle_id: Number(vehicleId),
           customer_complaint: note.trim() || null,
+          // HOW it travels — recorded with the decision, so the supervisor picking the garage inherits
+          // the answer from the person who has actually seen the car.
+          transport: transport || null,
+          ...recoveryBody(),
           ...statementBody(),
         });
         onDone?.(t('workflow.sendIn.success.dispatch'));
@@ -812,7 +863,12 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
                     ? 'workflow.hint.inFlightAdd'
                     : canSupersede
                       ? 'workflow.hint.inFlightSupersede'
-                      : 'workflow.hint.inFlightDispatchBlocked')}
+                      // The open request is the Inspector's, but nothing about it makes a car whose
+                      // fault is already known undiagnosable. Say what THIS button will do to it —
+                      // convert it, no test drive — rather than refusing the decision outright.
+                      : canConvert
+                        ? 'workflow.hint.inFlightDispatchConvert'
+                        : 'workflow.hint.inFlightDispatchBlocked')}
               </p>
               {inFlight.url && (
                 <a href={inFlight.url} className="mt-1 inline-block font-semibold underline hover:no-underline">
@@ -1214,12 +1270,30 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
           </>
         )}
 
+        {/* HOW THE CAR GETS THERE. Only on the garage door, because it is the only door that commits the
+            car to a trip — asking for a test drive books nobody a journey. Asked HERE, of the person who
+            has just seen the car, rather than discovered at the pickup by a driver standing next to
+            something that will not start. */}
+        {door === DOOR_DISPATCH && !isObservation && (
+          <TransportChoice
+            value={transport}
+            onChange={setTransport}
+            unit={unit}
+            onUnit={setUnit}
+            disabled={saving}
+            tf={tf}
+          />
+        )}
+
         {/* WHAT THIS BUTTON ACTUALLY DOES — stated before it is pressed, not discovered after. */}
         <p className={`rounded-lg px-3 py-2 text-[11px] leading-relaxed ring-1 ring-inset ${door === DOOR_DISPATCH
           ? 'bg-amber-50/70 text-amber-800 ring-amber-500/20'
           : 'bg-slate-50 text-slate-500 ring-slate-100'}`}>
           {t(door === DOOR_DISPATCH
-            ? 'workflow.sendIn.outcome.dispatch'
+            // Converting an open request lands the car in exactly the same queue, but what happens to
+            // the request itself is different enough to be worth one extra sentence: it is not left
+            // standing, and nobody is sent out to drive the car.
+            ? (canConvert ? 'workflow.sendIn.outcome.dispatchConvert' : 'workflow.sendIn.outcome.dispatch')
             : isObservation
               ? 'workflow.sendIn.outcome.observation'
               : isOffice

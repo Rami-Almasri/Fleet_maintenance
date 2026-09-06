@@ -32,6 +32,14 @@ abstract class FoundationTestCase extends TestCase
     {
         parent::setUp();
 
+        // Per-REQUEST memos do not know about tests. RequestReason keeps its reason lists in a static
+        // array that is meant to live for one HTTP request; in a suite the process outlives every
+        // transaction, so a test that retires a reason leaves the memo saying "retired" long after the
+        // rollback has put the row back — and the next test to use that reason is refused for a reason
+        // that no longer exists. Cleared here rather than in the one test that trips it, because the
+        // trap belongs to the memo, not to whoever happens to touch it first.
+        \App\Models\RequestReason::flushCache();
+
         $this->admin = User::create([
             'name'     => 'Foundation Admin',
             'email'    => 'foundation.'.uniqid().'@fleet.test',

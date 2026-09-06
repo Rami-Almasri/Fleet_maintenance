@@ -79,6 +79,7 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_INSPECTION_REQUESTED => 'Inspection requested',
         VehicleLogEvent::EVENT_DIAGNOSTIC_STARTED   => 'Diagnostic started',
         VehicleLogEvent::EVENT_REPORT_FILED         => 'Fault report filed',
+        VehicleLogEvent::EVENT_SENT_STRAIGHT_TO_GARAGE => 'Sent straight to the garage — no test drive',
         VehicleLogEvent::EVENT_DIAGNOSTIC_CLEARED   => 'Cleared — no work needed',
         VehicleLogEvent::EVENT_GARAGE_ASSIGNED      => 'Garage assigned',
         VehicleLogEvent::EVENT_DISPATCHED           => 'Dispatched to garage',
@@ -193,6 +194,9 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_DIAGNOSTIC_STARTED   => 'Test Drive',
         VehicleLogEvent::EVENT_REPORT_FILED         => 'Fault Reported',
         VehicleLogEvent::EVENT_TASK_IDENTIFIED      => 'Fault Reported',
+        // Not "Fault Reported": nothing new was found here. A decision was made ABOUT a test — that it
+        // was not needed — and the milestone has to say which of the two happened.
+        VehicleLogEvent::EVENT_SENT_STRAIGHT_TO_GARAGE => 'Sent to Garage — No Test',
         VehicleLogEvent::EVENT_GARAGE_ASSIGNED      => 'Garage Assigned',
         VehicleLogEvent::EVENT_DISPATCHED           => 'Check-out',
         VehicleLogEvent::EVENT_UNDER_REPAIR         => 'Garage Arrival',
