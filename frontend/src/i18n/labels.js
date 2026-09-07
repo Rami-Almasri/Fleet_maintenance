@@ -5301,8 +5301,14 @@ const en = {
     openVehicle: 'Open vehicle',
     openSystem: 'Full evidence report',
     refresh: 'Refresh',
+    // Print builds its own standalone HTML sheet — see lib/vehicleOverviewReport.js — rather than
+    // handing this dark cockpit surface to the printer. The "Download dossier" button that used to
+    // sit beside it is gone: two printable documents on one page made a reader choose between them
+    // before knowing what either contained.
     print: 'Print / Save as PDF',
-    dossier: 'Download dossier',
+    // A pop-up blocker makes Print look like a dead button. It is the one failure this page cannot
+    // detect any other way, so it is said out loud rather than left as nothing happening.
+    printBlocked: 'The printable report opens in a new tab — your browser blocked it. Allow pop-ups for this site and press Print again.',
     hero: {
       label: 'What the record shows',
       problems: { one: '1 problem recorded', other: '{n} problems recorded' },
@@ -11262,7 +11268,7 @@ const ar = {
     openSystem: 'تقرير الأدلة الكامل',
     refresh: 'تحديث',
     print: 'طباعة / حفظ PDF',
-    dossier: 'تنزيل الملف',
+    printBlocked: 'يفتح التقرير القابل للطباعة في تبويب جديد، وقد منعه المتصفح. اسمح بالنوافذ المنبثقة لهذا الموقع ثم اضغط «طباعة» مرة أخرى.',
     hero: {
       label: 'ما يُظهره السجل',
       problems: {

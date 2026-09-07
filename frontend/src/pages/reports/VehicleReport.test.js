@@ -154,10 +154,19 @@ beforeEach(() => {
     if (url.startsWith('/reports/vehicle-overview/')) {
       return Promise.resolve({ data: { data: scoped({ from: cfg?.params?.from ?? null, to: cfg?.params?.to ?? null, system: cfg?.params?.system ?? null }) } });
     }
-    // The dossier payload the PDF button needs. Its failure must never take the page down.
-    return Promise.resolve({ data: { data: { vehicle: { id: 1741 }, maintenance: [], contracts: [] } } });
+    return Promise.resolve({ data: { data: null } });
   });
 });
+
+afterEach(() => { jest.restoreAllMocks(); });
+
+/** Capture the standalone document Print writes, without opening a real window. */
+const capturePrintWindow = () => {
+  const written = [];
+  const w = { document: { write: (html) => written.push(html), close: () => {} }, focus: () => {} };
+  jest.spyOn(window, 'open').mockReturnValue(w);
+  return { html: () => written.join('') };
+};
 
 test('leads with the fault that happens most, however the payload was ordered', async () => {
   renderAt('/reports/vehicle/1741');
@@ -249,17 +258,48 @@ test('the period comes out of the URL and goes into the request', async () => {
   expect(await screen.findByText('01 May 2026 → 31 Jul 2026')).toBeInTheDocument();
 });
 
-test('renders in full when the dossier payload fails — only the PDF button goes away', async () => {
-  api.get.mockImplementation((url, cfg) => {
-    if (url.startsWith('/reports/vehicle-overview/')) {
-      return Promise.resolve({ data: { data: scoped({ from: cfg?.params?.from ?? null, to: cfg?.params?.to ?? null, system: cfg?.params?.system ?? null }) } });
-    }
-    return Promise.reject(new Error('profile unavailable'));
-  });
-
+/*
+ * ONE PRINTABLE DOCUMENT, NOT TWO. The page used to offer Print beside "Download dossier", which made
+ * a reader choose between two sheets before knowing what either contained — and the dossier described
+ * a different subject (what the car IS) from the page it was printed from (what is wrong with it).
+ */
+test('there is no second download button beside Print', async () => {
   renderAt('/reports/vehicle/1741');
 
-  expect(await screen.findByText('DODGE CHALLENGER · 2021 · 55321')).toBeInTheDocument();
-  expect(screen.getAllByText('Rim Scratch').length).toBeGreaterThan(0);
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Download dossier' })).not.toBeInTheDocument());
+  await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
+
+  expect(screen.getByRole('button', { name: 'Print / Save as PDF' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Download dossier' })).not.toBeInTheDocument();
+});
+
+test('Print writes its own document rather than handing the printer this page', async () => {
+  const printed = capturePrintWindow();
+
+  renderAt('/reports/vehicle/1741');
+  await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
+
+  await userEvent.click(screen.getByRole('button', { name: 'Print / Save as PDF' }));
+
+  const html = printed.html();
+  // A whole standalone sheet, not a copy of the app shell.
+  expect(html).toContain('<!doctype html>');
+  // Same subject, same ranking, and the workshop's own words still under each occurrence.
+  expect(html).toContain('DODGE CHALLENGER · 2021 · 55321');
+  expect(html.indexOf('Rim Scratch')).toBeLessThan(html.indexOf('Brake Pad Wear'));
+  // No second query: the printed sheet is a re-render of what the page already holds.
+  expect(overviewCalls()).toHaveLength(1);
+});
+
+test('the printed sheet repeats what the report is narrowed to', async () => {
+  const printed = capturePrintWindow();
+
+  renderAt('/reports/vehicle/1741?system=brakes&from=2026-05-01&to=2026-07-31');
+  await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
+
+  await userEvent.click(screen.getByRole('button', { name: 'Print / Save as PDF' }));
+
+  const html = printed.html();
+  // A filtered report that prints as if it were the whole car is how a reader concludes a car is clean.
+  expect(html).toContain('01 May 2026 → 31 Jul 2026');
+  expect(html).toMatch(/narrowed to Brakes/);
 });

@@ -4,7 +4,7 @@ import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
 import { useI18n } from '../../i18n/I18nContext';
 import { SHOW_FINANCIALS } from '../../config/features';
-import { openVehicleProfileReport } from '../../lib/vehicleProfileReport';
+import { openVehicleOverviewReport } from '../../lib/vehicleOverviewReport';
 import {
   Alert, Chip, DataOrigin, DateRangeFilter, Kpi, Panel, PeriodBanner, PeriodProblems,
   ReportShell, toneFor, VehicleBrief,
@@ -62,6 +62,8 @@ export default function VehicleReport() {
   // putting it in the history stack would make Back mean "un-click" rather than "leave the page".
   const [fault, setFault] = useState(null);
   const [repeatsOnly, setRepeatsOnly] = useState(false);
+  // A blocked pop-up is the one way Print can fail with nothing on screen to show for it.
+  const [printBlocked, setPrintBlocked] = useState(false);
 
   const setParams = (next) => {
     const merged = { from, to, system, ...next };
@@ -83,17 +85,6 @@ export default function VehicleReport() {
     }, [vehicleId, from, to, system]),
     [vehicleId, from, to, system],
     // A history report is a document, not a live board — refresh is the explicit button.
-    { revalidateOnFocus: false },
-  );
-
-  /*
-   * The dossier payload, for the printable PDF only. It is fetched beside the report rather than
-   * folded into it because the two answer different questions and one must not be able to break the
-   * other: if this request fails the page still renders in full, and only the PDF button goes away.
-   */
-  const { data: profile } = useFetch(
-    useCallback(async () => (await api.get(`/Vehicle/${vehicleId}/profile`)).data.data, [vehicleId]),
-    [vehicleId],
     { revalidateOnFocus: false },
   );
 
@@ -184,13 +175,27 @@ export default function VehicleReport() {
           {t('reportVehicle.openSystem')}
         </Link>
         <button type="button" className="ir-button" onClick={() => reload()}>{t('reportVehicle.refresh')}</button>
-        <button type="button" className="ir-button" onClick={() => window.print()}>{t('reportVehicle.print')}</button>
-        {profile ? (
-          <button type="button" className="ir-button" onClick={() => openVehicleProfileReport(profile, t, lang)}>
-            {t('reportVehicle.dossier')}
-          </button>
-        ) : null}
+        {/*
+          PRINT BUILDS ITS OWN DOCUMENT rather than printing this page. This surface is a dark cockpit
+          — panels, chips, a donut, filter buttons — and asking a printer to re-flow it produced a
+          different sheet depending on whether "background graphics" was ticked. The printed report is
+          a re-render of the payload already on screen (no second query), so the two cannot disagree,
+          and it repeats the period and the system filter in words: a narrowed report that prints as
+          if it were the whole car is how a reader concludes a car is clean.
+        */}
+        <button
+          type="button"
+          className="ir-button"
+          disabled={!data}
+          onClick={() => setPrintBlocked(!openVehicleOverviewReport({ data, provenance, t, tf, tp, lang }))}
+        >
+          {t('reportVehicle.print')}
+        </button>
       </div>
+
+      {printBlocked ? (
+        <div className="ir-filter-note ir-no-print">{t('reportVehicle.printBlocked')}</div>
+      ) : null}
 
       <DateRangeFilter
         from={from}
