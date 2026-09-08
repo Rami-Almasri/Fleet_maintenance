@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\AppSetting;
 use App\Models\DamageCatalog;
 use App\Models\FaultCatalog;
+use App\Models\FindingKeyword;
 use App\Models\MaintenanceTask;
 use App\Models\MaintenanceTaskLocation;
 use App\Models\VehicleLocation;
@@ -324,8 +325,13 @@ class FaultLocationService
      * this word", and the same one that types the task — so this can never drift from the kind the
      * finding actually becomes. Best-effort: a classifier hiccup must never turn into a location gate
      * nobody can satisfy, so an error degrades to "not a service" (today's behaviour, never worse).
+     *
+     * PUBLIC because the curation page has to ask it too. "Oil Change" and "Tire Rotation" are words
+     * in the keyword library, so Fault types now lists them — and offering a required/optional/none
+     * control for a row this rule already pins to `none` would be a switch that does nothing. The
+     * page asks here and shows those rows locked, with the reason.
      */
-    private function isServiceText(?string $text): bool
+    public function isServiceText(?string $text): bool
     {
         if (! $text) {
             return false;
@@ -456,6 +462,33 @@ class FaultLocationService
             }
         } catch (\Throwable $e) {
             // Catalogs unavailable (pre-migration). The config half above still answers.
+        }
+
+        // Finally the KEYWORD LIBRARY, filling gaps only (`??=`) — never overwriting a catalog row.
+        //
+        // The picker's vocabulary is `finding_keywords`, and 22 of its words match no fault or damage
+        // type: "Sensor failure", "Water pump failure", "Refrigerant leak", "Broken spring". Before
+        // this pass they resolved to null here and fell straight through to their category, which was
+        // the right ANSWER but left no row to hold a different one — so Control Desk → Where on the
+        // car → Fault types could not list them and a curator could not re-grade them.
+        //
+        // `slug` is null on purpose and is the marker that distinguishes these: a word with no type
+        // row has no per-type config line to look up, so policyFor() correctly skips straight to the
+        // category. `kind` says so out loud, because the admin page has to tell the two apart.
+        try {
+            foreach (FindingKeyword::query()->get(['keyword', 'category_key', 'location_mode']) as $row) {
+                $key = $this->normText($row->keyword);
+                if ($key !== '') {
+                    $index[$key] ??= [
+                        'slug'          => null,
+                        'category_key'  => $row->category_key,
+                        'location_mode' => $row->location_mode,
+                        'kind'          => 'keyword',
+                    ];
+                }
+            }
+        } catch (\Throwable $e) {
+            // Library unavailable (pre-migration). Category fall-through is the pre-existing answer.
         }
 
         return $this->typeIndex = $index;
