@@ -188,4 +188,21 @@ return [
     ['slug' => 'ac_compressor',         'name' => 'A/C compressor fault', 'name_ar' => 'خلل في كمبروسر التكييف',   'category_key' => 'ac', 'default_severity' => 'moderate', 'on_site' => false, 'sort_order' => 650],
     ['slug' => 'ac_refrigerant_leak',   'name' => 'Refrigerant leak', 'name_ar' => 'تسريب غاز التكييف',            'category_key' => 'ac', 'default_severity' => 'routine',  'on_site' => false, 'sort_order' => 660],
 
+    // ═════════════════════════════════════════════════════════════════════════════════════════════
+    // ADDED WITH ITS SELECTABLE WORDING, 2026-09-08.
+    //
+    // The row exists in the same commit that makes the word tappable, for the reason the two blocks
+    // above were written: a selectable wording with no catalog row produces a task with no `kind`,
+    // typed only by the legacy shield's default, carrying no severity prefill and nothing for the
+    // reporting layer to group on. Making a word selectable without this is half the change.
+    //
+    // `on_site` is FALSE despite reattachment often being a five-minute job. The word does not say
+    // which piece came off, and a detached bumper or arch liner is a workshop job while a badge is
+    // not — so the safe default is the one that sends the car in. Revisit if the location axis shows
+    // the reports clustering on trim.
+    // ═════════════════════════════════════════════════════════════════════════════════════════════
+
+    // ── Bodywork (continues 700–760) ─────────────────────────────────────────────────────────────
+    ['slug' => 'body_detached',         'name' => 'Detached', 'name_ar' => 'إنفصال',                        'category_key' => 'bodywork', 'default_severity' => 'routine', 'on_site' => false, 'sort_order' => 770],
+
 ];

@@ -205,6 +205,7 @@ return [
                 'Accident damage',
                 'Bumper damage',
                 'Broken glass / window',
+                'Detached',
             ],
         ],
         [
