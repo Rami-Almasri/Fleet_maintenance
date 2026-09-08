@@ -54,8 +54,18 @@ const SEVERITY_TONE = {
   critical: 'hot', high: 'hot', moderate: 'warm', routine: 'cool', unrated: 'cool',
 };
 
-function buildHtml({ data, provenance, t, tf, tp, lang = 'en' }) {
+function buildHtml({ data, provenance, view = {}, t, tf, tp, lang = 'en' }) {
   const rtl = lang === 'ar';
+  /*
+   * WHAT THE READER HAS NARROWED TO ON SCREEN, carried into the document.
+   *
+   * The period and the system are in the URL, so they are already applied to the payload. The fault
+   * drill-down and "only what came back" are not — they are client-side on the page — and a sheet
+   * printed while one of them was on used to come out holding every fault. That is the whole
+   * complaint: what you see and what you get were two different documents.
+   */
+  const openFault = view.fault || null;
+  const openRepeatsOnly = Boolean(view.repeatsOnly);
   const vehicle = data?.vehicle || {};
   const summary = data?.summary || {};
   const systems = data?.systems || [];
@@ -103,10 +113,31 @@ function buildHtml({ data, provenance, t, tf, tp, lang = 'en' }) {
   const pill = (text, tone = 'cool') => `<span class="pill ${tone}">${esc(text)}</span>`;
   const bar = (width, color) => `<span class="track"><span class="fill" style="width:${Math.max(2, width)}%;background:${color}"></span></span>`;
 
+  /**
+   * Everything about a problem a reader might type into the search box: its name, the systems it was
+   * filed under, the garages that saw it, and — the reason this exists — every line the fitter wrote.
+   * Searching only fault names would miss "airbag", which appears nowhere but in a note.
+   */
+  const searchText = (p) => [
+    p.fault,
+    (p.system_labels || [p.system_label]).filter(Boolean).join(' '),
+    (p.garages || []).join(' '),
+    (p.contracts || []).map((c) => c.no || c.id).join(' '),
+    (p.events || []).flatMap((o) => [...(o.note_lines || []), o.action_text || '']).join(' '),
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  /** The filter handles the document's script uses. Kept on both the ranked row and the detail block
+      so clicking one finds the other without either knowing the other's markup. */
+  const filterAttrs = (p) => `data-key="${esc(p.key)}" data-fault="${esc(p.fault)}" `
+    + `data-repeat="${p.repeated ? '1' : '0'}" data-text="${esc(searchText(p))}"`;
+
   // ── B. the ranked problem list ────────────────────────────────────────────
+  // TWELVE, the same as the page. It used to print fifteen, so a car with fourteen problems showed
+  // twelve on screen and fourteen on paper — two documents claiming to be one report.
   const maxOccurrences = Math.max(1, ...ranked.map((p) => p.occurrences));
   const rankedHtml = ranked.length
-    ? `<ol class="ranked">${ranked.slice(0, 15).map((p, i) => `<li>
+    ? `<ol class="ranked">${ranked.slice(0, 12).map((p, i) => `<li ${filterAttrs(p)} data-rank role="button" tabindex="0"
+        title="${esc(t('reportVehicle.ranked.hint'))}">
         <span class="no">${i + 1}</span>
         <span class="body">
           <span class="head">
@@ -131,12 +162,28 @@ function buildHtml({ data, provenance, t, tf, tp, lang = 'en' }) {
   // The donut is redrawn as ranked bars. A ring survives a colour screen and nothing else: on a mono
   // printer eight hues collapse to four greys and the legend stops labelling anything.
   const systemTotal = systems.reduce((n, s) => n + s.visits, 0);
+  // SEVEN PLUS "OTHER", the same slicing the donut uses. The palette has eight fixed hues and reusing
+  // one would put two systems in the same colour; the eighth system folding into Other is the page's
+  // answer to that, and the print has to give the same one or the two legends disagree.
+  const mixRows = [
+    ...systems.slice(0, 7).map((s, i) => ({
+      label: tf(`reportSystem.systems.${s.key}`, s.label), visits: s.visits, color: MIX_COLORS[i],
+    })),
+    ...(systems.length > 7
+      ? [{
+          label: t('reportVehicle.mix.other'),
+          visits: systems.slice(7).reduce((n, s) => n + s.visits, 0),
+          color: MIX_COLORS[7],
+        }]
+      : []),
+  ];
   const mixHtml = systemTotal
-    ? `<div class="ranked-bars">${systems.slice(0, 8).map((s, i) => {
+    ? `<div class="mix-total">${esc(tp('reportVehicle.mix.visits', systemTotal))}</div>
+      <div class="ranked-bars">${mixRows.map((s) => {
       const share = pct(s.visits, systemTotal);
       return `<div class="row">
-          <span class="lbl">${esc(tf(`reportSystem.systems.${s.key}`, s.label))}</span>
-          ${bar(share, MIX_COLORS[i % MIX_COLORS.length])}
+          <span class="lbl">${esc(s.label)}</span>
+          ${bar(share, s.color)}
           <span class="val">${esc(num(s.visits))}</span>
           <span class="pctv">${share.toFixed(share >= 10 ? 0 : 1)}%</span>
         </div>`;
@@ -198,7 +245,7 @@ function buildHtml({ data, provenance, t, tf, tp, lang = 'en' }) {
   };
 
   const detailHtml = ranked.length || workshopOnly.length
-    ? `${ranked.map((p, n) => `<section class="problem ${p.repeated ? 'is-repeat' : ''}">
+    ? `${ranked.map((p, n) => `<section class="problem ${p.repeated ? 'is-repeat' : ''}" ${filterAttrs(p)} data-problem>
         <header>
           <h3><span class="pno">${n + 1}.</span> ${esc(p.fault)}</h3>
           <div class="problem-tags">
@@ -221,7 +268,7 @@ function buildHtml({ data, provenance, t, tf, tp, lang = 'en' }) {
         <p class="returned"><b>${esc(t('reportSystem.period.returnedLabel'))}:</b> ${esc(returnLine(p))}</p>
       </section>`).join('')}
       ${workshopOnly.length
-        ? `<section class="problem workshop-only">
+        ? `<section class="problem workshop-only" data-unnamed>
             <header>
               <h3>${esc(t('reportSystem.period.workshopOnlyTitle'))}</h3>
               <div class="problem-tags">${pill(tp('reportSystem.period.occurrences', workshopOnly.length), 'cool')}</div>
@@ -423,8 +470,20 @@ function buildHtml({ data, provenance, t, tf, tp, lang = 'en' }) {
     .pill.cool{background:#e2e8f0;color:#475569}
 
     .ft{padding:14px 28px;color:#94a3b8;font-size:10.5px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
-    .bar{max-width:1040px;margin:0 auto 14px;display:flex;justify-content:flex-end}
+    .bar{max-width:1040px;margin:0 auto 14px;display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap}
     .btn{background:#0f172a;color:#fff;border:0;border-radius:999px;padding:9px 20px;font-weight:700;font-size:13px;cursor:pointer}
+    .tool-input{flex:1;min-width:180px;max-width:320px;border:1px solid #d7e0ec;background:#fff;border-radius:999px;padding:8px 16px;font:inherit;font-size:13px;color:#0f172a}
+    .tool-input:focus{outline:2px solid #2563eb;outline-offset:1px}
+    .tool-chip{border:1px solid #d7e0ec;background:#fff;color:#475569;border-radius:999px;padding:8px 15px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+    .tool-chip:hover{border-color:#94a3b8}
+    .tool-chip[aria-pressed="true"]{background:#0f172a;border-color:#0f172a;color:#fff}
+    .filter-note{margin:0 0 13px;padding:8px 12px;border-radius:9px;background:#eff6ff;border:1px solid #cfe0fb;color:#1d4ed8;font-size:11.5px;font-weight:600}
+    .mix-total{font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:9px}
+    /* A ranked row is a control here, exactly as it is on the page: click it to read only its history. */
+    .ranked li[data-rank]{cursor:pointer;border-radius:9px;padding:3px 5px;margin:-3px -5px}
+    .ranked li[data-rank]:hover{background:#f4f8fd}
+    .ranked li[data-rank].is-open{background:#eff6ff;box-shadow:inset 0 0 0 1px #cfe0fb}
+    [hidden]{display:none !important}
 
     @media print{
       body{padding:0;background:#fff}
@@ -438,10 +497,27 @@ function buildHtml({ data, provenance, t, tf, tp, lang = 'en' }) {
       thead{display:table-header-group}
       tr{break-inside:avoid}
       h2{break-after:avoid}
+      /* The drill-down highlight is a screen affordance. On paper the filter note already says what
+         is being shown, and a blue-washed row would read as a category the report does not have. */
+      .ranked li[data-rank]{background:none !important;box-shadow:none !important;cursor:auto}
     }
   </style></head>
   <body onload="window.focus()">
-    <div class="bar"><button class="btn" onclick="window.print()">${esc(t('reportVehicle.print'))}</button></div>
+    <!--
+      THE TOOLBAR IS THE PAGE'S FILTER BAR, and it does the same three things: search, "only what came
+      back", and drilling into one fault by clicking its ranked row. It narrows the PROBLEM LIST only —
+      the counters and the charts above keep describing the whole report, exactly as they do on screen —
+      and the note under it says so, so a narrowed view can never be mistaken for a clean car.
+
+      It never prints. Whatever is on screen when you press Print is what comes out.
+    -->
+    <div class="bar">
+      <input id="q" type="search" class="tool-input" placeholder="${esc(t('reportVehicle.search'))}"
+             aria-label="${esc(t('reportVehicle.search'))}" />
+      <button type="button" id="repeats" class="tool-chip" aria-pressed="false">${esc(t('reportVehicle.filter.repeatsOnly'))}</button>
+      <button type="button" id="clear" class="tool-chip" hidden>${esc(t('reportVehicle.filter.clear'))}</button>
+      <button class="btn" onclick="window.print()">${esc(t('reportVehicle.print'))}</button>
+    </div>
     <div class="sheet">
       <div class="hd">
         <div>
@@ -450,6 +526,12 @@ function buildHtml({ data, provenance, t, tf, tp, lang = 'en' }) {
           <div class="chips">
             <span class="chip ${summary.repeated_faults ? 'hot' : 'ok'}">${esc(headline)}</span>
             <span class="chip">${esc(headlineNote)}</span>
+            ${/* The worst severity on record. The page states it beside the headline and the print
+                 was dropping it — the single most consequential word about the car. */
+              summary.worst_severity
+                ? `<span class="chip ${SEVERITY_TONE[summary.worst_severity] === 'hot' ? 'hot' : 'warm'}">${
+                    esc(t(`reportSystem.severity.${summary.worst_severity}`))}</span>`
+                : ''}
             ${vehicle.plate ? `<span class="chip">${esc(vehicle.plate)}</span>` : ''}
             ${vehicle.vin ? `<span class="chip">VIN ${esc(vehicle.vin)}</span>` : ''}
           </div>
@@ -497,6 +579,8 @@ function buildHtml({ data, provenance, t, tf, tp, lang = 'en' }) {
       <div class="sec">
         <h2>${esc(t('reportVehicle.detail.title'))}</h2>
         <p class="h-hint">${esc(t('reportVehicle.detail.hint'))}</p>
+        <!-- The filter says out loud what it is hiding, on screen AND on the printed page. -->
+        <div class="filter-note" id="filter-note" hidden></div>
         ${detailHtml}
       </div>
 
@@ -532,5 +616,95 @@ function buildHtml({ data, provenance, t, tf, tp, lang = 'en' }) {
         <span>${esc(fmtDate(today))}</span>
       </div>
     </div>
+    <script>${filterScript({
+      // The count sentence is a catalog string with params, never assembled here — a baked-in number
+      // can never be translated. The script substitutes the two that change as you type.
+      showing: t('reportVehicle.filter.showing', {
+        shown: '__SHOWN__', total: '__TOTAL__',
+        system: scopedTo || t('reportVehicle.filter.all'),
+      }),
+      total: ranked.length,
+      fault: openFault,
+      repeats: openRepeatsOnly,
+    })}</script>
   </body></html>`;
+}
+
+/**
+ * THE DOCUMENT'S OWN FILTER BAR — the page's three client-side narrowings, reimplemented in ~50 lines
+ * of vanilla JS against `data-` attributes, because a saved report has no React and no server.
+ *
+ * It narrows the PROBLEM LIST and nothing else. The counters, the charts and the tables keep
+ * describing the whole report, which is exactly what the page does with these same three controls —
+ * and the note it writes says how many of how many are on screen, so a narrowed view can never be
+ * read as a clean car.
+ *
+ * Config is injected as JSON with `<` escaped, so a fault named after an HTML tag cannot close the
+ * script element it is embedded in.
+ */
+function filterScript(config) {
+  const json = JSON.stringify(config).replace(/</g, '\\u003c');
+
+  return `(function () {
+  var cfg = ${json};
+  var q = document.getElementById('q');
+  var repeatsBtn = document.getElementById('repeats');
+  var clearBtn = document.getElementById('clear');
+  var note = document.getElementById('filter-note');
+  var unnamed = document.querySelector('[data-unnamed]');
+  var problems = Array.prototype.slice.call(document.querySelectorAll('[data-problem]'));
+  var rows = Array.prototype.slice.call(document.querySelectorAll('[data-rank]'));
+  var state = { q: '', repeats: !!cfg.repeats, fault: cfg.fault || null };
+
+  function apply() {
+    var shown = 0;
+    var openName = '';
+    problems.forEach(function (el) {
+      var ok = true;
+      if (state.repeats && el.getAttribute('data-repeat') !== '1') { ok = false; }
+      if (state.fault && el.getAttribute('data-key') !== state.fault) { ok = false; }
+      if (state.q && el.getAttribute('data-text').indexOf(state.q) === -1) { ok = false; }
+      el.hidden = !ok;
+      if (ok) { shown++; if (!openName) { openName = el.getAttribute('data-fault') || ''; } }
+    });
+
+    var narrowed = !!(state.fault || state.repeats || state.q);
+    // A visit that named nothing belongs to no fault's story, so any narrowing drops it.
+    if (unnamed) { unnamed.hidden = narrowed; }
+
+    rows.forEach(function (r) {
+      var open = state.fault === r.getAttribute('data-key');
+      if (open) { r.classList.add('is-open'); } else { r.classList.remove('is-open'); }
+      r.setAttribute('aria-pressed', open ? 'true' : 'false');
+    });
+
+    repeatsBtn.setAttribute('aria-pressed', state.repeats ? 'true' : 'false');
+    clearBtn.hidden = !narrowed;
+    note.hidden = !narrowed;
+    note.textContent = String(cfg.showing)
+      .replace('__SHOWN__', shown)
+      .replace('__TOTAL__', cfg.total)
+      + (state.fault && openName ? ' \\u00b7 ' + openName : '');
+  }
+
+  q.addEventListener('input', function () { state.q = q.value.trim().toLowerCase(); apply(); });
+  repeatsBtn.addEventListener('click', function () { state.repeats = !state.repeats; apply(); });
+  clearBtn.addEventListener('click', function () {
+    state.q = ''; q.value = ''; state.repeats = false; state.fault = null; apply();
+  });
+
+  rows.forEach(function (r) {
+    function toggle() {
+      var k = r.getAttribute('data-key');
+      state.fault = state.fault === k ? null : k;
+      apply();
+    }
+    r.addEventListener('click', toggle);
+    r.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  });
+
+  apply();
+}());`;
 }

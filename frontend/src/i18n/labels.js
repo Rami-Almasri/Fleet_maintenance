@@ -5309,6 +5309,9 @@ const en = {
     // A pop-up blocker makes Print look like a dead button. It is the one failure this page cannot
     // detect any other way, so it is said out loud rather than left as nothing happening.
     printBlocked: 'The printable report opens in a new tab — your browser blocked it. Allow pop-ups for this site and press Print again.',
+    // The printable sheet's own search box. It reads the fitters' notes too, not just fault names —
+    // "airbag" appears nowhere on this car except inside one workshop note.
+    search: 'Search faults, garages, notes…',
     hero: {
       label: 'What the record shows',
       problems: { one: '1 problem recorded', other: '{n} problems recorded' },
@@ -11269,6 +11272,7 @@ const ar = {
     refresh: 'تحديث',
     print: 'طباعة / حفظ PDF',
     printBlocked: 'يفتح التقرير القابل للطباعة في تبويب جديد، وقد منعه المتصفح. اسمح بالنوافذ المنبثقة لهذا الموقع ثم اضغط «طباعة» مرة أخرى.',
+    search: 'ابحث في الأعطال والورش والملاحظات…',
     hero: {
       label: 'ما يُظهره السجل',
       problems: {

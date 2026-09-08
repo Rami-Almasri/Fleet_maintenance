@@ -187,7 +187,18 @@ export default function VehicleReport() {
           type="button"
           className="ir-button"
           disabled={!data}
-          onClick={() => setPrintBlocked(!openVehicleOverviewReport({ data, provenance, t, tf, tp, lang }))}
+          onClick={() => setPrintBlocked(!openVehicleOverviewReport({
+            data,
+            provenance,
+            // The fault drill-down and "only what came back" are client-side, so they are not in the
+            // payload — they have to be handed over, or the sheet prints every fault while the screen
+            // shows one. What you see is what you get.
+            view: { fault, repeatsOnly },
+            t,
+            tf,
+            tp,
+            lang,
+          }))}
         >
           {t('reportVehicle.print')}
         </button>

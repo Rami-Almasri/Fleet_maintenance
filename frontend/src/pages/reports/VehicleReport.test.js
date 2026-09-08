@@ -290,6 +290,57 @@ test('Print writes its own document rather than handing the printer this page', 
   expect(overviewCalls()).toHaveLength(1);
 });
 
+/*
+ * WHAT YOU SEE IS WHAT YOU GET. The period and the system live in the URL, so the payload already
+ * carries them — but the fault drill-down and "only what came back" are client-side, and the sheet
+ * used to print every fault while the screen showed one. Two documents claiming to be one report.
+ */
+test('the printed sheet opens on the drill-down the reader is looking at', async () => {
+  const printed = capturePrintWindow();
+
+  renderAt('/reports/vehicle/1741');
+  await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
+
+  await userEvent.click(screen.getByRole('button', { name: 'Only what came back' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Print / Save as PDF' }));
+
+  // The state reaches the document, which opens already narrowed to it.
+  expect(printed.html()).toMatch(/"repeats":\s*true/);
+});
+
+test('the printed sheet carries a clicked fault, not the whole list', async () => {
+  const printed = capturePrintWindow();
+
+  renderAt('/reports/vehicle/1741');
+  await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
+
+  const rimRow = screen.getAllByRole('button')
+    .find((b) => b.className.includes('ir-rank-row') && within(b).queryByText('Rim Scratch'));
+  await userEvent.click(rimRow);
+  await userEvent.click(screen.getByRole('button', { name: 'Print / Save as PDF' }));
+
+  expect(printed.html()).toMatch(/"fault":\s*"bodywork::rim scratch"/);
+});
+
+/*
+ * The two lists are ONE report or they are not a report. The print sliced its ranking at 15 while the
+ * page sliced at 12, so a car with fourteen problems showed twelve on screen and fourteen on paper.
+ */
+test('the printed ranking is cut at the same depth as the page', async () => {
+  const printed = capturePrintWindow();
+
+  renderAt('/reports/vehicle/1741');
+  await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
+  await userEvent.click(screen.getByRole('button', { name: 'Print / Save as PDF' }));
+
+  const onScreen = screen.getAllByRole('button').filter((b) => b.className.includes('ir-rank-row')).length;
+  // The attribute pair only ever appears on a ranked row — `[data-rank]` alone also matches the
+  // document's own stylesheet and its filter script.
+  const inPrint = (printed.html().match(/data-rank role="button"/g) || []).length;
+
+  expect(inPrint).toBe(onScreen);
+});
+
 test('the printed sheet repeats what the report is narrowed to', async () => {
   const printed = capturePrintWindow();
 
