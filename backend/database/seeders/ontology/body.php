@@ -216,4 +216,32 @@ return [
         'inspection' => ['Check panel gaps', 'Test latch operation', 'Inspect hinges for wear'],
         'actions' => ['repair_body_panel', 'lubricate_hinges', 'replace_body_panel', 'visual_inspection'],
     ],
+    [
+        // DELIBERATELY BROAD. Every other concept in this file names the part that failed; this one
+        // names only the failure — a piece has come away from the car. It is filed here because that
+        // is where the yard reports it (trim, moulding, a badge, a liner, a cover), and it leans on
+        // the location axis to say WHICH piece: on its own the word is an observation, not a
+        // diagnosis. Keep the synonyms about SEPARATION, not about any one component, or this
+        // concept will start stealing matches from 'Bumper damage' and 'Broken / loose mirror',
+        // both of which already carry 'detached' and 'hanging' wording of their own.
+        'name' => 'Detached', 'name_ar' => 'إنفصال',
+        'category' => 'bodywork', 'system' => 'Body', 'subsystem' => 'Fixings', 'discipline' => 'bodywork', 'risk' => 'routine',
+        'description' => 'Detachment of a piece or part, requiring replacement, reinstallation, or maintenance.',
+        'en' => [
+            'syn'      => ['detached', 'detachment', 'came off', 'fell off', 'hanging off',
+                           'separated', 'loose part'],
+            'workshop' => ['clips broken', 'refitted it', 'needs reinstalling', 'came away from the body'],
+            'customer' => ['a piece fell off the car', 'something is hanging off', 'it came off'],
+            'miss'     => ['detatched', 'detached part', 'dettached'],
+        ],
+        'ar' => [
+            'formal'   => ['إنفصال قطعة عن المركبة'],
+            'workshop' => ['طايح', 'منفصل', 'فك من مكانه', 'طاير', 'مفكوك'],
+        ],
+        'components' => ['Trim', 'Moulding', 'Cladding', 'Clips', 'Fasteners'],
+        'causes' => ['Broken clips or fasteners', 'Impact', 'Adhesive failure', 'Vibration'],
+        'inspection' => ['Identify which piece detached', 'Check mounting points and clips',
+                         'Confirm the piece is present or must be replaced'],
+        'actions' => ['repair_body_panel', 'replace_body_panel', 'visual_inspection'],
+    ],
 ];
