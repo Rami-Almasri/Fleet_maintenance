@@ -122,7 +122,11 @@ class EventClassificationService
         if (isset($this->serviceMap()[$text])) {
             return $this->attributes(MaintenanceTask::KIND_SERVICE, $this->serviceMap()[$text], MaintenanceTask::CLS_CATALOG);
         }
-        if (isset($this->faultMap()[$text])) {
+        // array_key_exists, NOT isset — faultMap() now carries config-only wordings whose value is a
+        // null id (merged but not yet seeded), and isset() reads null as absent. Same reason damageMap()
+        // is consulted with array_key_exists below. The kind is the answer that matters here; the
+        // catalog id is allowed to be null until the seeder runs.
+        if (array_key_exists($text, $this->faultMap())) {
             return $this->attributes(MaintenanceTask::KIND_FAULT, $this->faultMap()[$text], MaintenanceTask::CLS_CATALOG);
         }
 
@@ -240,7 +244,7 @@ class EventClassificationService
         if ($symptom !== '' && isset($this->serviceMap()[$symptom])) {
             return $this->attributes(MaintenanceTask::KIND_SERVICE, $this->serviceMap()[$symptom], MaintenanceTask::CLS_RESOLVER);
         }
-        if ($symptom !== '' && isset($this->faultMap()[$symptom])) {
+        if ($symptom !== '' && array_key_exists($symptom, $this->faultMap())) {   // see the note at classifyFromFinding()
             return $this->attributes(MaintenanceTask::KIND_FAULT, $this->faultMap()[$symptom], MaintenanceTask::CLS_RESOLVER);
         }
 
@@ -586,13 +590,45 @@ class EventClassificationService
         return $this->serviceMap;
     }
 
+    /**
+     * normalized name|slug => fault_catalog_id.
+     *
+     * Folded together with config/fault_catalog.php for the reason damageMap() below already documents:
+     * a classifier that silently depends on seed state is a classifier that is wrong in every fresh
+     * environment. This map had no such fallback, and the failure was not theoretical — a fault added
+     * to the config and merged, but not yet seeded, resolved to no kind at all and the picker rendered
+     * it "Unclassified". Nothing errored. The word looked authored and was untyped.
+     *
+     * That is worse here than it would be in damageMap(), because this map is also what the legacy
+     * shield falls back to: an unseeded fault does not merely lose its badge, it loses its severity
+     * prefill and its catalog id, and the task it creates is typed by the default rule instead.
+     *
+     * Config entries never overwrite a real row's id — the DB wins wherever it has an answer, and the
+     * config only fills the gap between "merged" and "seeded".
+     */
     private function faultMap(): array
     {
         if ($this->faultMap === null) {
             $this->faultMap = [];
-            foreach (FaultCatalog::query()->get(['id', 'slug', 'name']) as $row) {
-                $this->faultMap[$this->norm($row->name)] = $row->id;
-                $this->faultMap[$this->norm($row->slug)] = $row->id;
+
+            // Guarded like damageMap(): on a database without `fault_catalog` an unrecognised label
+            // took a hard QueryException instead of falling through to its correct default.
+            try {
+                foreach (FaultCatalog::query()->get(['id', 'slug', 'name']) as $row) {
+                    $this->faultMap[$this->norm($row->name)] = $row->id;
+                    $this->faultMap[$this->norm($row->slug)] = $row->id;
+                }
+            } catch (\Throwable $e) {
+                // table not migrated yet (fresh test DB) — the config fallback below still types correctly
+            }
+
+            foreach ((array) config('fault_catalog', []) as $entry) {
+                foreach ([$entry['name'] ?? null, $entry['slug'] ?? null] as $key) {
+                    $k = $this->norm($key);
+                    if ($k !== '' && ! array_key_exists($k, $this->faultMap)) {
+                        $this->faultMap[$k] = null;   // known fault wording, no id behind it here
+                    }
+                }
             }
         }
 
