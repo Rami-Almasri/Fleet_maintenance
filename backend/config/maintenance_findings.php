@@ -66,6 +66,13 @@ return [
                 'Poor fuel economy',
                 'Exhaust fault',
                 'Fuel system fault',
+                // Promoted from understanding-only 2026-09-08: the yard wants these pickable. They
+                // are what a garage concludes behind an Overheating report, but they are also things
+                // a driver or inspector can put a name to (a fan that never spins, a puddle under
+                // the radiator), and refusing the chip only pushed the report into a free-text note.
+                'Cooling fan fault',
+                'Water pump failure',
+                'Radiator damage',
             ],
         ],
         [
@@ -123,6 +130,11 @@ return [
                 'Steering noise',
                 'Vibration at speed',
                 'Steering warning light',
+                // Promoted from understanding-only 2026-09-08. Found on a lift rather than on a
+                // drive, but the workshop files findings through this same picker, so "not what an
+                // inspector observes" was never a reason the WORD could not be selected.
+                'Broken spring',
+                'Control arm / ball joint',
             ],
         ],
         [
@@ -171,6 +183,10 @@ return [
                 'Weak airflow',
                 'Bad smell from vents',
                 'Noisy blower',
+                // Promoted from understanding-only 2026-09-08 — the diagnosis behind "A/C not
+                // cooling", now offerable in its own right.
+                'A/C compressor fault',
+                'Refrigerant leak',
             ],
         ],
         [
@@ -286,6 +302,19 @@ return [
      * declared here, so a new ontology concept cannot quietly reintroduce the dead end.
      */
     'understanding_only' => [
+        // ── NARROWED 2026-09-08 ──────────────────────────────────────────────────────────────────
+        // Seven concepts moved OUT of this list and into the categories above, on the instruction
+        // that the picker should offer them: Cooling fan fault, Water pump failure, Radiator damage,
+        // A/C compressor fault, Refrigerant leak, Broken spring, Control arm / ball joint.
+        //
+        // The original line was WHO OBSERVES IT — symptoms are reported, causes are concluded. That
+        // held while the picker belonged to the test-drive report alone. It does not any more: the
+        // workshop files its findings through the same picker, so a garage's conclusion has a filer,
+        // and withholding the chip only pushed the same fact into a free-text note where nothing
+        // counts it. The four below stay, because each would break the picker in a way that has
+        // nothing to do with who is holding it.
+        // ─────────────────────────────────────────────────────────────────────────────────────────
+
         // The scheduled visit AS A WHOLE. The matcher must recognise "periodic maintenance" — it is the
         // commonest planned-work phrase in the corpus and the one the Event Type resolver most needs to
         // read as SERVICE — but it is not a finding: an inspector records the ITEMS performed (Oil
@@ -293,26 +322,15 @@ return [
         // filed as one finding with nothing said about what was actually done.
         'Periodic Maintenance',
 
-        // Cooling — what a garage finds behind an Overheating report.
-        'Cooling fan fault',
-        'Water pump failure',
-        'Radiator damage',
-
-        // Climate — the diagnosis behind "A/C not cooling".
-        'A/C compressor fault',
-        'Refrigerant leak',
-
-        // Suspension — found on a lift, not on a drive. The inspector reports the knock; this is the part.
-        'Broken spring',
-        'Control arm / ball joint',
-
         // Electrical — too broad to action as a finding on its own. "Sensor failure" names no system,
-        // so as a menu item it would collect the reports that belong on a specific fault.
+        // so as a menu item it would collect the reports that belong on a specific fault. Not a
+        // question of who observes it: it is a bucket, and buckets fill.
         'Sensor failure',
 
         // Already selectable under a different name — kept as vocabulary so the wording still resolves,
         // but not offered twice. Door locks → "Power window / lock fault"; immobiliser → "Central
-        // locking / key fob".
+        // locking / key fob". Adding these would put two chips on screen for one fault and split its
+        // history between them.
         'Door lock fault',
         'Key / immobiliser fault',
     ],
