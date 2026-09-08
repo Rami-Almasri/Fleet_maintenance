@@ -21,7 +21,7 @@ import CreateMoveModal from './logistics/CreateMoveModal';
 import CycleGuide from '../components/workflow/CycleGuide';
 import {
   resolveAction, allows, ctaLabel, TASK_STATUS, stageAge,
-  isAtGarage, custodyBlocked, custodyHolderName,
+  isAtGarage, custodyBlocked, custodyHolderName, heldFindings, findingHoldBlocks,
 } from '../components/workflow/meta';
 import { useLanes, PIPELINE_KEYS } from '../config/maintenanceLanes';
 import {
@@ -174,6 +174,15 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
   const openFaults = tk.tasks_progress?.open ?? 0;
   const readyBlocked = act?.action === 'ready' && openFaults > 0;
   const readyHint = `Fix all ${openFaults} open fault${openFaults > 1 ? 's' : ''} first`;
+  // THE HOLD. The card keeps its lane — a frozen ticket is still a ticket at Needs Dispatch, and moving
+  // it to a holding column would hide where the car actually is. What changes is what the card CLAIMS:
+  // without this it went on saying "Assign Garage" in primary blue, which is now the one thing that
+  // cannot happen, and the supervisor only found out after filling the form.
+  const held = heldFindings(tk);
+  const holdBlocked = findingHoldBlocks(tk, act?.action);
+  const holdHint = tf('workflow.card.findingHeld', '{list} — waiting on a manager’s approval before this ticket can move', {
+    list: held.map((h) => h.finding).join(', '),
+  });
   const custodyLocked = custodyBlocked(tk, userId, can);
   const custodyHolder = custodyHolderName(tk, userId, can);
   const custodyHint = act?.action === 'arriveAtPark'
@@ -245,6 +254,13 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
 
         {/* Flags */}
         <div className="mwf-flags">
+          {/* First flag on the card, ahead of the complaint and severity chips: while this stands nothing
+              else about this ticket can happen, so it must not be the badge you notice third. */}
+          {held.length > 0 && (
+            <span className="mwf-pill crit" title={holdHint}>
+              ⏸ {tp('workflow.card.findingHeldBadge', held.length)}
+            </span>
+          )}
           {isComplaint && (
             <span className="mwf-pill crit" title={tk.customer_complaint || t('workflow.complaint.badge')}>📣 {t('workflow.complaint.badge')}</span>
           )}
@@ -419,8 +435,8 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
               <button
                 type="button"
                 className={`opx-btn ${act.variant === 'danger' ? 'danger' : 'primary'} mwf-cta`}
-                disabled={readyBlocked}
-                title={readyBlocked ? readyHint : undefined}
+                disabled={readyBlocked || holdBlocked}
+                title={holdBlocked ? holdHint : readyBlocked ? readyHint : undefined}
                 onClick={() => onAct(act.action, tk)}
               >
                 {ctaLabel(t, tk)}
@@ -429,8 +445,11 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
           </div>
         )}
         {/* Blocking reasons — sit under the footer so the CTA stays visually primary */}
+        {/* The hold is named before the softer gates: it outranks them, and unlike them it is answered by
+            someone else entirely, so the card has to say WHO the ticket is waiting on. */}
+        {holdBlocked && <p className="mwf-warn">{holdHint}</p>}
         {allowed && custodyLocked && <p className="mwf-warn">{custodyHint}</p>}
-        {allowed && !custodyLocked && readyBlocked && <p className="mwf-warn">{readyHint}</p>}
+        {allowed && !custodyLocked && !holdBlocked && readyBlocked && <p className="mwf-warn">{readyHint}</p>}
       </div>
     </div>
   );
