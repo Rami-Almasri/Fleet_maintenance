@@ -157,4 +157,35 @@ return [
     ['slug' => 'safety_parking_sensor', 'name' => 'Parking sensor fault', 'name_ar' => 'خلل في حساس الركن',        'category_key' => 'safety', 'default_severity' => 'routine',  'on_site' => true,  'sort_order' => 1120],
     ['slug' => 'safety_camera_adas',    'name' => 'Camera / ADAS fault', 'name_ar' => 'خلل في الكاميرا / أنظمة المساعدة', 'category_key' => 'safety', 'default_severity' => 'moderate', 'on_site' => false, 'sort_order' => 1130],
 
+    // ═════════════════════════════════════════════════════════════════════════════════════════════
+    // PROMOTED FROM UNDERSTANDING-ONLY, 2026-09-08.
+    //
+    // These seven were declared `understanding_only` in config/maintenance_findings.php: the ontology
+    // knew them so the matcher could read a garage's wording, but the picker did not offer them. That
+    // line was drawn on WHO OBSERVES IT — symptoms are reported, causes are concluded — and it stopped
+    // holding once the workshop began filing findings through the same picker.
+    //
+    // They are given catalog rows in the same breath, and for the reason the block above exists: a
+    // selectable wording with no catalog row produces a task with no `kind`, typed only by the legacy
+    // shield's default, carrying no severity prefill and nothing for the reporting layer to group on.
+    // Making a word selectable without this is half the change.
+    //
+    // Severities read the failure, not the part. A water pump or cooling fan failure strands the car
+    // and cooks the engine while it does — `critical`. A refrigerant leak is a comfort fault that
+    // worsens slowly — `routine`.
+    // ═════════════════════════════════════════════════════════════════════════════════════════════
+
+    // ── Engine / cooling (continues 90–92) ───────────────────────────────────────────────────────
+    ['slug' => 'engine_cooling_fan',    'name' => 'Cooling fan fault', 'name_ar' => 'خلل في مروحة التبريد',        'category_key' => 'engine', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 93],
+    ['slug' => 'engine_water_pump',     'name' => 'Water pump failure', 'name_ar' => 'عطل في طرمبة الماء',         'category_key' => 'engine', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 94],
+    ['slug' => 'engine_radiator',       'name' => 'Radiator damage', 'name_ar' => 'ضرر في الردياتير',              'category_key' => 'engine', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 95],
+
+    // ── Suspension (continues 360–390) ───────────────────────────────────────────────────────────
+    ['slug' => 'susp_broken_spring',    'name' => 'Broken spring', 'name_ar' => 'ياي مكسور',                       'category_key' => 'suspension', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 400],
+    ['slug' => 'susp_control_arm',      'name' => 'Control arm / ball joint', 'name_ar' => 'مقص / جوزة مقص',       'category_key' => 'suspension', 'default_severity' => 'critical', 'on_site' => false, 'sort_order' => 410],
+
+    // ── Climate (continues 600–640) ──────────────────────────────────────────────────────────────
+    ['slug' => 'ac_compressor',         'name' => 'A/C compressor fault', 'name_ar' => 'خلل في كمبروسر التكييف',   'category_key' => 'ac', 'default_severity' => 'moderate', 'on_site' => false, 'sort_order' => 650],
+    ['slug' => 'ac_refrigerant_leak',   'name' => 'Refrigerant leak', 'name_ar' => 'تسريب غاز التكييف',            'category_key' => 'ac', 'default_severity' => 'routine',  'on_site' => false, 'sort_order' => 660],
+
 ];
