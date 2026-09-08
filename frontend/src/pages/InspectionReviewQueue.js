@@ -25,7 +25,7 @@ import Tabs from '../components/ui/Tabs';
 import DataTable from '../components/ui/Table';
 import { Input, Textarea } from '../components/ui/Field';
 import { useI18n } from '../i18n/I18nContext';
-import { EmptyState } from '../components/ui/Misc';
+import { EmptyState, SearchInput } from '../components/ui/Misc';
 import { Skeleton } from '../components/ui/Skeleton';
 import SendCarInModal from '../components/workflow/SendCarInModal';
 import TransportChoice from '../components/workflow/TransportChoice';
@@ -2368,6 +2368,35 @@ const CAR_STATE_LABEL = {
 const CAR_STATE_ORDER = ['available', 'rented', 'maintenance', 'test', 'in_transit', 'transfer', 'sale_prep', 'unknown'];
 const carStateOf = (tk) => (CAR_STATE_LABEL[tk.operational_status] ? tk.operational_status : 'unknown');
 
+/* ── find one request in a long queue ──────────────────────────────────────────────────────────────
+ *
+ * The backlog runs to ~140 cards over ~137 distinct cars, and a Controller usually arrives here with
+ * ONE car in mind — someone phoned about a plate, or a driver named a car. The chips narrow by state;
+ * this narrows by identity.
+ *
+ * Matching is over the text already printed on the card — plate, car (make/model), fleet code, year,
+ * who asked, and the note itself — so anything the eye can find, the box can find. Terms are ANDed,
+ * which is what "0007 nissan" is meant to mean. Like the chips, it never touches the tab badge: the
+ * backlog count stays whole while the list is narrowed.
+ */
+function ticketHaystack(tk) {
+  return [
+    tk.plate,
+    tk.car,
+    tk.vehicle_make,
+    tk.vehicle_code,
+    tk.vehicle_year,
+    tk.handoffs?.requested?.name,
+    tk.customer_complaint,
+    tk.id,
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+const matchesQuery = (tk, terms) => {
+  if (!terms.length) return true;
+  const hay = ticketHaystack(tk);
+  return terms.every((term) => hay.includes(term));
+};
+
 export default function InspectionReviewQueue() {
   const toast = useToast();
   const { t, tf } = useI18n();
@@ -2394,14 +2423,27 @@ export default function InspectionReviewQueue() {
   // Narrow the queue to where the car is standing — "show me only the cars I can send in today", or only
   // the ones stuck with a customer. `all` is the default, so nobody has to opt back into the full list.
   const [carState, setCarState] = useState('all');
+
+  // Search runs FIRST, and the chips count what survived it — a chip reading "12" above a list of two
+  // would be a lie about the same screen. The tab badge is the one number that stays whole.
+  const [query, setQuery] = useState('');
+  const terms = useMemo(
+    () => query.toLowerCase().split(/\s+/).map((s) => s.trim()).filter(Boolean),
+    [query],
+  );
+  const searched = useMemo(
+    () => (terms.length ? awaiting.filter((tk) => matchesQuery(tk, terms)) : awaiting),
+    [awaiting, terms],
+  );
+
   const carStateChips = useMemo(() => {
     const n = {};
-    awaiting.forEach((tk) => { const k = carStateOf(tk); n[k] = (n[k] || 0) + 1; });
+    searched.forEach((tk) => { const k = carStateOf(tk); n[k] = (n[k] || 0) + 1; });
     return CAR_STATE_ORDER.filter((k) => n[k] > 0).map((k) => ({ key: k, label: CAR_STATE_LABEL[k], n: n[k] }));
-  }, [awaiting]);
+  }, [searched]);
   const awaitingShown = useMemo(
-    () => (carState === 'all' ? awaiting : awaiting.filter((tk) => carStateOf(tk) === carState)),
-    [awaiting, carState],
+    () => (carState === 'all' ? searched : searched.filter((tk) => carStateOf(tk) === carState)),
+    [searched, carState],
   );
   // A chip that stops existing (its last request was actioned) must not leave the queue looking empty.
   useEffect(() => {
@@ -2439,9 +2481,10 @@ export default function InspectionReviewQueue() {
       // here, and Send-a-car-in can fire this while the countdown tab is open. Switch to the card's own
       // tab first, or the deep-link would scroll to something that isn't rendered.
       setTab(match.review?.is_system_withdrawal ? 'withdrawn' : 'awaiting');
-      // A deep-link points at ONE card — clear any car-state narrowing, or it would scroll to a card the
-      // filter is hiding.
+      // A deep-link points at ONE card — clear any narrowing, or it would scroll to a card the filter
+      // or the search box is hiding.
       setCarState('all');
+      setQuery('');
       setHighlightId(match.id);
       requestAnimationFrame(() => {
         document.getElementById(`review-card-${match.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -2586,11 +2629,27 @@ export default function InspectionReviewQueue() {
                 />
               ) : (
                 <>
+                  {/* Find one car in the backlog — plate, model, fleet code, who asked, or a word from
+                      the note. It narrows the list only; the tab badge stays the whole backlog. */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <SearchInput
+                      value={query}
+                      onChange={setQuery}
+                      placeholder={tf('reviewQueue.search', 'Search plate, car, who asked, or the note…')}
+                      className="w-full sm:w-96"
+                    />
+                    {terms.length > 0 && (
+                      <span className="text-xs text-slate-500">
+                        {tf('reviewQueue.searchCount', 'Showing {n} of {total}', { n: awaitingShown.length, total: awaiting.length })}
+                      </span>
+                    )}
+                  </div>
+
                   {/* Where the car is standing. One chip per state actually present, each carrying its
                       own count, so the filter row doubles as a read of the queue. */}
                   {carStateChips.length > 1 && (
                     <div className="flex flex-wrap items-center gap-2">
-                      {[{ key: 'all', label: ['review.carState.all', 'All cars'], n: awaiting.length }, ...carStateChips].map((c) => (
+                      {[{ key: 'all', label: ['review.carState.all', 'All cars'], n: searched.length }, ...carStateChips].map((c) => (
                         <button
                           key={c.key}
                           type="button"
@@ -2611,6 +2670,21 @@ export default function InspectionReviewQueue() {
                   {/* Analytics — the shape of the queue, before the request cards. Withdrawn requests are
                       excluded: they are not a backlog and would distort every count on it. It reads the
                       filtered list, so the numbers always describe the cards underneath them. */}
+                  {/* Nothing matched is NOT "all caught up" — the backlog is still there, the words just
+                      didn't land. Say which, and give the way back. */}
+                  {awaitingShown.length === 0 ? (
+                    <EmptyState
+                      icon={<Icon.Search className="h-7 w-7" />}
+                      title={tf('reviewQueue.noMatch', 'No request matches that')}
+                      message={tf('reviewQueue.noMatchBody', '{n} requests are still waiting — try a plate, a model, or one word from the note.', { n: awaiting.length })}
+                      action={(
+                        <Button variant="secondary" onClick={() => { setQuery(''); setCarState('all'); }}>
+                          {tf('reviewQueue.clearSearch', 'Clear search')}
+                        </Button>
+                      )}
+                    />
+                  ) : (
+                  <>
                   <InspectionReviewAnalytics tickets={awaitingShown} />
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     {awaitingShown.map((tk) => (
@@ -2630,6 +2704,8 @@ export default function InspectionReviewQueue() {
                       />
                     ))}
                   </div>
+                  </>
+                  )}
                 </>
               )}
             </div>
