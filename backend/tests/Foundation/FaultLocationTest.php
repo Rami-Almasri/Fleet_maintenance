@@ -316,4 +316,95 @@ class FaultLocationTest extends FoundationTestCase
         $this->assertSame('none', $payload['location_mode']);
         $this->assertSame('Overheating', $payload['display']);
     }
+
+    // ── Every word the inspector can tap is curatable ─────────────────────────────────────────────
+
+    /**
+     * A keyword-library word that no fault or damage TYPE owns — the case this section is about.
+     *
+     * Created rather than looked up: the assertion has to hold for a word added tomorrow, and the
+     * Foundation schema's library is not always seeded. The name is deliberately one no catalog
+     * carries, so the index resolves it through the library and nothing else.
+     */
+    private function libraryWord(string $keyword, string $category): \App\Models\FindingKeyword
+    {
+        $word = \App\Models\FindingKeyword::create([
+            'category_key'   => $category,
+            'category_label' => ucfirst($category),
+            'keyword'        => $keyword,
+            'risk'           => \App\Models\FindingKeyword::RISK_MODERATE,
+            'is_active'      => true,
+        ]);
+        $this->svc()->flush(); // the index is memoised per request; this row post-dates it
+
+        return $word;
+    }
+
+    /**
+     * THE CONTROL ROOM COVERS THE WHOLE PICKER, NOT MOST OF IT.
+     *
+     * The regression this locks: the type index knew only `fault_catalog` and `damage_catalog`, so 22
+     * words in the keyword library — "Sensor failure", "Water pump failure", "Refrigerant leak",
+     * "Broken spring", "Key / immobiliser fault" — resolved to nothing. They still got a policy (their
+     * category's), but with no row behind it, so Control Desk → Where on the car → Fault types listed
+     * 108 of 130 words and a curator could neither see nor re-grade the rest. The tab claimed to be
+     * the control room for the picker while hiding a fifth of it.
+     *
+     * Asserted as coverage, not as a count: a word added to the library tomorrow must resolve too,
+     * which is the whole point of indexing the library rather than naming these 22. The fixture word
+     * IS that tomorrow — it makes the assertion bite on a schema whose library has not been seeded,
+     * while the loop still sweeps the real library wherever there is one.
+     */
+    public function test_every_word_in_the_keyword_library_resolves_to_a_curatable_row(): void
+    {
+        $this->libraryWord('Turbo actuator sticking', 'engine');
+
+        $svc      = $this->svc();
+        $keywords = \App\Models\FindingKeyword::query()->pluck('keyword')->all();
+
+        foreach ($keywords as $keyword) {
+            $row = $svc->catalogRowForText($keyword);
+
+            $this->assertNotNull($row, "'{$keyword}' is offered by the picker but has no policy row");
+            // Either a fault/damage TYPE owns the word (it carries that type's slug) or the library is
+            // the only thing that knows it — and then the row says so, which is how the admin page
+            // tells a type apart from a keyword-only word without a second lookup.
+            $this->assertTrue(
+                ($row['slug'] ?? null) !== null || ($row['kind'] ?? null) === 'keyword',
+                "'{$keyword}' resolved to a row that is neither a catalog type nor a library word"
+            );
+            $this->assertContains(
+                $svc->policyForText($keyword, $row['category_key'] ?? null),
+                FaultLocationService::MODES
+            );
+        }
+    }
+
+    /**
+     * A curator's answer on a keyword-only word actually reaches the report gate.
+     *
+     * Before the `location_mode` column existed on `finding_keywords` these words had nowhere to hold
+     * an override, so the Fault types switch would have been a control that moves nothing. This is the
+     * assertion that it moves something.
+     */
+    public function test_a_stored_answer_on_a_library_word_beats_its_category(): void
+    {
+        $word = $this->libraryWord('Turbo actuator sticking', 'engine');
+        $svc  = $this->svc();
+
+        $category = $svc->policyForText($word->keyword, $word->category_key);
+        $target   = $category === FaultLocationService::MODE_REQUIRED
+            ? FaultLocationService::MODE_NONE
+            : FaultLocationService::MODE_REQUIRED;
+
+        $word->update(['location_mode' => $target]);
+        $svc->flush();
+
+        $this->assertSame($target, $svc->policyForText($word->keyword, $word->category_key));
+
+        // …and clearing it returns the word to the answer its category implies, with nothing remembered.
+        $word->update(['location_mode' => null]);
+        $svc->flush();
+        $this->assertSame($category, $svc->policyForText($word->keyword, $word->category_key));
+    }
 }

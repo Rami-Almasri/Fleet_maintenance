@@ -6,6 +6,7 @@ use App\Helpers\ResponseHelper;
 use App\Models\AppSetting;
 use App\Models\DamageCatalog;
 use App\Models\FaultCatalog;
+use App\Models\FindingKeyword;
 use App\Models\MaintenanceTaskLocation;
 use App\Models\VehicleLocation;
 use App\Models\VehicleLocationGroup;
@@ -305,17 +306,31 @@ class VehicleLocationController extends Controller
      * place, `none` is what removes the picker for a type where the answer is already in the name
      * ("Wiper / washer fault"). Stored on the catalog row, which outranks the authored config for that
      * one type and nothing else — see FaultLocationService's resolution order.
+     *
+     * `keyword` is the third catalog: a word the picker offers that no fault or damage type owns. It
+     * stores its override on its `finding_keywords` row and reads back through the same chain, one
+     * step shorter — there is no per-type config line for a word with no type, so it resolves
+     * row → category → default.
      */
     public function updatePolicy(Request $request, FaultLocationService $service)
     {
         $data = $request->validate([
-            'catalog' => ['required', Rule::in(['fault', 'damage'])],
+            'catalog' => ['required', Rule::in(['fault', 'damage', 'keyword'])],
             'id'      => ['required', 'integer'],
             'mode'    => ['required', Rule::in(FaultLocationService::MODES)],
         ]);
 
-        $model = $data['catalog'] === 'fault' ? FaultCatalog::class : DamageCatalog::class;
-        $row   = $model::query()->findOrFail($data['id']);
+        $row  = $this->policyRow($data['catalog'], $data['id']);
+        $name = $this->policyRowName($data['catalog'], $row);
+
+        // A service is `none` by what it IS; a stored mode would be a switch with nothing behind it.
+        if ($data['catalog'] === 'keyword' && $service->isServiceText($row->keyword)) {
+            return ResponseHelper::FailureResponse(
+                null,
+                "\"{$name}\" is planned work, not a fault — it happens to the whole car, so there is no place to name",
+                422
+            );
+        }
 
         $row->update(['location_mode' => $data['mode']]);
         $service->flush();
@@ -328,7 +343,7 @@ class VehicleLocationController extends Controller
 
         return ResponseHelper::SuccessResponse(
             ['policy' => $this->policyPayload($service)],
-            "\"{$row->name}\" {$wording}",
+            "\"{$name}\" {$wording}",
             200
         );
     }
@@ -340,23 +355,47 @@ class VehicleLocationController extends Controller
     public function resetPolicy(Request $request, FaultLocationService $service)
     {
         $data = $request->validate([
-            'catalog' => ['required', Rule::in(['fault', 'damage'])],
+            'catalog' => ['required', Rule::in(['fault', 'damage', 'keyword'])],
             'id'      => ['required', 'integer'],
         ]);
 
-        $model = $data['catalog'] === 'fault' ? FaultCatalog::class : DamageCatalog::class;
-        $row   = $model::query()->findOrFail($data['id']);
+        $row  = $this->policyRow($data['catalog'], $data['id']);
+        $name = $this->policyRowName($data['catalog'], $row);
 
         // storedMode null on purpose: resolve the AUTHORED answer, ignoring what the row now holds.
-        $authored = $service->policyFor($row->slug, $row->category_key, null);
-        $row->update(['location_mode' => $authored]);
+        // A library word has no slug, so its chain is category → default — one step shorter, same order.
+        $authored = $service->policyFor($row->slug ?? null, $row->category_key, null);
+
+        // Cleared rather than stamped on the keyword row: the column is nullable there precisely so
+        // "nobody has decided" stays distinguishable from "somebody chose exactly the standard answer",
+        // which is what lets this tab name who decided. The catalogs' column is NOT NULL, so they keep
+        // taking the value.
+        $row->update(['location_mode' => $data['catalog'] === 'keyword' ? null : $authored]);
         $service->flush();
 
         return ResponseHelper::SuccessResponse(
             ['policy' => $this->policyPayload($service)],
-            "\"{$row->name}\" is back on the standard answer for {$row->category_key} ({$authored})",
+            "\"{$name}\" is back on the standard answer for {$row->category_key} ({$authored})",
             200
         );
+    }
+
+    /** The row one policy line points at — fault type, damage type, or library word. */
+    private function policyRow(string $catalog, int $id)
+    {
+        $model = match ($catalog) {
+            'fault'   => FaultCatalog::class,
+            'damage'  => DamageCatalog::class,
+            'keyword' => FindingKeyword::class,
+        };
+
+        return $model::query()->findOrFail($id);
+    }
+
+    /** What to call it in the confirmation sentence — the library names its rows `keyword`. */
+    private function policyRowName(string $catalog, $row): string
+    {
+        return (string) ($catalog === 'keyword' ? $row->keyword : $row->name);
     }
 
     // ── The quantity rail ─────────────────────────────────────────────────────────────────────────
@@ -419,11 +458,21 @@ class VehicleLocationController extends Controller
     }
 
     /**
-     * The policy table: every fault and damage type, the mode in force, and WHERE that mode came from.
+     * The policy table: every word the picker can offer, the mode in force, and WHERE it came from.
      *
      * `source` is the part that matters — a screen that shows "required" without saying whether a
      * person chose it or a category implied it is a black box, and the whole point of this page is
      * that the picker's behaviour is legible. See [[traceability-visibility-requirement]].
+     *
+     * ── WHY THREE PASSES AND NOT TWO ─────────────────────────────────────────────────────────────
+     * This listed the two type catalogs only, on the assumption that they cover everything an
+     * inspector can tap. They do not. The picker's vocabulary is the KEYWORD LIBRARY (the Fault
+     * keywords tab of this same page), and 22 of its words match no catalog row: "Sensor failure",
+     * "Water pump failure", "Refrigerant leak", "Broken spring", "Key / immobiliser fault"… Those
+     * words were silently taking their category's answer with no row here to see it on, so the tab
+     * claimed to be the control room for the picker while hiding a fifth of it. The third pass adds
+     * exactly the words no catalog row already owns — matched the same way intake matches them, via
+     * FaultLocationService, so this page and the picker cannot disagree about which is which.
      */
     private function policyPayload(FaultLocationService $service): array
     {
@@ -452,8 +501,49 @@ class VehicleLocationController extends Controller
                     // true when a curator has moved this type off the answer its category implies.
                     'overridden'    => $mode !== $authored,
                     'source'        => $this->modeSource($row->slug, $row->category_key, $stored, $authored, $bySlug, $byCategory),
+                    'locked'        => false,
                 ];
             }
+        }
+
+        foreach (FindingKeyword::query()->orderBy('category_key')->orderBy('keyword')->get() as $row) {
+            // A word a fault or damage TYPE already owns is curated on that type's row above — listing
+            // it twice would give one policy two switches. `slug === null` is typeIndex()'s marker for
+            // "the library is the only thing that knows this word".
+            $hit = $service->catalogRowForText($row->keyword);
+            if (($hit['kind'] ?? null) !== 'keyword') {
+                continue;
+            }
+
+            // A SERVICE HAS NO PLACE. policyForText() applies this before any lookup, so "Oil Change"
+            // and "Tire Rotation" are `none` in the picker no matter what this row holds. Reporting
+            // anything else here — or offering a control that cannot move it — would be the page
+            // lying about the screen it exists to explain.
+            $isService = $service->isServiceText($row->keyword);
+
+            $authored = $service->policyFor(null, $row->category_key, null);
+            $stored   = $row->location_mode;
+            $mode     = $isService
+                ? FaultLocationService::MODE_NONE
+                : $service->policyFor(null, $row->category_key, $stored);
+
+            $out[] = [
+                'catalog'       => 'keyword',
+                'id'            => $row->id,
+                'slug'          => null,
+                'name'          => $row->keyword,
+                'name_ar'       => $row->keyword_ar,
+                'category_key'  => $row->category_key,
+                'is_active'     => (bool) $row->is_active,
+                'mode'          => $mode,
+                'authored_mode' => $isService ? FaultLocationService::MODE_NONE : $authored,
+                'overridden'    => ! $isService && $mode !== $authored,
+                'source'        => $isService
+                    ? 'service'
+                    : $this->modeSource(null, $row->category_key, $stored, $authored, $bySlug, $byCategory),
+                // No switch: the answer is decided by what KIND of work this is, not by curation.
+                'locked'        => $isService,
+            ];
         }
 
         return $out;

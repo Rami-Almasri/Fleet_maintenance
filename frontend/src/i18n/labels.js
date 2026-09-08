@@ -4660,17 +4660,23 @@ const en = {
       none: 'No picker at all. Right when the type IS the answer — “wiper fault”, “overheating”.',
     },
 
-    allCatalogs: 'Faults and damage',
+    allCatalogs: 'Every word the picker offers',
     allModes: 'Any rule',
-    catalogFault: 'Fault',
-    catalogDamage: 'Damage',
-    searchTypes: 'Search a fault or damage type…',
+    catalog: {
+      fault: 'Fault',
+      damage: 'Damage',
+      // A word from the keyword library that no fault or damage type row owns. It still reaches the
+      // inspector's picker, so it is graded here like the other two.
+      keyword: 'Keyword only',
+    },
+    searchTypes: 'Search a fault, damage type or keyword…',
 
     source: {
       row: 'Set by hand on this type',
       type: 'A rule written for this one type',
       category: 'The standard answer for {category}',
       default: 'The fleet-wide default',
+      service: 'Planned work — done to the whole car, so there is no place to name',
     },
     overridden: 'Changed from “{authored}”',
     resetToStandard: 'Back to standard',
@@ -10675,17 +10681,21 @@ const ar = {
       none: 'لا تُعرض قائمة إطلاقًا. مناسب حين يكون النوع نفسه هو الجواب — «عطل مساحات»، «سخونة».',
     },
 
-    allCatalogs: 'الأعطال والأضرار',
+    allCatalogs: 'كل كلمة تظهر في القائمة',
     allModes: 'أي قاعدة',
-    catalogFault: 'عطل',
-    catalogDamage: 'ضرر',
-    searchTypes: 'ابحث عن نوع عطل أو ضرر…',
+    catalog: {
+      fault: 'عطل',
+      damage: 'ضرر',
+      keyword: 'كلمة فقط',
+    },
+    searchTypes: 'ابحث عن عطل أو ضرر أو كلمة…',
 
     source: {
       row: 'حُدِّد يدويًا لهذا النوع',
       type: 'قاعدة مكتوبة لهذا النوع تحديدًا',
       category: 'الجواب المعتاد لفئة {category}',
       default: 'الإعداد العام للأسطول',
+      service: 'صيانة مجدولة — تُجرى للسيارة كاملة فلا يوجد موقع يُحدَّد',
     },
     overridden: 'مُغيَّر عن «{authored}»',
     resetToStandard: 'إرجاع للمعتاد',

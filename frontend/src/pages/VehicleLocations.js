@@ -37,6 +37,10 @@ import { num } from '../lib/format';
 const MODES = ['required', 'optional', 'none'];
 const MODE_TONE = { required: 'red', optional: 'amber', none: 'gray' };
 
+// Where a policy row's word comes from. `keyword` is the library word no fault or damage TYPE owns —
+// it still reaches the inspector's picker, so it belongs on this tab like the other two.
+const CATALOG_TONE = { fault: 'amber', damage: 'blue', keyword: 'violet' };
+
 const emptyPlace = {
   name: '', name_ar: '', group_key: '', precision: 'panel',
   inspection_zone: '', area_key: '', aliases: '', is_active: true,
@@ -84,6 +88,7 @@ export default function VehicleLocations() {
   };
   const precisionLabel = (key) => t(`vehicleLocations.precision.${key}`);
   const modeLabel = (m) => t(`vehicleLocations.mode.${m}`);
+  const catalogLabel = (c) => t(`vehicleLocations.catalog.${c}`);
 
   // ── Places ──────────────────────────────────────────────────────────────────
   const [search, setSearch] = useState('');
@@ -582,8 +587,11 @@ export default function VehicleLocations() {
               <SearchInput className="flex-1" value={policySearch} onChange={setPolicySearch} placeholder={t('vehicleLocations.searchTypes')} />
               <Select className="sm:w-44" value={policyCatalog} onChange={(e) => setPolicyCatalog(e.target.value)}>
                 <option value="">{t('vehicleLocations.allCatalogs')}</option>
-                <option value="fault">{t('vehicleLocations.catalogFault')}</option>
-                <option value="damage">{t('vehicleLocations.catalogDamage')}</option>
+                {/* `keyword` = a word the picker offers that no fault or damage TYPE owns — curated
+                    on the Fault keywords tab, and until now missing from this one entirely. */}
+                {['fault', 'damage', 'keyword'].map((c) => (
+                  <option key={c} value={c}>{catalogLabel(c)}</option>
+                ))}
               </Select>
               <Select className="sm:w-44" value={policyMode} onChange={(e) => setPolicyMode(e.target.value)}>
                 <option value="">{t('vehicleLocations.allModes')}</option>
@@ -610,14 +618,15 @@ export default function VehicleLocations() {
                           <td className="border-b border-slate-100 px-5 py-3.5">
                             <div className="font-medium text-slate-900">{lang === 'ar' && p.name_ar ? p.name_ar : p.name}</div>
                             <div className="text-xs text-slate-400">
-                              <Badge tone={p.catalog === 'fault' ? 'amber' : 'blue'}>
-                                {p.catalog === 'fault' ? t('vehicleLocations.catalogFault') : t('vehicleLocations.catalogDamage')}
-                              </Badge>
+                              <Badge tone={CATALOG_TONE[p.catalog] || 'gray'}>{catalogLabel(p.catalog)}</Badge>
                             </div>
                           </td>
                           <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">{p.category_key}</td>
                           <td className="border-b border-slate-100 px-5 py-3.5">
-                            {canManage ? (
+                            {/* `locked` rows are planned work ("Oil Change", "Tire Rotation"): the
+                                answer follows from what KIND of work it is, so a switch here would
+                                move nothing. The badge says so rather than pretending. */}
+                            {canManage && !p.locked ? (
                               <Segmented
                                 value={p.mode}
                                 onChange={(m) => setMode(p, m)}

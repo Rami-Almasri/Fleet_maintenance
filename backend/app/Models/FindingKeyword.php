@@ -50,6 +50,9 @@ class FindingKeyword extends Model
         'category_key', 'category_label', 'category_label_ar',
         'keyword', 'keyword_ar', 'risk', 'description',
         'is_active', 'sort_order',
+        // "Does this word need a place on the car?" — null = use the authored chain. Only meaningful
+        // for words no fault/damage catalog row owns; see [[FaultLocationService]]::typeIndex().
+        'location_mode',
     ];
 
     protected $casts = [
