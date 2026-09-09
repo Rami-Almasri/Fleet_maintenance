@@ -206,6 +206,21 @@ export default function FindingKeywords() {
           ))}
         </div>
 
+        {/* Words nobody can tap.
+            A keyword is graded and matchable here; the FAULT TYPE behind it is what puts it in the
+            inspector's picker. Rows added before the two were written together have only the first
+            half, so the library counts them and no inspector can find them — the state that reads as
+            "I added this fault and it isn't there". Called out in amber, above the table, rather than
+            being discoverable only by failing to find the chip on the picker screen. */}
+        {!loading && counts.not_selectable > 0 && (
+          <div className="rounded-2xl border border-amber-300/70 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+            <p className="font-semibold">
+              {t('findingKeywords.notSelectableTitle', { n: num(counts.not_selectable) })}
+            </p>
+            <p className="mt-1 text-amber-800">{t('findingKeywords.notSelectableHint')}</p>
+          </div>
+        )}
+
         {/* Filters */}
         <div className="flex flex-col gap-3 sm:flex-row">
           <SearchInput className="flex-1" value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder={t('findingKeywords.search')} />
@@ -306,6 +321,17 @@ export default function FindingKeywords() {
                         </td>
                         <td className="border-b border-slate-100 px-5 py-3.5">
                           {k.is_active ? <Badge tone="green">{t('findingKeywords.active')}</Badge> : <Badge tone="gray">{t('findingKeywords.hidden')}</Badge>}
+                          {/* Active and offered nowhere. "Active" alone would read as working.
+                              A word the config withholds on purpose — the garage records it during the
+                              repair — is stated plainly instead of flagged: it is unselectable AND
+                              correct, and amber on it would train the eye to ignore the real ones. */}
+                          {k.is_active && k.selectable === false && (
+                            <div className="mt-1">
+                              {k.withheld
+                                ? <Badge tone="gray">{t('findingKeywords.garageRecorded')}</Badge>
+                                : <Badge tone="amber">{t('findingKeywords.notInPicker')}</Badge>}
+                            </div>
+                          )}
                         </td>
                         <td className="border-b border-slate-100 px-5 py-3.5">
                           <div className="flex justify-end gap-2">

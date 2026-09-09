@@ -20,6 +20,10 @@ class FindingKeywordResource extends JsonResource
     {
         $meta = FindingKeyword::riskMeta($this->risk);
 
+        // The per-request singleton, so a 111-row library scans the fault catalog once, not once a row.
+        $selectable = app(\App\Services\SelectableFindings::class);
+        $key        = \App\Support\TextNormalizer::key($this->keyword);
+
         return [
             // AI knowledge base — see [[KeywordTerm]] / [[KeywordProfile]].
             'term_count'  => $this->whenCounted('terms'),
@@ -61,6 +65,20 @@ class FindingKeywordResource extends JsonResource
             'risk_emoji'     => $meta['emoji'],
             'description'    => $this->description,
             'is_active'      => (bool) $this->is_active,
+
+            // CAN ANYONE ACTUALLY TAP THIS WORD? A library row grades a fault and teaches the matcher
+            // its name; the fault type is what puts it in the picker. Rows added before those two were
+            // written together are graded, matchable, and offered nowhere — and the library counted
+            // them without ever saying so, which is how a curator ends up certain a fault was added
+            // and an inspector cannot find it. Reported per row rather than left to be discovered on
+            // the picker screen ([[traceability-visibility-requirement]]).
+            //
+            // `withheld` is the reason it may be BOTH unselectable and right: the config declares a few
+            // words understanding-only, because the garage records them during the repair rather than
+            // anyone reporting them. Without this second flag they read as the same defect.
+            'selectable'     => isset($selectable->keywords()[$key]),
+            'withheld'       => isset($selectable->withheld()[$key]),
+
             'sort_order'     => (int) $this->sort_order,
             'updated_at'     => $this->updated_at,
         ];

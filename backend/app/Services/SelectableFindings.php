@@ -101,6 +101,19 @@ class SelectableFindings
     }
 
     /**
+     * Forget the memoised menu.
+     *
+     * The union is computed once per instance, which is right for a request that only READS it. A
+     * request that ADDS a fault type reads it before the write (to decide whether the word is already
+     * offered) and must not answer the same question from that stale copy afterwards — the caller
+     * would report the new word as still unselectable.
+     */
+    public function flush(): void
+    {
+        $this->categories = null;
+    }
+
+    /**
      * Every selectable word, normalised for comparison → its display label.
      *
      * @return array<string, string>
@@ -113,6 +126,28 @@ class SelectableFindings
             foreach ((array) ($category['keywords'] ?? []) as $keyword) {
                 $out[TextNormalizer::key($keyword)] = $keyword;
             }
+        }
+
+        return $out;
+    }
+
+    /**
+     * The words the config WITHHOLDS on purpose — `understanding_only`.
+     *
+     * The engine recognises these ("Periodic Maintenance", "Sensor failure") and the picker deliberately
+     * does not offer them. That makes them unselectable and CORRECT, which is a different fact from a
+     * word that is unselectable because only half of it was ever added. Anything reporting the second
+     * has to be able to tell them apart, or it flags four rows nobody should touch and buries the one
+     * that is actually broken.
+     *
+     * @return array<string, string> normalised key → declared label
+     */
+    public function withheld(): array
+    {
+        $out = [];
+
+        foreach ((array) config('maintenance_findings.understanding_only', []) as $keyword) {
+            $out[TextNormalizer::key($keyword)] = $keyword;
         }
 
         return $out;

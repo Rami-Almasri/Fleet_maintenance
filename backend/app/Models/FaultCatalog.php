@@ -43,6 +43,23 @@ class FaultCatalog extends Model
         'sort_order'    => 'integer',
     ];
 
+    /**
+     * Any write here changes the findings MENU, so the memoised copy of it has to go.
+     *
+     * SelectableFindings is a per-request singleton (one scan of this table, however many rows ask
+     * "is this word selectable?"). Hooked on the model rather than called from each writer because
+     * there are already four — the Fault Types page's create / rename / retire / delete — plus the
+     * registrar behind the keyword library, and a fifth that forgot would leave the very response
+     * that added a fault still reporting it as unselectable.
+     */
+    protected static function booted(): void
+    {
+        $flush = fn () => app(\App\Services\SelectableFindings::class)->flush();
+
+        static::saved($flush);
+        static::deleted($flush);
+    }
+
     public function tasks(): HasMany
     {
         return $this->hasMany(MaintenanceTask::class, 'fault_catalog_id');
