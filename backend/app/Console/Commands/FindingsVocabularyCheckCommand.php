@@ -176,15 +176,7 @@ class FindingsVocabularyCheckCommand extends Command
     /** @return array<string,string> normalised key → catalog label */
     private function normalisedCatalog(): array
     {
-        $out = [];
-
-        foreach ((array) config('maintenance_findings.categories', []) as $category) {
-            foreach ((array) ($category['keywords'] ?? []) as $keyword) {
-                $out[TextNormalizer::key($keyword)] = $keyword;
-            }
-        }
-
-        return $out;
+        return app(\App\Services\SelectableFindings::class)->keywords();
     }
 
     /**
@@ -194,31 +186,13 @@ class FindingsVocabularyCheckCommand extends Command
      */
     private function catalogCategoryOf(string $normalisedKeyword): ?string
     {
-        foreach ((array) config('maintenance_findings.categories', []) as $category) {
-            foreach ((array) ($category['keywords'] ?? []) as $keyword) {
-                if (TextNormalizer::key($keyword) === $normalisedKeyword) {
-                    return $category['key'] ?? null;
-                }
-            }
-        }
-
-        return null;
+        return app(\App\Services\SelectableFindings::class)->categoryOf($normalisedKeyword);
     }
 
     /** @return array<string,string> normalised concept name → the category the ontology declares */
     private function ontologyCategories(): array
     {
-        $out = [];
-
-        foreach (glob(database_path('seeders/ontology/*.php')) ?: [] as $path) {
-            foreach ((array) require $path as $concept) {
-                if (isset($concept['name'], $concept['category'])) {
-                    $out[TextNormalizer::key($concept['name'])] = $concept['category'];
-                }
-            }
-        }
-
-        return $out;
+        return \App\Support\OntologyConcepts::categories();
     }
 
     /** @return array<string,string> normalised key → declared label */
@@ -244,17 +218,7 @@ class FindingsVocabularyCheckCommand extends Command
      */
     private function normalisedOntology(): array
     {
-        $out = [];
-
-        foreach (glob(database_path('seeders/ontology/*.php')) ?: [] as $path) {
-            foreach ((array) require $path as $concept) {
-                if (isset($concept['name'])) {
-                    $out[TextNormalizer::key($concept['name'])] = $concept['name'];
-                }
-            }
-        }
-
-        return $out;
+        return \App\Support\OntologyConcepts::names();
     }
 
     /**

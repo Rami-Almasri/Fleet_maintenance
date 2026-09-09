@@ -29,12 +29,18 @@ class FaultCatalog extends Model
         // Seeded from config('vehicle_locations.policy'); resolved by FaultLocationService.
         'location_mode',
         'default_severity', 'on_site', 'is_active', 'sort_order',
+        // A curator has said something different about this row in the Fault Types page, so
+        // FaultCatalogSeeder stops re-asserting the authored config over it on the next deploy.
+        // MUST stay fillable: every write that sets it goes through create()/update(), and leaving it
+        // out means mass assignment drops it silently and the seeder guard never fires.
+        'edited_in_app',
     ];
 
     protected $casts = [
-        'on_site'    => 'boolean',
-        'is_active'  => 'boolean',
-        'sort_order' => 'integer',
+        'on_site'       => 'boolean',
+        'is_active'     => 'boolean',
+        'edited_in_app' => 'boolean',
+        'sort_order'    => 'integer',
     ];
 
     public function tasks(): HasMany

@@ -303,23 +303,19 @@ class FindingKeywordController extends Controller
     /**
      * The keywords an inspector can actually tap, normalised for comparison.
      *
-     * Read from config rather than from `finding_keywords.is_active` because the catalog — not the
-     * table — is what the picker renders. A row can be active and matchable while its concept is
+     * Read from the CATALOG rather than from `finding_keywords.is_active`, because the catalog — not
+     * that table — is what the picker renders. A row can be active and matchable while its concept is
      * declared understanding-only, and that is exactly the case this has to catch.
+     *
+     * Answered by SelectableFindings so this gate, the picker and the vocabulary check cannot drift:
+     * the catalog is now config PLUS the fault rows the admin page owns, and a gate still reading the
+     * config alone would reject exactly the words the office had just added.
      *
      * @return array<string,true>
      */
     private function selectableKeywords(): array
     {
-        $out = [];
-
-        foreach ((array) config('maintenance_findings.categories', []) as $category) {
-            foreach ((array) ($category['keywords'] ?? []) as $keyword) {
-                $out[TextNormalizer::key($keyword)] = true;
-            }
-        }
-
-        return $out;
+        return array_map(fn () => true, app(\App\Services\SelectableFindings::class)->keywords());
     }
 
     /**

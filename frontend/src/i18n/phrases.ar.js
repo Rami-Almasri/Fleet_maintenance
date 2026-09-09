@@ -6030,6 +6030,61 @@ const phrasesAr = {
   // Form guidance — what a Save button says on hover when fields are still empty.
   'Still needed: {fields}': 'ما زال مطلوباً: {fields}',
   'and': 'و',
+
+  // Fault Types — the WHAT axis, curated in the Control Desk instead of in a deploy. Note the
+  // vocabulary wording: "no words yet" is not an error, it says the matcher cannot read the fault in
+  // a written note yet, which is a different (and recoverable) thing from the fault being broken.
+  'Fault Types': 'أنواع الأعطال',
+  'Fault types': 'أنواع الأعطال',
+  'What an inspector can report. Adding one here puts it in the picker straight away.':
+    'ما يمكن للفاحص الإبلاغ عنه. إضافة عطل هنا تجعله متاحاً في القائمة مباشرة.',
+  'What an inspector can report, and what it is worth': 'ما يمكن للفاحص الإبلاغ عنه، وما مدى خطورته',
+  'Add fault type': 'إضافة نوع عطل',
+  'Edit fault type': 'تعديل نوع العطل',
+  'Offered in the picker': 'معروضة في القائمة',
+  'No words behind them': 'بدون مفردات',
+  'Tappable, but the matcher cannot recognise them in written notes.':
+    'يمكن اختيارها، لكن المحرك لا يتعرف عليها في الملاحظات المكتوبة.',
+  'Search a fault type…': 'ابحث عن نوع عطل…',
+  'Only ones missing words': 'فقط التي بدون مفردات',
+  'Words': 'المفردات',
+  'Recorded on': 'مسجل على',
+  'On site': 'في الموقع',
+  'Understood': 'مفهوم',
+  'No words yet': 'بدون مفردات بعد',
+  'Offered': 'معروض',
+  'Retired': 'متوقف',
+  'In config': 'في الإعدادات',
+  'Retire': 'إيقاف',
+  'Authored in the config file — remove it there': 'مكتوب في ملف الإعدادات — يجب حذفه من هناك',
+  'No fault types match': 'لا توجد أنواع أعطال مطابقة',
+  'Try a different search, or clear the filters.': 'جرّب بحثاً آخر، أو امسح عوامل التصفية.',
+  'It becomes selectable in the findings picker as soon as you save.':
+    'يصبح قابلاً للاختيار في قائمة النتائج فور الحفظ.',
+  'Fault name (English)': 'اسم العطل (إنجليزي)',
+  'Fault name (Arabic)': 'اسم العطل (عربي)',
+  'e.g. Detached trim': 'مثال: إنفصال الزينة',
+  'Pick a category': 'اختر تصنيفاً',
+  'Default severity': 'الخطورة الافتراضية',
+  'Can be repaired on site (no need to send the car to a garage)':
+    'يمكن إصلاحه في الموقع (بدون إرسال السيارة إلى الورشة)',
+  'Inspectors can tap this straight away. The matcher will not recognise it in written notes until a developer adds its wording to the fault ontology.':
+    'يستطيع الفاحصون اختياره فوراً. لن يتعرف عليه المحرك في الملاحظات المكتوبة حتى يضيف المطوّر مفرداته إلى قاموس الأعطال.',
+  'This fault is also written in the application config. Renaming it here sticks, and the next deployment will leave your version alone.':
+    'هذا العطل مكتوب أيضاً في إعدادات النظام. إعادة تسميته هنا تبقى، ولن يغيّرها التحديث القادم.',
+  'Delete this fault type?': 'حذف نوع العطل هذا؟',
+  '“{name}” has never been used on a task, so deleting it loses nothing.':
+    '«{name}» لم يُستخدم في أي مهمة، لذا حذفه لا يفقد شيئاً.',
+  'Could not save this fault type': 'تعذّر حفظ نوع العطل',
+  'Could not change this fault type': 'تعذّر تغيير نوع العطل',
+  'Could not delete this fault type': 'تعذّر حذف نوع العطل',
+  'Could not load the fault types': 'تعذّر تحميل أنواع الأعطال',
+  'Fault type deleted': 'تم حذف نوع العطل',
+
+  // Severity grades — lower-case because they arrive as the server's own constant values.
+  'routine': 'روتيني',
+  'moderate': 'متوسط',
+  'critical': 'حرج',
 };
 
 export default phrasesAr;
