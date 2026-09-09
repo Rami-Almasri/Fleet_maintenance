@@ -7,6 +7,7 @@ import OilProjection from './reminders/OilProjection';
 import InvoiceMatching from './InvoiceMatching';
 import FindingKeywords from './FindingKeywords';
 import VehicleLocations from './VehicleLocations';
+import FaultTypes from './FaultTypes';
 
 /**
  * Control Desk — the Controllers' (Lin & Marwa) day, in one place. Five jobs that were five separate
@@ -21,12 +22,14 @@ import VehicleLocations from './VehicleLocations';
  *                          whether the paper and the repair agree.
  *   • Keyword Risk       → the fault vocabulary the inspection picker offers, and how serious each
  *                          fault type is. The desk's own settings, not a daily queue.
+ *   • Fault Types        → WHAT can be reported at all. Adding one here puts it in the picker with no
+ *                          deploy, which is what it used to take.
  *   • Vehicle Locations  → the other half of that same vocabulary: WHERE on the car a fault can be,
  *                          and which fault types must name a place before the report can be filed.
  *
- * The last two are one job split across two pages — a fault is WHAT it is, HOW MANY there are and
- * WHERE they are, and the same two people curate all of it. Keeping them apart meant grading a
- * keyword on one route and its location rule on another; they sit side by side now.
+ * The last three are one job split across three pages — a fault is WHAT it is, HOW SERIOUS it is,
+ * HOW MANY there are and WHERE they are, and the same two people curate all of it. Keeping them apart
+ * meant grading a keyword on one route and its location rule on another; they sit side by side now.
  *
  * A SIDEBAR rather than a tab strip: these are separate jobs, not five readings of one board, and the
  * rail stays in view while you work inside one of them.
@@ -80,6 +83,15 @@ export default function ControlDesk() {
         permission: 'maintenance.view',
         was: '/finding-keywords',
         Component: FindingKeywords,
+      },
+      {
+        key: 'fault-types',
+        label: t('Fault Types'),
+        hint: t('What an inspector can report, and what it is worth'),
+        icon: <Icon.Flag className="h-4 w-4" />,
+        permission: 'maintenance.view',
+        was: '/fault-types',
+        Component: FaultTypes,
       },
       {
         key: 'locations',

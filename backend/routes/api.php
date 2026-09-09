@@ -11,6 +11,7 @@ use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\DriverController;
 use App\Http\Controllers\FaultCauseController;
 use App\Http\Controllers\FindingKeywordController;
+use App\Http\Controllers\FaultCatalogController;
 use App\Http\Controllers\VehicleLocationController;
 use App\Http\Controllers\FleetController;
 use App\Http\Controllers\GarageInvoiceController;
@@ -1190,6 +1191,19 @@ Route::middleware('auth:sanctum')->prefix('finding-keywords')->controller(Findin
 //
 // Ordering matters: the literal segments (`groups`, `reorder`, `policy`, `settings`) are declared
 // BEFORE `/{vehicleLocation}` so none of them is swallowed as a model binding.
+// Fault Types — curation of the WHAT axis, the companion to /vehicle-locations' WHERE. Adding a fault
+// here makes it selectable in the findings picker immediately (SelectableFindings unions these rows
+// onto the authored config), which is what it used to take a deploy to do. It does NOT author the
+// word's meaning — synonyms and slang stay in database/seeders/ontology/*.php, and every row reports
+// whether it has any.
+Route::middleware('auth:sanctum')->prefix('fault-catalog')->controller(FaultCatalogController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:maintenance.view');
+    Route::post('/', 'store')->middleware('permission:maintenance.manage');
+    Route::post('/{faultCatalog}', 'update')->middleware('permission:maintenance.manage');           // POST, like Vendor
+    Route::post('/{faultCatalog}/toggle', 'toggle')->middleware('permission:maintenance.manage');    // retire / restore
+    Route::delete('/{faultCatalog}', 'destroy')->middleware('permission:maintenance.manage');        // unused rows only
+});
+
 Route::middleware('auth:sanctum')->prefix('vehicle-locations')->controller(VehicleLocationController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:maintenance.view');   // places + sections + policy + rails
 

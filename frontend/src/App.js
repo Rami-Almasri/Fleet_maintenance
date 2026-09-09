@@ -343,6 +343,7 @@ export default function App() {
                   <Route path="/finding-keywords" element={<RedirectToTab to="/control-desk" tab="keywords" />} />
                   {/* Where on the car a fault can be — the other half of the fault vocabulary, so it
                       sits beside Keyword Risk on the Control Desk rather than on its own route. */}
+                  <Route path="/fault-types" element={<RedirectToTab to="/control-desk" tab="fault-types" />} />
                   <Route path="/vehicle-locations" element={<RedirectToTab to="/control-desk" tab="locations" />} />
                   {/* Maintenance Analytics is marked "Coming Soon" in the module registry —
                       redirect the old URL so the unfinished page isn't reachable directly. */}

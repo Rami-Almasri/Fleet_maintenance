@@ -314,10 +314,16 @@ class MaintenanceWorkflowController extends Controller
         // them without threading a new prop through screens this change has no other business
         // touching. Entries are CREATED for catalog words the keyword library has no row for, so
         // coverage is the catalog's, not the library's.
+        // WHAT IS EVEN OFFERED — config PLUS the fault rows the admin page owns. Resolved once, here,
+        // and reused for every derived map below, so the chips, their kinds and their location policy
+        // are all computed from the SAME list. Reading config directly again anywhere in this method
+        // would silently drop every fault the office added without a deploy.
+        $selectable = app(\App\Services\SelectableFindings::class)->categories();
+
         $classifier  = app(\App\Services\EventClassificationService::class);
         $keywordRisk = $keywordRisk->toArray();
 
-        foreach ((array) config('maintenance_findings.categories', []) as $category) {
+        foreach ($selectable as $category) {
             foreach ($category['keywords'] ?? [] as $keyword) {
                 $kind = $classifier->classifyFromFinding(['text' => $keyword])['kind'] ?? null;
 
@@ -332,7 +338,7 @@ class MaintenanceWorkflowController extends Controller
 
         return ResponseHelper::SuccessResponse(
             [
-                'categories'        => array_values(config('maintenance_findings.categories', [])),
+                'categories'        => array_values($selectable),
                 // Each category carries an `on_site` flag; these tokens (battery/oil) additionally force
                 // an On-Site suggestion + surface in the On-Site checklist even from an In-Shop category.
                 'on_site_keywords'  => array_values(config('maintenance_findings.on_site_keywords', [])),
@@ -346,7 +352,7 @@ class MaintenanceWorkflowController extends Controller
                 // Grouped "where on the car" vocabulary → [{ key, label, label_ar, locations[] }]
                 'locations'         => $locations->groupedCatalog(),
                 // Keyed by keyword string → 'required' | 'optional' | 'none'
-                'location_policy'   => $locations->policyByKeyword((array) config('maintenance_findings.categories', [])),
+                'location_policy'   => $locations->policyByKeyword($selectable),
                 'max_quantity'      => $locations->maxQuantity(),
             ],
             'Findings catalog retrieved successfully',
