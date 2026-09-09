@@ -55,6 +55,14 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(\App\Services\PartCatalogMatcher::class);
         $this->app->singleton(\App\Services\PartIdentityService::class);
 
+        // The findings menu — config keywords ∪ the fault types the admin page owns — for the same
+        // reason. It is asked "is this word selectable?" once PER ROW by the keyword library resource
+        // (111 rows), and resolving it fresh each time would be 111 scans of fault_catalog to render
+        // one table. One instance per request also makes flush() meaningful: FaultTypeRegistrar clears
+        // the memo after adding a fault type, so the very response that created a word does not go on
+        // reporting it as unselectable.
+        $this->app->singleton(\App\Services\SelectableFindings::class);
+
         // The maintenance intelligence pipeline. Capabilities are registered HERE and nowhere else:
         // a capability's only job is to answer "what does history tell us?", so the decision about
         // which ones exist — and therefore which can ever reach a user — stays in one place.

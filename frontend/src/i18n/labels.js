@@ -4469,9 +4469,19 @@ const en = {
     removeTitle: 'Remove keyword?',
     remove: 'Remove',
     removeMsg: '“{kw}” will no longer be offered in the picker. Past findings that used it are untouched.',
-    added: 'Keyword added',
+    // Says the part that was missing. Adding a keyword used to write only the matcher's half, so the
+    // curator was told "added" and the word was not in anyone's picker — the toast was true and the
+    // screen was wrong. It now names the outcome that was actually in doubt.
+    added: 'Keyword added — inspectors can select it now',
     updated: 'Keyword updated',
     removed: 'Keyword removed',
+    notSelectableTitle: '{n} of these words cannot be selected in the findings picker',
+    notSelectableHint: 'They were added before adding a keyword also created the fault type behind it, '
+      + 'so the matcher knows them and no inspector can tap them. Run '
+      + '`php artisan findings:vocabulary-check --adopt` to finish adding them, or add each one on the '
+      + 'Fault Types page.',
+    notInPicker: 'Not in the picker',
+    garageRecorded: 'Garage-recorded',
     saveError: 'Could not save keyword',
     removeError: 'Could not remove keyword',
     fixFields: 'Please fix the highlighted fields',
@@ -10505,9 +10515,15 @@ const ar = {
     removeTitle: 'حذف العطل؟',
     remove: 'حذف',
     removeMsg: '«{kw}» لن يظهر بعد الآن في قائمة الفحص. السجلات السابقة التي استخدمته لن تتأثر.',
-    added: 'تمت إضافة العطل',
+    added: 'تمت إضافة العطل — يمكن للفاحصين اختياره الآن',
     updated: 'تم تحديث العطل',
     removed: 'تم حذف العطل',
+    notSelectableTitle: '{n} من هذه الكلمات لا يمكن اختيارها في قائمة الأعطال',
+    notSelectableHint: 'أُضيفت قبل أن تصبح إضافة الكلمة تنشئ نوع العطل خلفها، فالمحرّك يعرفها ولا يستطيع '
+      + 'أي فاحص اختيارها. شغّل `php artisan findings:vocabulary-check --adopt` لإكمال إضافتها، أو أضف '
+      + 'كل واحدة من صفحة أنواع الأعطال.',
+    notInPicker: 'غير متاح في القائمة',
+    garageRecorded: 'يسجّله الكراج',
     saveError: 'تعذّر حفظ العطل',
     removeError: 'تعذّر حذف العطل',
     fixFields: 'يرجى تصحيح الحقول المميّزة',

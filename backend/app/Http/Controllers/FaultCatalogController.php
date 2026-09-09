@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Helpers\ResponseHelper;
 use App\Models\FaultCatalog;
 use App\Models\MaintenanceTask;
+use App\Services\FaultTypeRegistrar;
 use App\Services\SelectableFindings;
 use App\Support\OntologyConcepts;
 use App\Support\TextNormalizer;
@@ -141,7 +142,7 @@ class FaultCatalogController extends Controller
      * The slug is derived, not asked for: it is an internal identity nobody outside the codebase
      * should have to invent, and a hand-typed one is how two rows for one concept get created.
      */
-    public function store(Request $request)
+    public function store(Request $request, FaultTypeRegistrar $registrar)
     {
         $data = $request->validate($this->rules(), $this->messages());
 
@@ -159,6 +160,11 @@ class FaultCatalogController extends Controller
             // Behind everything the config authors, so an added word does not jump the curated order.
             'sort_order'       => (int) (FaultCatalog::max('sort_order') ?? 0) + 10,
         ]);
+
+        // The other half of a fault type: its risk grade and the canonical term the matcher searches.
+        // Without this the fault is tappable and ungraded — it never appears in the Keyword Risk
+        // Library, so the page that decides how serious a fault is has never heard of it.
+        $registrar->ensureKeyword($fault);
 
         return ResponseHelper::SuccessResponse(
             [
@@ -180,9 +186,12 @@ class FaultCatalogController extends Controller
      * The slug is NEVER changed, even when the name is. It is what `maintenance_tasks` and the config
      * file both point at, and rewriting it would orphan every task typed from this row.
      */
-    public function update(Request $request, FaultCatalog $faultCatalog)
+    public function update(Request $request, FaultCatalog $faultCatalog, FaultTypeRegistrar $registrar)
     {
         $data = $request->validate($this->rules($faultCatalog->id), $this->messages());
+
+        // Read before the write — the library row is found by the wording this row carries NOW.
+        $previousName = $faultCatalog->name;
 
         $faultCatalog->update([
             'name'             => trim($data['name']),
@@ -192,6 +201,11 @@ class FaultCatalogController extends Controller
             'on_site'          => (bool) ($data['on_site'] ?? false),
             'edited_in_app'    => true,
         ]);
+
+        // The library row follows the rename and the re-grade, so the two tables cannot describe one
+        // fault differently — a chip reading one thing and its risk row another is how a "critical"
+        // fault ends up filed as routine.
+        $registrar->syncKeywordFrom($faultCatalog, $previousName);
 
         return ResponseHelper::SuccessResponse(
             ['has_vocabulary' => OntologyConcepts::has($faultCatalog->name)],
@@ -204,7 +218,7 @@ class FaultCatalogController extends Controller
      * Retire or restore. Retiring takes the chip out of the picker and leaves every task that already
      * points at this row saying exactly what it always said.
      */
-    public function toggle(FaultCatalog $faultCatalog)
+    public function toggle(FaultCatalog $faultCatalog, FaultTypeRegistrar $registrar)
     {
         $authored = collect((array) config('fault_catalog', []))->pluck('slug')->contains($faultCatalog->slug);
 
@@ -224,6 +238,10 @@ class FaultCatalogController extends Controller
             'edited_in_app' => true,
         ]);
 
+        // Retiring a fault type stops the matcher proposing it too. A word the picker no longer offers
+        // but the engine still suggests is exactly the dead end this pair of pages exists to prevent.
+        $registrar->syncActiveState($faultCatalog);
+
         return ResponseHelper::SuccessResponse(
             ['is_active' => (bool) $faultCatalog->is_active],
             $faultCatalog->is_active ? 'Fault type restored' : 'Fault type retired',
@@ -235,7 +253,7 @@ class FaultCatalogController extends Controller
      * Delete outright — allowed ONLY for a row no task has ever been typed from, which is the "added
      * by mistake" case. Anything else retires.
      */
-    public function destroy(FaultCatalog $faultCatalog)
+    public function destroy(FaultCatalog $faultCatalog, FaultTypeRegistrar $registrar)
     {
         $used = MaintenanceTask::where('fault_catalog_id', $faultCatalog->id)->count();
 
@@ -257,6 +275,11 @@ class FaultCatalogController extends Controller
                 422
             );
         }
+
+        // The library row is DEACTIVATED, not deleted, even here: it may already carry hand-written
+        // terms and human match feedback, which are the rarest rows this system collects and cannot be
+        // reconstructed. Deactivated is enough — the vocabulary check reads active rows only.
+        $registrar->withdrawKeywordFor($faultCatalog);
 
         $faultCatalog->delete();
 

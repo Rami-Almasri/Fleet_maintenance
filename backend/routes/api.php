@@ -1171,7 +1171,11 @@ Route::middleware('auth:sanctum')->prefix('finding-keywords')->controller(Findin
     // the admins who curate the library, and gating it to managers would starve the loop.
     Route::post('/match-feedback', 'matchFeedback')->middleware('permission:maintenance.view');
 
-    Route::post('/', 'store')->middleware('permission:maintenance.initiate');             // add a keyword (inspectors contribute)
+    // Adding a keyword now adds the FAULT TYPE behind it too, so this write reaches every inspector's
+    // picker rather than only the matcher — the same act as POST /fault-catalog, which has always sat
+    // at maintenance.manage. Two doors into one vocabulary must not be guarded differently: the lower
+    // bar would simply be the way round the higher one. Raised from maintenance.initiate.
+    Route::post('/', 'store')->middleware('permission:maintenance.manage');               // add a keyword + its fault type
     Route::get('/{findingKeyword}', 'show')->middleware('permission:maintenance.view');   // full concept: terms + profile + run log
     Route::post('/{findingKeyword}', 'update')->middleware('permission:maintenance.manage');  // edit / re-grade risk (POST, like Vendor)
     Route::delete('/{findingKeyword}', 'destroy')->middleware('permission:maintenance.manage'); // retire a keyword

@@ -87,6 +87,15 @@ class FindingKeywordController extends Controller
                     config('maintenance_findings.categories', []),
                 )),
                 'counts' => [
+                    // Words that are graded and matchable and that nobody can tap. This is the number
+                    // that should be zero: every one of them is a fault somebody added and believed was
+                    // in the picker. Counted over the WHOLE library, unfiltered, like the risk tiles —
+                    // and over ACTIVE rows only, because a retired word is offered nowhere by design.
+                    //
+                    // The `understanding_only` words are excluded: they are withheld deliberately, and
+                    // counting them would put a permanent 4 on a tile whose whole job is to be zero —
+                    // which is how a real one hides. Exactly the set findings:vocabulary-check exempts.
+                    'not_selectable' => $this->deadEndCount(),
                     'total'    => (int) $counts->sum(),
                     'critical' => (int) ($counts[FindingKeyword::RISK_CRITICAL] ?? 0),
                     'moderate' => (int) ($counts[FindingKeyword::RISK_MODERATE] ?? 0),
@@ -105,6 +114,28 @@ class FindingKeywordController extends Controller
             'Findings keyword library retrieved successfully',
             200
         );
+    }
+
+    /**
+     * How many active words are matchable, ungraded as garage-only, and offered nowhere — the dead ends
+     * `findings:vocabulary-check` fails on, counted with the same rule so the page and the check cannot
+     * disagree about how many there are.
+     */
+    private function deadEndCount(): int
+    {
+        $selectable = app(\App\Services\SelectableFindings::class);
+        $offered    = $selectable->keywords();
+        $withheld   = $selectable->withheld();
+
+        return FindingKeyword::query()
+            ->where('is_active', true)
+            ->get(['keyword'])
+            ->reject(function (FindingKeyword $k) use ($offered, $withheld) {
+                $key = TextNormalizer::key($k->keyword);
+
+                return isset($offered[$key]) || isset($withheld[$key]);
+            })
+            ->count();
     }
 
     /**
@@ -474,10 +505,31 @@ class FindingKeywordController extends Controller
         return $data;
     }
 
-    /** Add a new keyword to the library. */
-    public function store(Request $request)
+    /**
+     * Add a new keyword to the library — and, in the same act, the fault type that makes it TAPPABLE.
+     *
+     * Adding a word here used to write one row of the two a fault is made of: the matcher learned it and
+     * the picker never offered it, so the library counted one more fault than the picker did and the new
+     * word came back from the picker's search as "0 matching issues" beside a suggestion card claiming
+     * the garage records this one during the repair. It was not withheld; it was half-added.
+     * [[FaultTypeRegistrar]] writes both halves, so the two doors into the vocabulary agree.
+     */
+    public function store(Request $request, \App\Services\FaultTypeRegistrar $registrar)
     {
         $data = $this->validatePayload($request);
+
+        // A SERVICE has no fault row and never will — typing "Coolant service" as a fault would put
+        // planned work into Top Faults, recurrence and the reliability score. Refusing here beats
+        // creating a word that can only ever be half-added, which is the bug this method just fixed.
+        if ($registrar->isServiceWording($data['keyword'])) {
+            return ResponseHelper::FailureResponse(
+                null,
+                'That wording reads as scheduled service, not a fault, so it cannot be offered in the '
+                . 'findings picker — a task typed from it would count as a failure in every fault report. '
+                . 'Service items are authored in config/service_catalog.php.',
+                422
+            );
+        }
 
         $keyword = FindingKeyword::create($data);
 
@@ -486,13 +538,23 @@ class FindingKeywordController extends Controller
         $keyword->syncCanonicalTerms();
         KeywordOntologyService::flushCache();
 
-        return ResponseHelper::SuccessResponse(new FindingKeywordResource($keyword), 'Keyword added to the library', 201);
+        $registrar->ensureFaultType($keyword);
+
+        return ResponseHelper::SuccessResponse(
+            new FindingKeywordResource($keyword),
+            'Keyword added to the library — inspectors can select it in the findings picker now.',
+            201
+        );
     }
 
     /** Edit a keyword — rename, re-categorise, re-grade its risk, or toggle it on/off. */
-    public function update(Request $request, FindingKeyword $findingKeyword)
+    public function update(Request $request, FindingKeyword $findingKeyword, \App\Services\FaultTypeRegistrar $registrar)
     {
         $data = $this->validatePayload($request, $findingKeyword);
+
+        // Captured BEFORE the write: the twin is found by the word it currently carries, and after the
+        // update that word is gone — a rename would otherwise create a second row instead of moving one.
+        $previousName = $findingKeyword->keyword;
 
         $findingKeyword->update($data);
 
@@ -500,12 +562,21 @@ class FindingKeywordController extends Controller
         $findingKeyword->syncCanonicalTerms();
         KeywordOntologyService::flushCache();
 
+        // The chip has to say what the library says. A rename that reached only this table would leave
+        // the picker offering the old wording and the two tables describing one fault differently.
+        $registrar->syncFaultTypeFrom($findingKeyword, $previousName);
+
         return ResponseHelper::SuccessResponse(new FindingKeywordResource($findingKeyword->fresh()), 'Keyword updated', 200);
     }
 
     /** Remove a keyword from the library (does not touch any historical findings that used it). */
-    public function destroy(FindingKeyword $findingKeyword)
+    public function destroy(FindingKeyword $findingKeyword, \App\Services\FaultTypeRegistrar $registrar)
     {
+        // The chip goes with the word. Left behind it would be a tappable fault with no grade, no
+        // Arabic and nothing the matcher knows — the same dead end, pointing the other way. A type
+        // tasks were typed from is retired rather than deleted; the registrar draws that line.
+        $registrar->withdrawFaultTypeFor($findingKeyword);
+
         // Terms, profile and run history cascade with the concept (FK onDelete cascade).
         $findingKeyword->delete();
         KeywordOntologyService::flushCache();

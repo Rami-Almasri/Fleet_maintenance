@@ -34,17 +34,25 @@ use Illuminate\Console\Command;
  *   · every selectable catalog keyword resolves to exactly one ontology concept — it has words
  *   · every finding_keywords row is either selectable, or declared `understanding_only` — no dead ends
  *
- * READ-ONLY by default, like [[components:verify]]. `--prune` is the one exception and it only
- * DEACTIVATES: an orphan row may already carry human feedback and hand-written terms, and deleting it
- * would destroy the corrections that explain why it exists.
+ * READ-ONLY by default, like [[components:verify]]. Two flags write, and they are opposite answers to
+ * the same finding — which is why neither is the default and the command will not guess between them:
+ *
+ *   --prune   the word should not be offered → deactivate the row. Only DEACTIVATES: an orphan may
+ *             already carry human feedback and hand-written terms, and deleting it would destroy the
+ *             corrections that explain why it exists.
+ *   --adopt   the word SHOULD be offered → give it a fault type, which is what makes it tappable.
+ *             This is the answer for every row added in the Keyword Risk Library before that form
+ *             wrote both halves of a fault type ([[FaultTypeRegistrar]]).
  *
  *   php artisan findings:vocabulary-check           # assert both directions
  *   php artisan findings:vocabulary-check --prune   # deactivate orphaned rows (reversible)
+ *   php artisan findings:vocabulary-check --adopt   # make orphaned rows selectable instead
  */
 class FindingsVocabularyCheckCommand extends Command
 {
     protected $signature = 'findings:vocabulary-check
-        {--prune : Deactivate finding_keywords rows that are neither selectable nor declared understanding-only}';
+        {--prune : Deactivate finding_keywords rows that are neither selectable nor declared understanding-only}
+        {--adopt : Give each of those rows a fault type instead, so the word becomes selectable}';
 
     protected $description = 'Verify the findings catalog and the fault ontology share one vocabulary';
 
@@ -147,10 +155,55 @@ class FindingsVocabularyCheckCommand extends Command
             foreach ($orphans as $row) {
                 $this->line("  · {$row->keyword}   [#{$row->id} · {$row->category_key}]");
             }
-            $this->line('  Fix: add it to a category in config/maintenance_findings.php so it can be picked,');
-            $this->line('       or list it under `understanding_only` if it is a garage diagnosis, not an observation.');
+            $this->line('  Fix: run this with --adopt (or add the fault type on the Fault Types page) so it can');
+            $this->line('       be picked, or list it under `understanding_only` if it is a garage diagnosis,');
+            $this->line('       not an observation.');
 
-            if ($this->option('prune')) {
+            // ── The other answer: MAKE IT SELECTABLE ──────────────────────────────────────────────
+            // `--prune` assumes an orphan is a mistake. Most are not: they are words the office added
+            // in the Keyword Risk Library before that form wrote the fault type too, so the fault was
+            // wanted, was graded, and was simply half-added. Deactivating those throws away a
+            // deliberate decision. `--adopt` finishes the job instead, writing the row the form now
+            // writes at creation — one flag per intent, and neither is the default.
+            if ($this->option('adopt')) {
+                $registrar = app(\App\Services\FaultTypeRegistrar::class);
+                $adopted   = 0;
+                $refused   = [];
+
+                $this->newLine();
+
+                foreach ($orphans as $row) {
+                    $keyword = FindingKeyword::find($row->id);
+
+                    // A service wording gets no fault row, here or anywhere. Naming it beats a silent
+                    // skip that leaves the run reporting fewer fixes than orphans with no explanation.
+                    if ($registrar->isServiceWording($keyword->keyword)) {
+                        $refused[] = $keyword->keyword;
+                        continue;
+                    }
+
+                    if ($registrar->ensureFaultType($keyword)) {
+                        $adopted++;
+                        $this->line("  <info>+</info> {$keyword->keyword} — selectable now");
+                    }
+                }
+
+                if ($refused !== []) {
+                    $this->newLine();
+                    $this->warn('Left alone — these read as scheduled service, not faults. A fault row would');
+                    $this->warn('count them as failures in every fault report:');
+                    foreach ($refused as $label) {
+                        $this->line("  · {$label}");
+                    }
+                }
+
+                $this->newLine();
+                $this->info("Adopted {$adopted} keyword(s) into the fault catalog.");
+
+                if ($refused === []) {
+                    $failures--;   // handled, not ignored
+                }
+            } elseif ($this->option('prune')) {
                 $this->newLine();
                 foreach ($orphans as $row) {
                     FindingKeyword::whereKey($row->id)->update(['is_active' => false]);
@@ -195,16 +248,16 @@ class FindingsVocabularyCheckCommand extends Command
         return \App\Support\OntologyConcepts::categories();
     }
 
-    /** @return array<string,string> normalised key → declared label */
+    /**
+     * @return array<string,string> normalised key → declared label
+     *
+     * Answered by SelectableFindings, like the selectable list itself: the Keyword Risk Library counts
+     * its dead ends with the same exemption, and two readings of one config line would eventually
+     * differ about which words are withheld on purpose.
+     */
     private function normalisedUnderstandingOnly(): array
     {
-        $out = [];
-
-        foreach ((array) config('maintenance_findings.understanding_only', []) as $keyword) {
-            $out[TextNormalizer::key($keyword)] = $keyword;
-        }
-
-        return $out;
+        return app(\App\Services\SelectableFindings::class)->withheld();
     }
 
     /**
