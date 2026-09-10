@@ -5323,14 +5323,17 @@ const en = {
     openVehicle: 'Open vehicle',
     openSystem: 'Full evidence report',
     refresh: 'Refresh',
-    // Print builds its own standalone HTML sheet — see lib/vehicleOverviewReport.js — rather than
-    // handing this dark cockpit surface to the printer. The "Download dossier" button that used to
-    // sit beside it is gone: two printable documents on one page made a reader choose between them
+    // The button builds its own standalone HTML sheet — see lib/vehicleOverviewReport.js — rather
+    // than handing this dark cockpit surface to the printer, and SAVES it: what people do with this
+    // report is forward it, and a browser tab is not something you can attach to a mail. The old
+    // "Download dossier" button is gone: two documents on one page made a reader choose between them
     // before knowing what either contained.
-    print: 'Print / Save as PDF',
-    // A pop-up blocker makes Print look like a dead button. It is the one failure this page cannot
-    // detect any other way, so it is said out loud rather than left as nothing happening.
-    printBlocked: 'The printable report opens in a new tab — your browser blocked it. Allow pop-ups for this site and press Print again.',
+    download: 'Download report (HTML)',
+    // The file's own toolbar keeps the print button, so "save as PDF" is one click away inside it.
+    printSheet: 'Print / Save as PDF',
+    // A browser that refuses the download makes this look like a dead button. It is the one failure
+    // this page cannot detect any other way, so it is said out loud rather than left as nothing.
+    downloadFailed: 'The report could not be saved. Check that downloads are allowed for this site, then press the button again.',
     // The printable sheet's own search box. It reads the fitters' notes too, not just fault names —
     // "airbag" appears nowhere on this car except inside one workshop note.
     search: 'Search faults, garages, notes…',
@@ -11307,8 +11310,9 @@ const ar = {
     openVehicle: 'فتح المركبة',
     openSystem: 'تقرير الأدلة الكامل',
     refresh: 'تحديث',
-    print: 'طباعة / حفظ PDF',
-    printBlocked: 'يفتح التقرير القابل للطباعة في تبويب جديد، وقد منعه المتصفح. اسمح بالنوافذ المنبثقة لهذا الموقع ثم اضغط «طباعة» مرة أخرى.',
+    download: 'تنزيل التقرير (HTML)',
+    printSheet: 'طباعة / حفظ PDF',
+    downloadFailed: 'تعذّر حفظ التقرير. تأكد من السماح بالتنزيلات لهذا الموقع ثم اضغط الزر مرة أخرى.',
     search: 'ابحث في الأعطال والورش والملاحظات…',
     hero: {
       label: 'ما يُظهره السجل',

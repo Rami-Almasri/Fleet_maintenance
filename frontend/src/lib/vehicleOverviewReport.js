@@ -1,6 +1,11 @@
-// THE PRINTED VEHICLE REPORT — the page at /reports/vehicle/{id}, rebuilt as a standalone document.
+// THE SAVED VEHICLE REPORT — the page at /reports/vehicle/{id}, rebuilt as a standalone .html file.
 //
-// WHY THIS EXISTS RATHER THAN window.print(). The report page is a dark cockpit surface built for a
+// IT IS DOWNLOADED, NOT OPENED. What people do with this report is forward it, and a browser tab is
+// not something you can attach to a mail. The file is self-contained by construction — inline CSS,
+// marks drawn as divs, no request of any kind — so it opens on a machine that has never heard of this
+// system, and its own toolbar still prints it to PDF.
+//
+// WHY IT IS NOT window.print() ON THE PAGE. The report page is a dark cockpit surface built for a
 // screen: panels, chips, a donut, filter buttons, a fixed backdrop. Printing it asked the browser to
 // re-flow that on paper, and what came out depended on whether the reader had "background graphics"
 // ticked — a black page, a white page with invisible chips, or a stack of half-cut panels. None of
@@ -34,19 +39,38 @@ const dash = (s) => (s === null || s === undefined || s === '' ? '—' : esc(s))
 const slug = (s) => String(s || 'vehicle').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '');
 const pct = (part, whole) => (whole ? (part / whole) * 100 : 0);
 
+/** The document's own name: plate, what it is, and the day it was taken. ASCII, so it is a filename. */
+export function vehicleOverviewReportName({ data, t }) {
+  const vehicle = data?.vehicle || {};
+  const today = new Date().toISOString().slice(0, 10);
+  return `${slug(vehicle.plate || vehicle.label || 'vehicle')}_${slug(t('reportVehicle.eyebrow'))}_${today}.html`;
+}
+
 /**
- * Open the printed report in its own window and hand it to the browser's print dialog.
+ * SAVE THE REPORT AS A FILE rather than as a new tab.
  *
- * The dialog is NOT fired automatically: the document is a readable page in its own right, and a
- * print sheet that opens straight into a modal gives the reader no chance to check what they are
- * about to send. The button at the top is the way on.
+ * A new tab is a thing you have to keep open. The people who forward this report wanted the document
+ * itself — one .html file they can attach to a mail or drop in a folder — so the button hands the
+ * same standalone sheet to the browser's downloader. It is self-contained by construction (inline
+ * CSS, marks drawn as divs, no network of any kind), so the saved file opens years later on a
+ * machine that has never heard of this system, and its own toolbar still prints it to PDF.
  */
-export function openVehicleOverviewReport(ctx) {
-  const w = window.open('', '_blank');
-  if (!w) return false; // pop-up blocked — the caller stays on the page and says nothing broke
-  w.document.write(buildHtml(ctx));
-  w.document.close();
-  return true;
+export function downloadVehicleOverviewReport(ctx) {
+  try {
+    const blob = new Blob([buildHtml(ctx)], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = vehicleOverviewReportName(ctx);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoked on the next tick: revoking in the same one raced the click in Safari and saved nothing.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    return true;
+  } catch {
+    return false; // the caller says so on screen — a dead button is the one failure with no symptom
+  }
 }
 
 /** Severity/tone → the printed pill class. Same three words the screen uses, never a bare colour. */
@@ -81,8 +105,8 @@ function buildHtml({ data, provenance, view = {}, t, tf, tp, lang = 'en' }) {
     : null;
 
   const today = new Date().toISOString().slice(0, 10);
-  // A file path, not prose: transliterated ASCII whatever the reader's language.
-  const title = `${slug(vehicle.plate || vehicle.label || 'vehicle')}_${slug(t('reportVehicle.eyebrow'))}_${today}`;
+  // The document's title IS its filename, minus the extension — the tab and the saved file agree.
+  const title = vehicleOverviewReportName({ data, t }).replace(/\.html$/, '');
 
   // Worst first, exactly as the page ranks it — the printed order IS the report's argument.
   const ranked = [...problems].sort(
@@ -516,7 +540,7 @@ function buildHtml({ data, provenance, view = {}, t, tf, tp, lang = 'en' }) {
              aria-label="${esc(t('reportVehicle.search'))}" />
       <button type="button" id="repeats" class="tool-chip" aria-pressed="false">${esc(t('reportVehicle.filter.repeatsOnly'))}</button>
       <button type="button" id="clear" class="tool-chip" hidden>${esc(t('reportVehicle.filter.clear'))}</button>
-      <button class="btn" onclick="window.print()">${esc(t('reportVehicle.print'))}</button>
+      <button class="btn" onclick="window.print()">${esc(t('reportVehicle.printSheet'))}</button>
     </div>
     <div class="sheet">
       <div class="hd">

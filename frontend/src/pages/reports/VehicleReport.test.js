@@ -160,12 +160,27 @@ beforeEach(() => {
 
 afterEach(() => { jest.restoreAllMocks(); });
 
-/** Capture the standalone document Print writes, without opening a real window. */
-const capturePrintWindow = () => {
+/**
+ * Capture the standalone document the button saves, without writing a file.
+ *
+ * The report is handed to the browser as a Blob behind an `<a download>`, so the document itself is
+ * read off the Blob's parts and the anchor's click is stubbed — jsdom would otherwise try to navigate
+ * to a blob: URL it cannot resolve.
+ */
+const captureDownload = () => {
   const written = [];
-  const w = { document: { write: (html) => written.push(html), close: () => {} }, focus: () => {} };
-  jest.spyOn(window, 'open').mockReturnValue(w);
-  return { html: () => written.join('') };
+  const names = [];
+  const RealBlob = global.Blob;
+  jest.spyOn(global, 'Blob').mockImplementation((parts, opts) => {
+    written.push((parts || []).join(''));
+    return new RealBlob(parts, opts);
+  });
+  jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function record() {
+    names.push(this.download);
+  });
+  window.URL.createObjectURL = jest.fn(() => 'blob:vehicle-report');
+  window.URL.revokeObjectURL = jest.fn();
+  return { html: () => written.join(''), name: () => names[names.length - 1] };
 };
 
 test('leads with the fault that happens most, however the payload was ordered', async () => {
@@ -259,35 +274,37 @@ test('the period comes out of the URL and goes into the request', async () => {
 });
 
 /*
- * ONE PRINTABLE DOCUMENT, NOT TWO. The page used to offer Print beside "Download dossier", which made
- * a reader choose between two sheets before knowing what either contained — and the dossier described
- * a different subject (what the car IS) from the page it was printed from (what is wrong with it).
+ * ONE DOCUMENT, NOT TWO. The page used to offer Print beside "Download dossier", which made a reader
+ * choose between two sheets before knowing what either contained — and the dossier described a
+ * different subject (what the car IS) from the page it was taken from (what is wrong with it).
  */
-test('there is no second download button beside Print', async () => {
+test('there is one report button, and it is the download', async () => {
   renderAt('/reports/vehicle/1741');
 
   await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
 
-  expect(screen.getByRole('button', { name: 'Print / Save as PDF' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Download report (HTML)' })).toBeEnabled();
   expect(screen.queryByRole('button', { name: 'Download dossier' })).not.toBeInTheDocument();
 });
 
-test('Print writes its own document rather than handing the printer this page', async () => {
-  const printed = capturePrintWindow();
+test('the button saves a standalone file rather than handing the printer this page', async () => {
+  const saved = captureDownload();
 
   renderAt('/reports/vehicle/1741');
   await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
 
-  await userEvent.click(screen.getByRole('button', { name: 'Print / Save as PDF' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Download report (HTML)' }));
 
-  const html = printed.html();
+  const html = saved.html();
   // A whole standalone sheet, not a copy of the app shell.
   expect(html).toContain('<!doctype html>');
   // Same subject, same ranking, and the workshop's own words still under each occurrence.
   expect(html).toContain('DODGE CHALLENGER · 2021 · 55321');
   expect(html.indexOf('Rim Scratch')).toBeLessThan(html.indexOf('Brake Pad Wear'));
-  // No second query: the printed sheet is a re-render of what the page already holds.
+  // No second query: the saved sheet is a re-render of what the page already holds.
   expect(overviewCalls()).toHaveLength(1);
+  // It lands as a named .html file — a report called "download (3)" is a report nobody opens again.
+  expect(saved.name()).toMatch(/^55321_.*\.html$/);
 });
 
 /*
@@ -296,20 +313,20 @@ test('Print writes its own document rather than handing the printer this page', 
  * used to print every fault while the screen showed one. Two documents claiming to be one report.
  */
 test('the printed sheet opens on the drill-down the reader is looking at', async () => {
-  const printed = capturePrintWindow();
+  const saved = captureDownload();
 
   renderAt('/reports/vehicle/1741');
   await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
 
   await userEvent.click(screen.getByRole('button', { name: 'Only what came back' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Print / Save as PDF' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Download report (HTML)' }));
 
   // The state reaches the document, which opens already narrowed to it.
-  expect(printed.html()).toMatch(/"repeats":\s*true/);
+  expect(saved.html()).toMatch(/"repeats":\s*true/);
 });
 
 test('the printed sheet carries a clicked fault, not the whole list', async () => {
-  const printed = capturePrintWindow();
+  const saved = captureDownload();
 
   renderAt('/reports/vehicle/1741');
   await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
@@ -317,9 +334,9 @@ test('the printed sheet carries a clicked fault, not the whole list', async () =
   const rimRow = screen.getAllByRole('button')
     .find((b) => b.className.includes('ir-rank-row') && within(b).queryByText('Rim Scratch'));
   await userEvent.click(rimRow);
-  await userEvent.click(screen.getByRole('button', { name: 'Print / Save as PDF' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Download report (HTML)' }));
 
-  expect(printed.html()).toMatch(/"fault":\s*"bodywork::rim scratch"/);
+  expect(saved.html()).toMatch(/"fault":\s*"bodywork::rim scratch"/);
 });
 
 /*
@@ -327,29 +344,29 @@ test('the printed sheet carries a clicked fault, not the whole list', async () =
  * page sliced at 12, so a car with fourteen problems showed twelve on screen and fourteen on paper.
  */
 test('the printed ranking is cut at the same depth as the page', async () => {
-  const printed = capturePrintWindow();
+  const saved = captureDownload();
 
   renderAt('/reports/vehicle/1741');
   await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
-  await userEvent.click(screen.getByRole('button', { name: 'Print / Save as PDF' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Download report (HTML)' }));
 
   const onScreen = screen.getAllByRole('button').filter((b) => b.className.includes('ir-rank-row')).length;
   // The attribute pair only ever appears on a ranked row — `[data-rank]` alone also matches the
   // document's own stylesheet and its filter script.
-  const inPrint = (printed.html().match(/data-rank role="button"/g) || []).length;
+  const inPrint = (saved.html().match(/data-rank role="button"/g) || []).length;
 
   expect(inPrint).toBe(onScreen);
 });
 
 test('the printed sheet repeats what the report is narrowed to', async () => {
-  const printed = capturePrintWindow();
+  const saved = captureDownload();
 
   renderAt('/reports/vehicle/1741?system=brakes&from=2026-05-01&to=2026-07-31');
   await screen.findByText('DODGE CHALLENGER · 2021 · 55321');
 
-  await userEvent.click(screen.getByRole('button', { name: 'Print / Save as PDF' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Download report (HTML)' }));
 
-  const html = printed.html();
+  const html = saved.html();
   // A filtered report that prints as if it were the whole car is how a reader concludes a car is clean.
   expect(html).toContain('01 May 2026 → 31 Jul 2026');
   expect(html).toMatch(/narrowed to Brakes/);

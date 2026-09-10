@@ -4,7 +4,7 @@ import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
 import { useI18n } from '../../i18n/I18nContext';
 import { SHOW_FINANCIALS } from '../../config/features';
-import { openVehicleOverviewReport } from '../../lib/vehicleOverviewReport';
+import { downloadVehicleOverviewReport } from '../../lib/vehicleOverviewReport';
 import {
   Alert, Chip, DataOrigin, DateRangeFilter, Kpi, Panel, PeriodBanner, PeriodProblems,
   ReportShell, toneFor, VehicleBrief,
@@ -62,8 +62,9 @@ export default function VehicleReport() {
   // putting it in the history stack would make Back mean "un-click" rather than "leave the page".
   const [fault, setFault] = useState(null);
   const [repeatsOnly, setRepeatsOnly] = useState(false);
-  // A blocked pop-up is the one way Print can fail with nothing on screen to show for it.
-  const [printBlocked, setPrintBlocked] = useState(false);
+  // A browser that refuses the download is the one way the button can fail with nothing on screen to
+  // show for it — so it is said out loud rather than left as a click that did nothing.
+  const [downloadFailed, setDownloadFailed] = useState(false);
 
   const setParams = (next) => {
     const merged = { from, to, system, ...next };
@@ -176,22 +177,26 @@ export default function VehicleReport() {
         </Link>
         <button type="button" className="ir-button" onClick={() => reload()}>{t('reportVehicle.refresh')}</button>
         {/*
-          PRINT BUILDS ITS OWN DOCUMENT rather than printing this page. This surface is a dark cockpit
-          — panels, chips, a donut, filter buttons — and asking a printer to re-flow it produced a
-          different sheet depending on whether "background graphics" was ticked. The printed report is
-          a re-render of the payload already on screen (no second query), so the two cannot disagree,
-          and it repeats the period and the system filter in words: a narrowed report that prints as
-          if it were the whole car is how a reader concludes a car is clean.
+          THE BUTTON BUILDS ITS OWN DOCUMENT rather than printing this page. This surface is a dark
+          cockpit — panels, chips, a donut, filter buttons — and asking a printer to re-flow it
+          produced a different sheet depending on whether "background graphics" was ticked. The
+          report is a re-render of the payload already on screen (no second query), so the two cannot
+          disagree, and it repeats the period and the system filter in words: a narrowed report that
+          reads as if it were the whole car is how a reader concludes a car is clean.
+
+          IT DOWNLOADS THE FILE rather than opening a tab. What people do with this report is forward
+          it, and a tab is not something you can attach to a mail. The saved .html is self-contained
+          and carries its own Print button, so "save as PDF" is still one click away inside it.
         */}
         <button
           type="button"
           className="ir-button"
           disabled={!data}
-          onClick={() => setPrintBlocked(!openVehicleOverviewReport({
+          onClick={() => setDownloadFailed(!downloadVehicleOverviewReport({
             data,
             provenance,
             // The fault drill-down and "only what came back" are client-side, so they are not in the
-            // payload — they have to be handed over, or the sheet prints every fault while the screen
+            // payload — they have to be handed over, or the file holds every fault while the screen
             // shows one. What you see is what you get.
             view: { fault, repeatsOnly },
             t,
@@ -200,12 +205,12 @@ export default function VehicleReport() {
             lang,
           }))}
         >
-          {t('reportVehicle.print')}
+          {t('reportVehicle.download')}
         </button>
       </div>
 
-      {printBlocked ? (
-        <div className="ir-filter-note ir-no-print">{t('reportVehicle.printBlocked')}</div>
+      {downloadFailed ? (
+        <div className="ir-filter-note ir-no-print">{t('reportVehicle.downloadFailed')}</div>
       ) : null}
 
       <DateRangeFilter
