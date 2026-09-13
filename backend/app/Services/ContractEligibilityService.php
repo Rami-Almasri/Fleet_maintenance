@@ -67,6 +67,7 @@ class ContractEligibilityService
             $this->statusCheck($f),
             $this->rentalCheck($f),
             $this->maintenanceCheck($f),
+            $this->accidentCheck($f),
             $this->conditionCheck($f),
             $this->inspectionCheck($f),
             $this->cleaningCheck($f),
@@ -215,6 +216,11 @@ class ContractEligibilityService
         $openDamage = InspectionRecord::where('vehicle_id', $vehicle->id)
             ->where('damage_flagged', true)->whereNull('review_outcome')->count();
 
+        // Accident cases whose stage still means the CAR is compromised — not merely that its money
+        // is unsettled. @see \App\Models\AccidentCase::RENTAL_BLOCKING_STAGES
+        $accidents = \App\Models\AccidentCase::forVehicle($vehicle->id)->rentalBlocking()
+            ->orderBy('id')->get(['id', 'reference', 'stage']);
+
         $reg = $vehicle->relationLoaded('registration') ? $vehicle->registration : $vehicle->registration()->first();
 
         return [
@@ -228,6 +234,15 @@ class ContractEligibilityService
             'maintenance_mandatory'  => $mandatoryMaintenance,
             'open_rental'            => $openRental,
             'open_damage'            => $openDamage,
+            // Unresolved accidents holding the car out of the pool. The count AND a sentence naming
+            // the case, because "this vehicle cannot be rented" with no reference is a dead end for
+            // whoever is standing at the counter with a customer.
+            'open_accidents'         => $accidents->count(),
+            'accident_detail'        => $accidents->isEmpty() ? null : sprintf(
+                'Accident case %s is still open (%s) — the vehicle cannot be rented until it is resolved',
+                $accidents->first()->reference,
+                str_replace('_', ' ', $accidents->first()->stage),
+            ),
             'insurance_days_left'    => $reg?->insurance_days_left,
             'registration_days_left' => $reg?->registration_days_left,
         ];
@@ -275,6 +290,38 @@ class ContractEligibilityService
             'rental', 'Existing rental',
             $open ? self::BLOCK : self::PASS,
             $open ? 'An open rental contract is already active on this vehicle' : 'No active rental',
+        );
+    }
+
+    /**
+     * AN UNRESOLVED ACCIDENT. A hard block, and NOT lifted by `pull_from_maintenance`.
+     *
+     * This is the rule that keeps requirement "a car with an open accident must never appear
+     * available" honest, and it lives here rather than as a new `operational_status` because THIS is
+     * the single authority for "may this vehicle go onto a rental contract right now". A status
+     * enum has a dozen readers and would have to be taught the same thing a dozen times; this
+     * checklist has one caller and one meaning.
+     *
+     * The pull intent does not release it, deliberately. That intent exists so a car can be taken out
+     * of the workshop for a customer with the repair paused — a commercial trade-off about scheduling.
+     * An accident case still at "nobody has looked at the damage yet" is not a scheduling question,
+     * and the person clicking "pull from maintenance" has no way to know what is wrong with the car.
+     *
+     * It is scoped to RENTAL_BLOCKING_STAGES, not to every open case: a case sitting at `settlement`
+     * is an argument about money with a repaired car standing in the yard, and grounding that would
+     * cost real rental days over an insurer's paperwork. @see \App\Models\AccidentCase
+     */
+    private function accidentCheck(array $f): array
+    {
+        $open = (int) ($f['open_accidents'] ?? 0);
+
+        if ($open === 0) {
+            return $this->check('accident', 'Accident hold', self::PASS, 'No unresolved accident');
+        }
+
+        return $this->check(
+            'accident', 'Accident hold', self::BLOCK,
+            $f['accident_detail'] ?? 'An unresolved accident case is open on this vehicle',
         );
     }
 

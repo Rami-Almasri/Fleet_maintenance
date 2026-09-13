@@ -46,6 +46,7 @@ import GaragesHub from './pages/GaragesHub';
 import FieldReportsHub from './pages/FieldReportsHub';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
+import AccidentCases from './pages/AccidentCases';
 import RecommendationIntelligence from './pages/RecommendationIntelligence';
 import DailyMaintenanceIntelligence from './pages/reports/DailyMaintenanceIntelligence';
 import VehicleSystemDashboard from './pages/reports/VehicleSystemDashboard';
@@ -384,6 +385,16 @@ export default function App() {
                   <Route path="/warranty" element={<WarrantyCases />} />
                   <Route path="/warranty/cases" element={<WarrantyCases />} />
                   <Route path="/warranty/cases/:caseId" element={<WarrantyCases />} />
+                </Route>
+                {/* Accident cases — the crash file. A separate route from /damage-accidents on
+                    purpose: that page is a READ of the historical maintenance log (damage records
+                    as they were imported), while this is the live WORKFLOW — who had the car, the
+                    police report, the liability verdict, the insurer and the money. Different
+                    lifecycle, different permission (`accidents.view`), and it is where every
+                    accident notification deep-links, which is why the case id is in the path. */}
+                <Route element={<RequirePermission permission="accidents.view" />}>
+                  <Route path="/accidents" element={<AccidentCases />} />
+                  <Route path="/accidents/:caseId" element={<AccidentCases />} />
                 </Route>
                 {/* Recurring Fault Reviews — management inbox for confirmed faults that came back after a fix. */}
                 <Route element={<RequirePermission permission="maintenance.recurring.view" />}>

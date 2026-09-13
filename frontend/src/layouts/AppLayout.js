@@ -161,7 +161,14 @@ const NAV_SECTIONS = [
   {
     title: 'Damage Management',
     items: [
-      { name: 'Damage & Accidents', to: '/damage-accidents', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Damage and accident records shown as-is per vehicle. Fault is colored red/green based on the liable party and insurance.' },
+      // Accidents sits ABOVE the historical log, not inside it, because the two answer opposite
+      // questions. The log below is a READ of what was imported — damage records as they stand.
+      // This is the WORK: a live crash file with a police report to chase, a fault to rule on, an
+      // insurer to chase and money to settle, and it is the surface that stops a damaged car being
+      // re-let. Burying it as a tab of the log would hide the one page the feature exists to put in
+      // front of somebody.
+      { name: 'Accidents', to: '/accidents', permission: 'accidents.view', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Every crash the fleet has had, and the four questions each one opens: who had the car at the time, what the police report says, whose fault it was, and who pays. The tiles are the work waiting on somebody — police reports nobody has chased, liability nobody has ruled on, insurers who have gone quiet, and cars held out of the rental pool because their accident is unresolved. A crash on a live rental leads with the customer and the contract, and reporting one never closes that contract. The money is kept as five separate figures — estimated, approved, actual, paid and unresolved — because an estimate is not an approval and an approval is not a payment.' },
+      { name: 'Damage & Accidents', to: '/damage-accidents', icon: 'M4 7h16M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2', desc: 'Damage and accident records shown as-is per vehicle, straight from the historical maintenance log. Fault is colored red/green based on the liable party and insurance. This is the imported record; live accident cases live under Accidents.' },
     ],
   },
   {
@@ -277,6 +284,7 @@ const NAV_PERMISSIONS = {
   '/vendors': 'vendors.view',
   '/maintenance-analytics': 'maintenance.view',
   '/damage-accidents': 'maintenance.view',
+  '/accidents': 'accidents.view',
   '/cost-intelligence': 'insights.view',
   '/recommendation-intelligence': 'insights.view',
   '/mileage': 'insights.view',

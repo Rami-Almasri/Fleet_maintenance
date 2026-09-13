@@ -50,7 +50,7 @@ import { usePermissions } from '../../hooks/usePermissions';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import Icon from '../ui/Icon';
-import { Textarea } from '../ui/Field';
+import { Input, Select, Textarea } from '../ui/Field';
 import VehicleStatusSelect from './VehicleStatusSelect';
 // Driver or recovery truck — the same two buttons the review card asks with, so the one question about
 // a car's condition is never asked two different ways.
@@ -70,6 +70,15 @@ const DOOR_DISPATCH   = 'dispatch';
 const VOICE_DROVE       = 'test_drive';
 const VOICE_OBSERVATION = 'observation';
 const VOICE_OFFICE      = 'office_call';
+// AN ACCIDENT IS NOT A REPAIR REQUEST, and this option exists to stop it being filed as one.
+//
+// It sits in this list because this is where a person goes when something has happened to a car —
+// asking them to know, in that moment, that a crash lives in a different part of the app is how a
+// crash gets typed into a fault note and loses its police report, its liability question and its
+// insurer. But picking it leaves the ticket API entirely: it POSTs to /accidents, opens an accident
+// CASE, and the repair (if there is one) is raised later from that case as an ordinary ticket
+// parented to it. Nothing about the "why?" question below applies — an accident is its own answer.
+const VOICE_ACCIDENT    = 'accident';
 
 // The ways of answering "why?" (Maintenance::REPORT_MODES). `fault` and `service` are both NAMED WORK and
 // may be sent together; a reason code excludes them, and they exclude it. MODE_SERVICE is not a tab of
@@ -331,6 +340,20 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   const [reasonCode, setReason]   = useState('');
   const [note, setNote]           = useState('');
   const [observationRaise, setObservationRaise] = useState(false);
+  // ── the accident path's own fields ───────────────────────────────────────────────────────────
+  // Deliberately few. What is asked at the roadside is what somebody standing at the roadside can
+  // actually answer; the police report, the liability verdict and the insurer are worked through the
+  // case's own stages afterwards. A form that demanded them here would produce no report at all.
+  const [acc, setAcc] = useState({
+    occurred_at: '', location: '', accident_type: '',
+    drivable: null, towing_required: null,
+    other_party_involved: false, other_party_name: '', other_party_plate: '',
+    damage: '',   // free text, split into damage items on submit
+  });
+  // Who the SERVER says has the car — read-only, and shown while they are still typing rather than
+  // sprung on them after they submit. What is actually frozen onto the case is resolved again
+  // server-side at report time; this is a courtesy, not the record.
+  const [accContext, setAccContext] = useState(null);
   // Garage door only: how the car physically gets there. Null until somebody says — see TransportChoice.
   // `unit` is the towing unit on the recovery answer, cleared by the picker the moment it stops being one.
   const [transport, setTransport] = useState(null);
@@ -354,6 +377,11 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
 
   const isObservation = door === DOOR_INSPECTION && voice === VOICE_OBSERVATION;
   const isOffice      = door === DOOR_INSPECTION && voice === VOICE_OFFICE && canManage;
+  // Offered only to people the accident route will actually accept — the bar is deliberately low
+  // (every field role holds `accidents.report`), but showing it to somebody who would be refused
+  // means letting them fill in a whole crash report and then losing it.
+  const canReportAccident = can('accidents.report');
+  const isAccident    = door === DOOR_INSPECTION && voice === VOICE_ACCIDENT && canReportAccident;
   // The server is the authority on which doors are usable; until its answer lands, fall back to the
   // client's own permission cache so the form is never briefly blank.
   const canDispatch = options ? !!options.can_dispatch : (canInitiate || canManage);
@@ -402,6 +430,21 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
       .catch(() => { if (alive) setInFlight(null); });
     return () => { alive = false; };
   }, [vehicleId]);
+
+  // WHO HAS THIS CAR — asked of the server the moment there is a car and a time to ask about, and
+  // re-asked when either changes. Anchored on the accident's OWN timestamp rather than on now: a
+  // crash reported on Monday about Saturday belongs to Saturday's renter, and "who has it now" is
+  // exactly the wrong answer. Best-effort — a failed fetch just leaves the banner off.
+  useEffect(() => {
+    if (!isAccident || !vehicleId) { setAccContext(null); return undefined; }
+    let alive = true;
+    const params = new URLSearchParams({ vehicle_id: String(Number(vehicleId)) });
+    if (acc.occurred_at) params.set('occurred_at', acc.occurred_at);
+    api.get(`/accidents/options?${params.toString()}`)
+      .then((r) => { if (alive) setAccContext(r?.data?.data?.context_preview || null); })
+      .catch(() => { if (alive) setAccContext(null); });
+    return () => { alive = false; };
+  }, [isAccident, vehicleId, acc.occurred_at]);
 
   // An observation asks no "why?" at all — nothing is being requested, so the whole tab strip is hidden
   // and `mode` means nothing while it is selected. Coming BACK out of it, land on the naming tab: the
@@ -583,10 +626,17 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   // Otherwise the naming tab is satisfied by EITHER kind of named work — a car going in for an oil change
   // alone is a complete answer to "why is it going in?" — and a reason is complete on its own, now that
   // the free-text "Something else" that needed a sentence beside it is gone.
-  const statementReady = isObservation
+  //
+  // AN ACCIDENT answers the question by being one. What is required is a car and a sentence saying
+  // what happened — nothing else, on purpose: the police report, the damage assessment, the
+  // liability verdict and the insurer are stages of the case, and demanding any of them from
+  // somebody standing beside a damaged car is how a crash goes unrecorded.
+  const statementReady = isAccident
     ? !!note.trim()
-    : (mode === MODE_FAULT  && (faults.length > 0 || services.length > 0))
-      || (mode === MODE_REASON && !!reasonCode);
+    : isObservation
+      ? !!note.trim()
+      : (mode === MODE_FAULT  && (faults.length > 0 || services.length > 0))
+        || (mode === MODE_REASON && !!reasonCode);
 
   // A car with a request already in flight cannot be sent straight to a garage — the server refuses that
   // door on the same fact, so the form must say so before it is filled in rather than after it is
@@ -610,12 +660,14 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   // checks is kept and this report is written underneath it. The garage door has no dead end left either
   // (see canConvert) except the one that is not a refusal at all: the Inspector is driving the car right
   // now, so the test this door exists to skip is already happening.
-  const isAdding = !isObservation && !!inFlight && door === DOOR_INSPECTION;
+  // An accident is never "added to" an open request and is never refused because of one: it opens a
+  // different entity entirely, and a car with a test drive pending can still be crashed.
+  const isAdding = !isObservation && !isAccident && !!inFlight && door === DOOR_INSPECTION;
   // What is left after all three ways through — adding to it, standing it down, or converting it — is
   // the ONE state where the garage door genuinely has nothing to do: the Inspector is driving the car
   // this second. Nothing is refused there either; the answer to "does it need a test?" is being produced
   // as we speak, and his report puts the car in the dispatch queue when it is.
-  const blocked = !isObservation && !!inFlight && !isAdding && !canSupersede && !canConvert;
+  const blocked = !isObservation && !isAccident && !!inFlight && !isAdding && !canSupersede && !canConvert;
   const disabled = saving || !vehicleId || blocked || !statementReady;
 
   // ── submit ─────────────────────────────────────────────────────────────────────────────────────
@@ -651,6 +703,36 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     setSaving(true);
     setError(null);
     try {
+      // A0) AN ACCIDENT — a different entity again, and the one that must never be filed as a repair
+      //     request. It opens an accident CASE: the police report, the liability question and the
+      //     insurer all hang off that, and the repair (when there is one) is raised from the case as
+      //     an ordinary ticket parented to it. They land on the case, because the next thing anybody
+      //     needs to do is answer the questions it has just opened.
+      if (isAccident) {
+        const resp = await api.post('/accidents', {
+          vehicle_id:  Number(vehicleId),
+          description: note.trim(),
+          occurred_at: acc.occurred_at || null,
+          location:    acc.location.trim() || null,
+          accident_type: acc.accident_type || null,
+          drivable:        acc.drivable,
+          towing_required: acc.towing_required,
+          other_party_involved: acc.other_party_involved,
+          other_party_name:  acc.other_party_involved ? (acc.other_party_name.trim()  || null) : null,
+          other_party_plate: acc.other_party_involved ? (acc.other_party_plate.trim() || null) : null,
+          // The areas somebody could already see, one item each — countable from the first minute,
+          // rather than a paragraph nobody can group by. Anything they cannot name yet is added at
+          // the assessment stage by whoever actually looks at the car.
+          damage_items: acc.damage
+            .split(',').map((s) => s.trim()).filter(Boolean).slice(0, 30)
+            .map((area) => ({ area_label: area })),
+        });
+        const created = resp?.data?.data;
+        onDone?.(t('Accident reported — the case is open'));
+        if (created?.id) navigate(`/accidents/${created.id}`);
+        return;
+      }
+
       // A) Driver Observation — a different entity entirely, so it leaves the ticket API. It only ever
       //    raises an inspection when the driver explicitly asks, and never when one is already in flight.
       if (isObservation) {
@@ -758,12 +840,14 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     <>
       <Button variant="ghost" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button>
       <Button
-        variant={door === DOOR_DISPATCH ? 'warning' : 'primary'}
+        variant={isAccident ? 'danger' : door === DOOR_DISPATCH ? 'warning' : 'primary'}
         onClick={submit}
         disabled={disabled}
         loading={saving}
       >
-        {isObservation
+        {isAccident
+          ? t('Report the accident')
+          : isObservation
           ? t('workflow.sendIn.submit.observation')
           : isAdding
             ? t('workflow.sendIn.submit.add')
@@ -834,18 +918,28 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
               answer "No matches", which reads as "this car isn't in the fleet" rather than "it's
               already in the shop". It is listed greyed out, saying so. Rented cars stay selectable.
               An observation opens nothing, so for that path every car stays pickable. */}
+          {/* An accident, like an observation, opens no ticket — so every car stays pickable. A car
+              can be crashed while a driver is taking it TO the garage, and refusing to record that
+              because it is already in the shop would lose the only report of it. */}
           <VehicleStatusSelect
             value={vehicleId}
             onChange={setVehicleId}
-            vehicles={isObservation ? vehicles : pickableVehicles}
-            blocked={isObservation ? [] : inShopVehicles}
+            vehicles={(isObservation || isAccident) ? vehicles : pickableVehicles}
+            blocked={(isObservation || isAccident) ? [] : inShopVehicles}
             placeholder={t('workflow.ph.searchVehicle')}
+            // The picker's own warnings are about opening a TICKET — "will trigger a new diagnostic
+            // entry", "make sure it has been returned before starting a test drive". Neither is true
+            // of an accident report, and the second actively tells somebody to delay filing a crash
+            // on a car that is still out with a customer, which is the commonest accident there is.
+            warnings={!isAccident}
           />
-          {!isObservation && <p className="mt-1 text-xs text-slate-400">{t('workflow.hint.requestHideMaintenance')}</p>}
+          {!isObservation && !isAccident && <p className="mt-1 text-xs text-slate-400">{t('workflow.hint.requestHideMaintenance')}</p>}
 
           {/* Already in flight — say what stage it's at, who raised it and what they reported, so the
               point that's already been made is visible before this one is written out. */}
-          {inFlight && (
+          {/* Hidden on the accident path: an open request says nothing about whether a car can be
+              crashed, and the three sentences below all describe what would happen to a TICKET. */}
+          {inFlight && !isAccident && (
             <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-900 ring-1 ring-inset ring-amber-500/30">
               <p className="font-semibold">{t('workflow.hint.inFlightTitle')}</p>
               <p className="mt-0.5">
@@ -884,8 +978,18 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
           <div>
             <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.driverLabel')}</span>
             <div className="grid gap-2">
-              {[VOICE_DROVE, VOICE_OBSERVATION, ...(canManage ? [VOICE_OFFICE] : [])].map((v) => {
+              {[
+                VOICE_DROVE,
+                VOICE_OBSERVATION,
+                ...(canManage ? [VOICE_OFFICE] : []),
+                // LAST in the list and visually apart, because it is the one answer that leaves this
+                // form's whole model behind. Last rather than first on purpose: it is the rarest of
+                // the four, and putting the loudest option at the top is how ordinary reports start
+                // getting filed as accidents.
+                ...(canReportAccident ? [VOICE_ACCIDENT] : []),
+              ].map((v) => {
                 const active = voice === v;
+                const crash  = v === VOICE_ACCIDENT;
                 return (
                   <button
                     key={v}
@@ -893,17 +997,23 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
                     onClick={() => { setVoice(v); setError(null); }}
                     aria-pressed={active}
                     className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 text-start transition
-                      ${active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                      ${active
+                        ? (crash ? 'border-rose-500 bg-rose-50 ring-1 ring-rose-500' : 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500')
+                        : (crash ? 'border-rose-200 bg-white hover:border-rose-300' : 'border-slate-200 bg-white hover:border-slate-300')}`}
                   >
-                    <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${active ? 'border-indigo-600' : 'border-slate-300'}`}>
-                      {active && <span className="h-2 w-2 rounded-full bg-indigo-600" />}
+                    <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${active ? (crash ? 'border-rose-600' : 'border-indigo-600') : 'border-slate-300'}`}>
+                      {active && <span className={`h-2 w-2 rounded-full ${crash ? 'bg-rose-600' : 'bg-indigo-600'}`} />}
                     </span>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-slate-800">
-                        {t(v === VOICE_OFFICE ? 'workflow.reason.office.label' : `workflow.reason.driver.${v}.label`)}
+                        {crash
+                          ? `🚨 ${t('An accident happened')}`
+                          : t(v === VOICE_OFFICE ? 'workflow.reason.office.label' : `workflow.reason.driver.${v}.label`)}
                       </span>
                       <span className="block text-xs text-slate-500">
-                        {t(v === VOICE_OFFICE ? 'workflow.reason.office.sub' : `workflow.reason.driver.${v}.sub`)}
+                        {crash
+                          ? t('A collision or impact — this opens an accident case, not a repair request')
+                          : t(v === VOICE_OFFICE ? 'workflow.reason.office.sub' : `workflow.reason.driver.${v}.sub`)}
                       </span>
                     </span>
                   </button>
@@ -913,7 +1023,7 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
 
             {/* Who may file this at all — advisory, not a hard gate. It speaks to the driver-voice
                 choices only: the office choice is explicitly for a car nobody here has been in. */}
-            {!isOffice && (
+            {!isOffice && !isAccident && (
               <p className="mt-2 rounded-lg bg-amber-50/70 px-3 py-2 text-[11px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-500/20">
                 {t('workflow.hint.requestEligibility')}
               </p>
@@ -931,8 +1041,11 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
           </div>
         )}
 
-        {/* ── WHY — one of three, never two ───────────────────────────────────────────────────── */}
-        {!isObservation && (
+        {/* ── WHY — one of three, never two ─────────────────────────────────────────────────────
+            Not asked on the accident path: "there was a crash" IS the answer, and offering a fault
+            picker beside it would invite somebody to name the damage as a fault — which is exactly
+            how an accident loses its police report and its insurer and becomes a body-shop ticket. */}
+        {!isObservation && !isAccident && (
           <div>
             <div className="mb-1.5 flex items-baseline justify-between gap-2">
               <span className="text-sm font-medium text-slate-700">
@@ -1270,6 +1383,155 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
           </>
         )}
 
+        {/* ── AN ACCIDENT HAPPENED ────────────────────────────────────────────────────────────────
+            The roadside form. Everything here is answerable by somebody standing next to the car;
+            the police report, the liability verdict, the insurer and the money are stages of the
+            case that opens when this is submitted.
+
+            THE CUSTOMER BANNER IS THE POINT OF THIS PANEL. If the car is on hire, the person filing
+            this needs to know before they type another word — a crash on a live rental is
+            simultaneously an operational problem and a commercial one, and finding out three days
+            later is how a contract quietly keeps billing while nobody decides what to do about it. */}
+        {isAccident && (
+          <div className="space-y-3">
+            {accContext?.contract_no && (
+              <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900">
+                <p className="flex items-center gap-1.5 text-sm font-bold">
+                  <span aria-hidden>⚠️</span>
+                  {t('This vehicle is with a customer right now')}
+                </p>
+                <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+                  <div><dt className="inline font-semibold">{t('Customer')}: </dt><dd className="inline">{accContext.customer_name || '—'}</dd></div>
+                  <div><dt className="inline font-semibold">{t('Contract')}: </dt><dd className="inline">{accContext.contract_no}</dd></div>
+                  <div><dt className="inline font-semibold">{t('Out')}: </dt><dd className="inline">{accContext.out_date || '—'}</dd></div>
+                  <div><dt className="inline font-semibold">{t('Expected back')}: </dt><dd className="inline">{accContext.in_date || t('open-ended')}</dd></div>
+                </dl>
+                <p className="mt-2 text-[11px] leading-relaxed">
+                  {t('The rental contract is not affected by reporting this — it stays open and keeps running. What happens to the hire is a separate decision.')}
+                </p>
+              </div>
+            )}
+            {accContext && !accContext.contract_no && (
+              <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-inset ring-slate-100">
+                {t('No open rental was found on this car for that moment. Say who had it below if you know.')}
+              </p>
+            )}
+
+            <Textarea
+              label={t('What happened?')}
+              required
+              rows={3}
+              maxLength={5000}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={t('Describe the accident in your own words.')}
+            />
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {/* WHEN, not "now". A crash reported on Monday about Saturday belongs to Saturday's
+                  renter, and this field is what decides which customer the case is frozen against. */}
+              <Input
+                type="datetime-local"
+                label={t('When did it happen?')}
+                hint={t('Leave empty if it just happened')}
+                value={acc.occurred_at}
+                max={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                onChange={(e) => setAcc((a) => ({ ...a, occurred_at: e.target.value }))}
+              />
+              <Input
+                label={t('Where?')}
+                value={acc.location}
+                maxLength={255}
+                onChange={(e) => setAcc((a) => ({ ...a, location: e.target.value }))}
+                placeholder={t('Road, area or landmark')}
+              />
+              <Select
+                label={t('Type of accident')}
+                value={acc.accident_type}
+                onChange={(e) => setAcc((a) => ({ ...a, accident_type: e.target.value }))}
+              >
+                <option value="">{t('Not sure yet')}</option>
+                {(options?.accident_types || [
+                  'collision', 'rear_end', 'side_impact', 'head_on', 'single_vehicle', 'rollover',
+                  'parked_hit', 'pedestrian', 'animal', 'flood', 'fire', 'vandalism', 'other',
+                ]).map((k) => (
+                  <option key={k} value={k}>{t(k.replace(/_/g, ' '))}</option>
+                ))}
+              </Select>
+              <Input
+                label={t('Visible damage')}
+                hint={t('Separate areas with commas')}
+                value={acc.damage}
+                onChange={(e) => setAcc((a) => ({ ...a, damage: e.target.value }))}
+                placeholder={t('Front bumper, left door')}
+              />
+            </div>
+
+            {/* CAN IT BE DRIVEN — three answers, not two. "Not assessed" is a different fact from
+                "no", and a checkbox would collapse them into the same thing. */}
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[
+                { key: 'drivable', label: t('Can the car still be driven?') },
+                { key: 'towing_required', label: t('Does it need a recovery truck?') },
+              ].map(({ key, label }) => (
+                <div key={key} className="rounded-xl border border-slate-200 bg-white p-2.5">
+                  <p className="mb-1.5 text-xs font-medium text-slate-700">{label}</p>
+                  <div className="flex gap-1">
+                    {[
+                      { v: true,  l: t('Yes') },
+                      { v: false, l: t('No') },
+                      { v: null,  l: t('Not sure') },
+                    ].map(({ v, l }) => (
+                      <button
+                        key={String(v)}
+                        type="button"
+                        aria-pressed={acc[key] === v}
+                        onClick={() => setAcc((a) => ({ ...a, [key]: v }))}
+                        className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition ${acc[key] === v
+                          ? 'bg-slate-800 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={acc.other_party_involved}
+                  onChange={(e) => setAcc((a) => ({ ...a, other_party_involved: e.target.checked }))}
+                />
+                {t('Another vehicle or party was involved')}
+              </label>
+              {acc.other_party_involved && (
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <Input
+                    label={t('Other party name')}
+                    value={acc.other_party_name}
+                    maxLength={255}
+                    onChange={(e) => setAcc((a) => ({ ...a, other_party_name: e.target.value }))}
+                  />
+                  <Input
+                    label={t('Other party plate')}
+                    value={acc.other_party_plate}
+                    maxLength={64}
+                    onChange={(e) => setAcc((a) => ({ ...a, other_party_plate: e.target.value }))}
+                  />
+                </div>
+              )}
+            </div>
+
+            <p className="rounded-lg bg-rose-50 px-3 py-2 text-[11px] leading-relaxed text-rose-800 ring-1 ring-inset ring-rose-500/20">
+              {t('This opens an accident case, not a repair request. The police report, who was at fault, the insurance claim and the repair are all worked through the case — and the car will not be offered for rent until it is resolved.')}
+            </p>
+          </div>
+        )}
+
         {/* HOW THE CAR GETS THERE. Only on the garage door, because it is the only door that commits the
             car to a trip — asking for a test drive books nobody a journey. Asked HERE, of the person who
             has just seen the car, rather than discovered at the pickup by a driver standing next to
@@ -1285,7 +1547,9 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
           />
         )}
 
-        {/* WHAT THIS BUTTON ACTUALLY DOES — stated before it is pressed, not discovered after. */}
+        {/* WHAT THIS BUTTON ACTUALLY DOES — stated before it is pressed, not discovered after.
+            The accident path says its own version inside its panel, so it is skipped here. */}
+        {!isAccident && (
         <p className={`rounded-lg px-3 py-2 text-[11px] leading-relaxed ring-1 ring-inset ${door === DOOR_DISPATCH
           ? 'bg-amber-50/70 text-amber-800 ring-amber-500/20'
           : 'bg-slate-50 text-slate-500 ring-slate-100'}`}>
@@ -1300,6 +1564,7 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
                 ? 'workflow.sendIn.outcome.office'
                 : 'workflow.sendIn.outcome.request')}
         </p>
+        )}
 
         {/* A customer issue is NOT an inspection request — route it to the right entity. */}
         <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-inset ring-slate-100">

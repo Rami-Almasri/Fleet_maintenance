@@ -35,7 +35,12 @@ class ActivityFeedService
      * The filter buckets the manager feed exposes (and the per-event category tag). Each maps a family
      * of raw event types onto one human category so "show me all Pre-rental checks" is a single filter.
      */
-    public const CATEGORIES = ['inspection', 'cleaning', 'condition', 'readiness', 'maintenance', 'movement'];
+    // 'accident' is its own bucket rather than a flavour of 'maintenance' for the same reason the
+    // accident case is its own entity: a crash and a repair are different events with different
+    // audiences, and folding them together would make "show me this car's accidents" impossible to
+    // ask. The repair an accident causes still files under 'maintenance', which is correct — it IS
+    // maintenance, and the case link is what joins the two.
+    public const CATEGORIES = ['inspection', 'cleaning', 'condition', 'readiness', 'maintenance', 'movement', 'accident'];
 
     /**
      * The three super-tiers the Vehicle Life-Stream groups the six categories under, so the eye can
@@ -55,6 +60,9 @@ class ActivityFeedService
         // What the CUSTOMER and the DRIVER said about the car — reported, not performed on it.
         'complaint'   => 'operational',
         'observation' => 'operational',
+        // An accident happens TO the car out on the road; the decisions that follow are office work,
+        // but the tier answers "who acted?" and the honest answer for the whole chain is operational.
+        'accident'    => 'operational',
     ];
 
     /** vehicle_log_events event_type → category. Anything unlisted falls through to 'maintenance'. */
@@ -72,6 +80,25 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_DISPATCHED          => 'movement',
         VehicleLogEvent::EVENT_UNDER_REPAIR        => 'movement',
         VehicleLogEvent::EVENT_STATUS_UPDATE       => 'movement',
+        // Every accident event, in one bucket. Listed explicitly rather than derived from a prefix:
+        // logEventTypesFor('maintenance') subtracts the keys of THIS map, so a missing entry would
+        // silently file a crash under maintenance and lose it from the accident filter.
+        VehicleLogEvent::EVENT_ACCIDENT_REPORTED           => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_CONTEXT_CAPTURED   => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_DETAILS_UPDATED    => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_DAMAGE_RECORDED    => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_ASSESSED           => 'accident',
+        VehicleLogEvent::EVENT_POLICE_REPORT_RECORDED      => 'accident',
+        VehicleLogEvent::EVENT_POLICE_REPORT_VERIFIED      => 'accident',
+        VehicleLogEvent::EVENT_POLICE_REPORT_BYPASSED      => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_LIABILITY_SET      => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_CLAIM_UPDATED      => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_FINANCIAL_RECORDED => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_REPAIR_LINKED      => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_DOCUMENT_ADDED     => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_STAGE_CHANGED      => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_CLOSED             => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_REOPENED           => 'accident',
     ];
 
     /** Human labels for the raw event types. Unlisted types fall back to a headline-cased slug. */
@@ -156,6 +183,24 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_COMPONENT_REMOVED     => 'Component removed',
         VehicleLogEvent::EVENT_COMPONENT_TRANSFERRED => 'Component transferred',
         VehicleLogEvent::EVENT_COMPONENT_DISPOSED    => 'Component disposed',
+        // Accident cases. The labels are deliberately specific — "Accident updated" would make the
+        // six moments anybody actually looks for indistinguishable on a 300-row timeline.
+        VehicleLogEvent::EVENT_ACCIDENT_REPORTED           => 'Accident reported',
+        VehicleLogEvent::EVENT_ACCIDENT_CONTEXT_CAPTURED   => 'Who had the vehicle at the time',
+        VehicleLogEvent::EVENT_ACCIDENT_DETAILS_UPDATED    => 'Accident details updated',
+        VehicleLogEvent::EVENT_ACCIDENT_DAMAGE_RECORDED    => 'Damage recorded',
+        VehicleLogEvent::EVENT_ACCIDENT_ASSESSED           => 'Damage assessment completed',
+        VehicleLogEvent::EVENT_POLICE_REPORT_RECORDED      => 'Police report recorded',
+        VehicleLogEvent::EVENT_POLICE_REPORT_VERIFIED      => 'Police report verified',
+        VehicleLogEvent::EVENT_POLICE_REPORT_BYPASSED      => 'Police report requirement waived',
+        VehicleLogEvent::EVENT_ACCIDENT_LIABILITY_SET      => 'Liability determined',
+        VehicleLogEvent::EVENT_ACCIDENT_CLAIM_UPDATED      => 'Insurance claim updated',
+        VehicleLogEvent::EVENT_ACCIDENT_FINANCIAL_RECORDED => 'Accident amount recorded',
+        VehicleLogEvent::EVENT_ACCIDENT_REPAIR_LINKED      => 'Repair raised for the accident',
+        VehicleLogEvent::EVENT_ACCIDENT_DOCUMENT_ADDED     => 'Accident document added',
+        VehicleLogEvent::EVENT_ACCIDENT_STAGE_CHANGED      => 'Accident case advanced',
+        VehicleLogEvent::EVENT_ACCIDENT_CLOSED             => 'Accident case closed',
+        VehicleLogEvent::EVENT_ACCIDENT_REOPENED           => 'Accident case reopened',
     ];
 
     /**
@@ -234,6 +279,7 @@ class ActivityFeedService
         'movement'    => 'violet',
         'complaint'   => 'red',
         'observation' => 'yellow',
+        'accident'    => 'rose',
     ];
 
     /**
@@ -447,6 +493,18 @@ class ActivityFeedService
                 'contract_no' => $e->linkedContract?->contract_no,
                 'source_tag'  => $e->source_tag,
                 'category_hint' => $category,
+                // ── WHAT THIS EVENT OPENS ─────────────────────────────────────────────────────
+                // Derived server-side so ONE authority decides what a timeline row links to. The
+                // requirement — "the user must be able to open the police report from the timeline"
+                // — is not satisfied by a line of text next to a file that lives somewhere else, and
+                // a client re-deriving these URLs from meta would be a second authority that drifts.
+                // Ordered by specificity: the document itself, then the case, then the ticket.
+                'accident_case_id' => $e->accident_case_id ?? $e->accident_ref,
+                'link'       => $meta['document_url']
+                    ?? (($e->accident_case_id ?? $e->accident_ref) ? '/accidents/' . ($e->accident_case_id ?? $e->accident_ref) : null),
+                'link_label' => isset($meta['document_url'])
+                    ? 'Open ' . ($meta['kind_label'] ?? 'document')
+                    : (($e->accident_case_id ?? $e->accident_ref) ? 'Open accident case' : null),
             ]);
         })->all();
 
@@ -737,6 +795,11 @@ class ActivityFeedService
             'severity'    => null,
             'garage'      => null,
             'actor_role'  => null,
+            // Every source shapes these; only the vehicle-log one fills them today. Defaulted here so
+            // a client can read `link` unconditionally rather than guessing which sources carry it.
+            'accident_case_id' => null,
+            'link'        => null,
+            'link_label'  => null,
         ], $e, [
             'vehicle_id' => $vehicle?->id ?? ($e['vehicle_id'] ?? null),
             'plate'      => $vehicle?->plate_no,
