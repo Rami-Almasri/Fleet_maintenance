@@ -96,6 +96,29 @@ class FindingKeywordController extends Controller
                     // counting them would put a permanent 4 on a tile whose whole job is to be zero —
                     // which is how a real one hides. Exactly the set findings:vocabulary-check exempts.
                     'not_selectable' => $this->deadEndCount(),
+
+                    // THE RECONCILIATION, so three pages stop printing three unexplained numbers.
+                    //
+                    // This library is a DICTIONARY (what the engine understands); the picker shows a
+                    // MENU (what an inspector can tap). They are different sizes by design and the page
+                    // never said so, which left the only reading available: "111 here, 103 there, one of
+                    // them is broken".
+                    //
+                    // THEY OVERLAP; NEITHER CONTAINS THE OTHER, and the header must not imply it does.
+                    // The dictionary holds words the menu will never offer (garage-only, and retired
+                    // rows); the menu holds words with no dictionary row at all — "Detached" is one
+                    // today, authored straight into the config. A subtraction between these two totals
+                    // is meaningless, so the page states each as its own fact and names the reasons
+                    // they differ, rather than printing an equation that would be arithmetically neat
+                    // and wrong. (Locally the numbers happen to balance — 107 = 103 + 4 — purely
+                    // because one retired row cancels one row-less menu word. Do not build on it.)
+                    //
+                    // `selectable` is the count the PICKER itself renders, read from SelectableFindings,
+                    // the same service the picker reads — so the one number the user compares between
+                    // the two screens cannot drift.
+                    'selectable'  => count(app(\App\Services\SelectableFindings::class)->keywords()),
+                    'garage_only' => $this->garageOnlyCount(),
+
                     'total'    => (int) $counts->sum(),
                     'critical' => (int) ($counts[FindingKeyword::RISK_CRITICAL] ?? 0),
                     'moderate' => (int) ($counts[FindingKeyword::RISK_MODERATE] ?? 0),
@@ -135,6 +158,22 @@ class FindingKeywordController extends Controller
 
                 return isset($offered[$key]) || isset($withheld[$key]);
             })
+            ->count();
+    }
+
+    /**
+     * Active words the config withholds from the picker on purpose — the garage records them during
+     * the repair. The middle term of the reconciliation above, and the reason the dictionary is bigger
+     * than the menu even when nothing is wrong.
+     */
+    private function garageOnlyCount(): int
+    {
+        $withheld = app(\App\Services\SelectableFindings::class)->withheld();
+
+        return FindingKeyword::query()
+            ->where('is_active', true)
+            ->get(['keyword'])
+            ->filter(fn (FindingKeyword $k) => isset($withheld[TextNormalizer::key($k->keyword)]))
             ->count();
     }
 

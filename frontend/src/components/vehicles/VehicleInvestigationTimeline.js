@@ -30,6 +30,9 @@ const TONE_STYLE = {
   // half-added until BOTH palettes carry its tone.
   teal:    { soft: 'bg-teal-100',    text: 'text-teal-600' },
   red:     { soft: 'bg-red-100',     text: 'text-red-600' },
+  // Accident cases. Their own hue rather than sharing `red` with complaints: on a car's timeline
+  // "the customer complained" and "the car was in a crash" must not read as the same kind of event.
+  rose:    { soft: 'bg-rose-100',    text: 'text-rose-600' },
   emerald: { soft: 'bg-emerald-100', text: 'text-emerald-600' },
   green:   { soft: 'bg-emerald-100', text: 'text-emerald-600' },
   violet:  { soft: 'bg-violet-100',  text: 'text-violet-600' },
@@ -380,6 +383,19 @@ function EventRow({ e, onOpen, highlighted, showDate }) {
             <Link to={`/maintenance-workflow/${e.maintenance_id}`} className="inline-flex items-center gap-1 font-semibold text-amber-700 hover:text-amber-800">
               <Icon.Wrench className="h-3.5 w-3.5" /> {t('Ticket')}
             </Link>
+          )}
+          {/* THE DOOR THE SERVER NAMED. `link` / `link_label` are computed in ActivityFeedService so
+              one authority decides what a row opens onto — the uploaded police report itself, or the
+              accident case behind the event. Without this, "Police report uploaded" is a sentence
+              about a file the reader then has to go and find. */}
+          {!openable && e.link && (
+            <a
+              href={e.link}
+              {...(/^https?:|^\/storage\//.test(e.link) ? { target: '_blank', rel: 'noreferrer' } : {})}
+              className="inline-flex items-center gap-1 font-semibold text-rose-700 hover:text-rose-800"
+            >
+              <Icon.Download className="h-3.5 w-3.5" /> {t(e.link_label || 'Open')}
+            </a>
           )}
           {openable && (
             <span className="font-medium text-indigo-500 opacity-0 transition group-hover:opacity-100">

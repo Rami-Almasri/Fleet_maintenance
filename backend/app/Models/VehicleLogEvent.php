@@ -247,6 +247,36 @@ class VehicleLogEvent extends Model
     public const EVENT_COMPONENT_TRANSFERRED = 'component_transferred'; // a component moved between this car and another
     public const EVENT_COMPONENT_DISPOSED    = 'component_disposed';    // a component's story ended (scrapped/returned/sold)
 
+    // ── ACCIDENT CASES — the crash, and everything decided about it afterwards ─────────────────
+    //
+    // On the VEHICLE's timeline rather than only on the case, for the same reason the warranty
+    // events are: the question these answer is asked about a CAR. "Why was this car off the road for
+    // three weeks in March?" is read on the car's history, months later, by somebody who has never
+    // opened the accident page. Each row carries the case id in `accident_case_id` (and its FK-free
+    // twin `accident_ref`), so the CASE's own timeline is the same rows filtered one way and the
+    // car's is the same rows filtered another. One store, two readings.
+    //
+    // The set is deliberately fine-grained. "Accident updated" would be useless: the six moments
+    // anybody ever asks about — who had the car, what the police said, whose fault it was, what the
+    // insurer agreed, what it cost, who waived a requirement — each need to be findable on their own.
+    public const EVENT_ACCIDENT_REPORTED        = 'accident_reported';         // the case was opened
+    public const EVENT_ACCIDENT_CONTEXT_CAPTURED = 'accident_context_captured'; // who had the car, frozen
+    public const EVENT_ACCIDENT_DETAILS_UPDATED = 'accident_details_updated';  // what happened, corrected/expanded
+    public const EVENT_ACCIDENT_DAMAGE_RECORDED = 'accident_damage_recorded';  // a damaged area was logged
+    public const EVENT_ACCIDENT_ASSESSED        = 'accident_assessed';         // the damage assessment was completed
+    public const EVENT_POLICE_REPORT_RECORDED   = 'police_report_recorded';    // number + date captured
+    public const EVENT_POLICE_REPORT_VERIFIED   = 'police_report_verified';    // somebody checked it
+    /** THE ONE THAT MATTERS MOST HERE: a required document was waived on purpose, by name, with a reason. */
+    public const EVENT_POLICE_REPORT_BYPASSED   = 'police_report_bypassed';
+    public const EVENT_ACCIDENT_LIABILITY_SET   = 'accident_liability_set';    // whose fault — a named human's call
+    public const EVENT_ACCIDENT_CLAIM_UPDATED   = 'accident_claim_updated';    // the insurer's side moved
+    public const EVENT_ACCIDENT_FINANCIAL_RECORDED = 'accident_financial_recorded'; // a figure was written down
+    public const EVENT_ACCIDENT_REPAIR_LINKED   = 'accident_repair_linked';    // a maintenance ticket was parented here
+    public const EVENT_ACCIDENT_DOCUMENT_ADDED  = 'accident_document_added';   // a file joined the dossier
+    public const EVENT_ACCIDENT_STAGE_CHANGED   = 'accident_stage_changed';    // the case moved along the ladder
+    public const EVENT_ACCIDENT_CLOSED          = 'accident_closed';
+    public const EVENT_ACCIDENT_REOPENED        = 'accident_reopened';         // authorised, with a reason
+
     /**
      * Audit bucket per event. Reuses Maintenance::FINDING_SOURCES vocabulary so the workflow
      * log and the finding source on the visit speak the same language:
@@ -349,11 +379,48 @@ class VehicleLogEvent extends Model
         self::EVENT_SPARE_KEY_PURCHASE_REQUESTED => Maintenance::FINDING_INSPECTOR,
         self::EVENT_SPARE_KEY_RECEIVED           => Maintenance::FINDING_GARAGE,
         self::EVENT_SPARE_KEY_CANCELLED          => Maintenance::FINDING_INSPECTOR,
+        // An accident case is office/inspection-side throughout: reporting it, chasing the police
+        // report, deciding liability and arguing with an insurer are all our own acts, not workshop
+        // work. The REPAIR it causes is an ordinary ticket and carries the garage bucket on its own
+        // events — which is the distinction that keeps "what did the workshop do?" answerable.
+        self::EVENT_ACCIDENT_REPORTED            => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_CONTEXT_CAPTURED    => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_DETAILS_UPDATED     => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_DAMAGE_RECORDED     => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_ASSESSED            => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_POLICE_REPORT_RECORDED       => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_POLICE_REPORT_VERIFIED       => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_POLICE_REPORT_BYPASSED       => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_LIABILITY_SET       => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_CLAIM_UPDATED       => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_FINANCIAL_RECORDED  => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_REPAIR_LINKED       => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_DOCUMENT_ADDED      => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_STAGE_CHANGED       => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_CLOSED              => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_REOPENED            => Maintenance::FINDING_INSPECTOR,
+    ];
+
+    /** Every accident event, in ladder order — the CASE timeline's own vocabulary. */
+    public const ACCIDENT_EVENTS = [
+        self::EVENT_ACCIDENT_REPORTED, self::EVENT_ACCIDENT_CONTEXT_CAPTURED,
+        self::EVENT_ACCIDENT_DETAILS_UPDATED, self::EVENT_ACCIDENT_DAMAGE_RECORDED,
+        self::EVENT_ACCIDENT_ASSESSED, self::EVENT_POLICE_REPORT_RECORDED,
+        self::EVENT_POLICE_REPORT_VERIFIED, self::EVENT_POLICE_REPORT_BYPASSED,
+        self::EVENT_ACCIDENT_LIABILITY_SET, self::EVENT_ACCIDENT_CLAIM_UPDATED,
+        self::EVENT_ACCIDENT_FINANCIAL_RECORDED, self::EVENT_ACCIDENT_REPAIR_LINKED,
+        self::EVENT_ACCIDENT_DOCUMENT_ADDED, self::EVENT_ACCIDENT_STAGE_CHANGED,
+        self::EVENT_ACCIDENT_CLOSED, self::EVENT_ACCIDENT_REOPENED,
     ];
 
     protected $fillable = [
         'vehicle_id',
         'maintenance_id',
+        // The accident case this event belongs to, and its FK-free twin. Same arrangement, and same
+        // reason, as maintenance_id / maintenance_ref directly below: the cascade nulls the live
+        // link when a case is destroyed, and `accident_ref` is what keeps the row readable after.
+        'accident_case_id',
+        'accident_ref',
         // The archival twin of maintenance_id, carrying NO foreign key so no cascade can null it.
         // maintenance_id is the live link; maintenance_ref is the permanent record of what it was.
         // Read this one whenever you need the ticket a historical event belonged to.
@@ -393,6 +460,12 @@ class VehicleLogEvent extends Model
     public function linkedContract(): BelongsTo
     {
         return $this->belongsTo(Contract::class, 'linked_contract_id');
+    }
+
+    /** The accident case this event belongs to (null on everything that is not one). */
+    public function accidentCase(): BelongsTo
+    {
+        return $this->belongsTo(AccidentCase::class, 'accident_case_id');
     }
 
     public function actor(): BelongsTo

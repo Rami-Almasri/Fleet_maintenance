@@ -111,6 +111,18 @@ const EVENT_KIND = {
   oil_recall_returned: 'followup',
   // Accident / incident
   handover_incident: 'accident', accident_visit: 'accident',
+  // ACCIDENT CASES — the crash file and every decision taken about it. Listed explicitly because
+  // eventKind() falls through to 'workflow' for anything unmapped, which would file a crash, a police
+  // report and a liability verdict under the generic Workflow chip and leave the "Accidents"
+  // quick-jump (which has always existed) permanently empty on a car that has had one.
+  accident_reported: 'accident', accident_context_captured: 'accident',
+  accident_details_updated: 'accident', accident_damage_recorded: 'accident',
+  accident_assessed: 'accident', accident_liability_set: 'accident',
+  accident_claim_updated: 'accident', accident_financial_recorded: 'accident',
+  accident_repair_linked: 'accident', accident_document_added: 'accident',
+  accident_stage_changed: 'accident', accident_closed: 'accident', accident_reopened: 'accident',
+  police_report_recorded: 'accident', police_report_verified: 'accident',
+  police_report_bypassed: 'accident',
   // Reported by people (complaints entity + driver handover notes)
   complaint_logged: 'complaint', driver_observation: 'observation',
   // Workflow lifecycle

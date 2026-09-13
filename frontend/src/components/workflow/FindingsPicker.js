@@ -279,6 +279,15 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
     [visibleCategories],
   );
 
+  // How many issues this menu offers in total — the number the Keyword Risk Library quotes back as
+  // "on the inspector's menu". Printed here so the two screens can be read against each other instead
+  // of each stating a total the other appears to contradict. Counted from the categories actually
+  // rendered, so it is the menu in front of you, not a figure fetched from somewhere else.
+  const totalCount = useMemo(
+    () => categories.reduce((n, c) => n + c.keywords.length, 0),
+    [categories],
+  );
+
   // How many of a category's issues are currently picked — the badge that lets a closed row still report
   // what's inside it.
   const pickedIn = (cat) => cat.keywords.filter((k) => has(k) || isLocked(k)).length;
@@ -429,7 +438,7 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
           <span className="font-medium text-slate-500">
             {searching
               ? t('findingsPicker.searchResults', { count: matchCount })
-              : t('findingsPicker.selectedCount', { count: value.length })}
+              : t('findingsPicker.selectedOfTotal', { count: value.length, total: totalCount })}
           </span>
           {!searching && (
             <div className="flex items-center gap-2">

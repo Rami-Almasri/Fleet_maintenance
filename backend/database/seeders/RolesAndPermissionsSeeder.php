@@ -71,6 +71,22 @@ class RolesAndPermissionsSeeder extends Seeder
         'warranty.claim',                    // open + advance a case: authorization, dealer, repair, claim
         'warranty.override',                 // buy anyway despite live cover — reason required, audited by name
         'warranty.close',                    // close a case and record what was recovered / avoided
+        // ── Accident cases ─────────────────────────────────────────────────────────────────────
+        // Nine rather than the usual pair, for the same reason the warranty block above has six:
+        // reporting a crash, verifying a police report, deciding fault and settling money are four
+        // different levels of trust, and one `accidents.manage` would make three of the guardrails
+        // decorative. @see \App\Support\AccidentResponsibility
+        'accidents.view',                    // the board, a case, the dashboard
+        'accidents.report',                  // OPEN a case. The lowest bar in the feature, on purpose:
+                                             // a crash that goes unreported because somebody lacked a
+                                             // permission is the worst outcome this feature can produce.
+        'accidents.manage',                  // the narrative: details, damage, assessment, documents, repairs
+        'accidents.police.verify',           // assert the police report has been READ — never the uploader's own act
+        'accidents.liability',               // DECIDE whose fault it was. The most contested field in the system.
+        'accidents.insurance',               // run the claim with the insurer
+        'accidents.financials',              // estimates, approvals, settlements
+        'accidents.close',                   // close the case
+        'accidents.override',                // waive the police report; reopen a closed case. Reason mandatory.
         'components.view',                   // Asset Layer: see a car's installed components / history / warehouse inventory
         'components.manage',                 // Asset Layer: install / remove / transfer / dispose components + curate the catalog
         'components.backfill',               // Asset Layer: run the legacy-data backfill (super-admin/admin only)
@@ -126,6 +142,12 @@ class RolesAndPermissionsSeeder extends Seeder
             // purchase made in the face of live cover — the same reasoning that keeps
             // maintenance.labor.override here and nowhere else.
             'warranty.view', 'warranty.manage', 'warranty.review', 'warranty.claim', 'warranty.override', 'warranty.close',
+            // The full accident set INCLUDING the override, for exactly the reason the labor and
+            // warranty overrides sit here and nowhere else: the manager is the role that answers for
+            // a waived police report and for a settlement somebody reopened.
+            'accidents.view', 'accidents.report', 'accidents.manage', 'accidents.police.verify',
+            'accidents.liability', 'accidents.insurance', 'accidents.financials', 'accidents.close',
+            'accidents.override',
             'components.view', 'components.manage', // Asset Layer: full operational control includes asset custody
             'registration.view', 'registration.manage',
             // The full financial set, for the same reason the labor and warranty overrides sit here: the
@@ -149,6 +171,12 @@ class RolesAndPermissionsSeeder extends Seeder
             'parts.view', 'parts.request', 'parts.purchase',
             // The desk raises purchases, so it must be able to see WHY one was held.
             'warranty.view',
+            // THE DESK THAT TAKES THE PHONE CALL. A customer rings to say they have crashed, and the
+            // person who answers must be able to open the case there and then — so report and manage
+            // sit here, with the insurer leg the desk already runs. What does NOT sit here is the
+            // DECISION half: liability, closure and the police waiver stay with the manager, the
+            // same separation that keeps parts approval away from the person raising the purchase.
+            'accidents.view', 'accidents.report', 'accidents.manage', 'accidents.insurance',
             'components.view', // Asset Layer: read-only (desk role — no asset custody)
             // Fleet analytics: utilization, maintenance↔rental overlaps, active shop stays, the swap
             // board, mileage-chain audit and the oversight surfaces. Operations was the ONLY senior role
@@ -175,6 +203,10 @@ class RolesAndPermissionsSeeder extends Seeder
             // notification. NOT the override — buying past live cover is a step above running the
             // workshop, exactly as overruling the measured labor clock is.
             'warranty.view', 'warranty.manage', 'warranty.review', 'warranty.claim', 'warranty.close',
+            // Assesses the damage and fixes the car; VERIFIES the police report precisely because the
+            // workshop side is not the side that uploaded it. Not liability and not the money — a
+            // repair estimate is not a verdict on who pays for it.
+            'accidents.view', 'accidents.report', 'accidents.manage', 'accidents.police.verify',
             'components.view', 'components.manage', // Asset Layer: the workshop-manager role owns install/remove/transfer
             'logistics.view',
             'registration.view', 'insights.view', 'intelligence.view', 'dashboard.view',
@@ -204,6 +236,9 @@ class RolesAndPermissionsSeeder extends Seeder
             // purchase must not also be the person who decides whether the purchase was allowed.
             // Same separation as parts approval, one step up the same lane.
             'warranty.view', 'warranty.claim',
+            // Sees the case behind a car in his dispatch queue, and can open one when a driver brings
+            // a damaged car back. Working the case is the desk's job, not the dispatcher's.
+            'accidents.view', 'accidents.report',
             'components.view', 'components.manage', // Asset Layer: authorized maintenance delegates hold asset custody
             'logistics.view', 'logistics.dispatch',
             'intelligence.view',   // picks the destination garage — needs to see who is good at what
@@ -217,6 +252,9 @@ class RolesAndPermissionsSeeder extends Seeder
             'parts.view', 'parts.request',
             // Performs the pre-expiry warranty inspection, so must be able to read what the cover says.
             'warranty.view',
+            // The person who physically looks at the car writes the damage assessment — which is all
+            // `accidents.manage` grants here. It is not authority over the case's decisions.
+            'accidents.view', 'accidents.report', 'accidents.manage',
             'components.view', // Asset Layer: read-only — technician-tier gets manage only by explicit per-user grant
             'logistics.view',
             'dashboard.view',
@@ -228,6 +266,10 @@ class RolesAndPermissionsSeeder extends Seeder
             'vehicles.view', 'vendors.view',
             'maintenance.view', 'maintenance.logistics',
             'parts.view', 'parts.request',
+            // THE PERSON MOST LIKELY TO BE STANDING AT THE ROADSIDE. Reporting is open to the field
+            // on purpose: a crash that goes unrecorded because the driver could not file it is the
+            // worst outcome this feature can produce.
+            'accidents.view', 'accidents.report',
             'components.view', // Asset Layer: read-only — technician-tier gets manage only by explicit per-user grant
             'logistics.view', 'logistics.dispatch', 'logistics.claim',
             'dashboard.view',
@@ -240,6 +282,10 @@ class RolesAndPermissionsSeeder extends Seeder
             'parts.view',
             // Records what a claim actually recovered — the money half of a case.
             'warranty.view', 'warranty.close',
+            // The money half of an accident, and the closure that states the final position. NOT the
+            // liability verdict: who was at fault is an operational finding, and finance records its
+            // financial consequence rather than deciding it.
+            'accidents.view', 'accidents.financials', 'accidents.close',
             'components.view', // Asset Layer: read-only (asset cost visibility)
             // The Odoo bridge belongs to finance end to end — they see what is owed, accept it, send it,
             // retry it, and own the mappings it depends on. This is the one role that gets all five.
@@ -253,7 +299,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'customers.view', 'contracts.view', 'booking_readiness.view', 'inspections.view', 'billing.view', 'registration.view',
             'reminders.view',
             'maintenance.view', 'logistics.view', 'parts.view', 'components.view', 'insights.view', 'dashboard.view',
-            'warranty.view',
+            'warranty.view', 'accidents.view',
             // Read-only across the board includes seeing what is owed to the accounting system and why
             // it is stuck — but never sending, approving or mapping anything.
             'financial.view',

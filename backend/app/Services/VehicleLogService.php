@@ -135,6 +135,61 @@ class VehicleLogService
     }
 
     /**
+     * Append one event scoped to an ACCIDENT CASE — the crash and every decision taken about it.
+     *
+     * Written to the same append-only trail as everything else, deliberately: the car's history is
+     * ONE story, and an accident that lived in a parallel table would be invisible to everybody
+     * reading the timeline to work out why a car was off the road in March. Stamping
+     * `accident_case_id` (plus its FK-free twin) is what makes the CASE's own timeline the same rows
+     * read a different way, rather than a second copy that can drift.
+     *
+     * `linked_contract_id` keeps its usual meaning — the car's open MAINTENANCE contract, if any. The
+     * RENTAL contract the car was on when it crashed is a different fact entirely and lives frozen on
+     * the case; conflating the two here would make a rented car's accident look like a workshop visit.
+     *
+     * Same best-effort contract as record(): a logging failure must never sink the decision that
+     * triggered it.
+     *
+     * @param array{description?:?string, meta?:array, source_tag?:?string, maintenance_id?:?int,
+     *              occurred_at?:?\DateTimeInterface} $opts
+     */
+    public function recordAccident(
+        \App\Models\AccidentCase $case,
+        string $eventType,
+        ?User $actor = null,
+        array $opts = [],
+    ): ?VehicleLogEvent {
+        if (! $case->vehicle_id) {
+            return null;
+        }
+
+        try {
+            return VehicleLogEvent::create([
+                'vehicle_id'         => $case->vehicle_id,
+                // Set only when the event is genuinely ABOUT a ticket (a repair being linked); an
+                // accident's own events belong to no maintenance visit.
+                'maintenance_id'     => $opts['maintenance_id'] ?? null,
+                'maintenance_ref'    => $opts['maintenance_id'] ?? null,
+                'accident_case_id'   => $case->id,
+                'accident_ref'       => $case->id,   // FK-free twin: survives the case's deletion
+                'linked_contract_id' => $this->activeMaintenanceContractId($case->vehicle_id),
+                'event_type'         => $eventType,
+                'source_tag'         => $opts['source_tag']
+                                        ?? VehicleLogEvent::SOURCE_BY_EVENT[$eventType]
+                                        ?? Maintenance::FINDING_INSPECTOR,
+                'workflow_status'    => null,
+                'description'        => $opts['description'] ?? null,
+                'meta'               => $opts['meta'] ?? null,
+                'actor_id'           => $actor?->id,
+                'occurred_at'        => $opts['occurred_at'] ?? Carbon::now(),
+            ]);
+        } catch (\Throwable $e) {
+            report($e);   // an audit-log write must never sink an accident decision
+            return null;
+        }
+    }
+
+    /**
      * The vehicle's currently-open type-'U' (maintenance) contract id, newest out_date first, or null.
      * THE single source of truth for "which contract is this vehicle's maintenance event linked to":
      * best-effort, never auto-creates a contract (OfficeManager owns contract creation; we only link).

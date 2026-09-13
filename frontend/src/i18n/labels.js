@@ -4436,7 +4436,8 @@ const en = {
 
   findingKeywords: {
     title: 'Keyword Risk Library',
-    subtitle: '{shown} of {total} fault keywords',
+    subtitle: '{shown} of {total} words the system understands · the inspector’s menu offers '
+      + '{selectable} · {garage} here are recorded by the garage instead',
     add: 'Add Keyword',
     edit: 'Edit Keyword',
     addSub: 'Add a fault keyword and grade its risk',
@@ -4521,6 +4522,7 @@ const en = {
     clearSearch: 'Clear search',
     searchResults: '{count} matching issues',
     selectedCount: '{count} selected',
+    selectedOfTotal: '{count} selected · {total} issues on the menu',
     selectedTitle: 'Selected findings',
     expandAll: 'Expand all',
     collapseAll: 'Collapse all',
@@ -4680,6 +4682,8 @@ const en = {
       keyword: 'Keyword only',
     },
     searchTypes: 'Search a fault, damage type or keyword…',
+    typesBreakdown: 'Everything that can need a place on the car: {faults} fault types + {damage} '
+      + 'damage types + {words} library words no type owns.',
 
     source: {
       row: 'Set by hand on this type',
@@ -5323,14 +5327,17 @@ const en = {
     openVehicle: 'Open vehicle',
     openSystem: 'Full evidence report',
     refresh: 'Refresh',
-    // Print builds its own standalone HTML sheet — see lib/vehicleOverviewReport.js — rather than
-    // handing this dark cockpit surface to the printer. The "Download dossier" button that used to
-    // sit beside it is gone: two printable documents on one page made a reader choose between them
+    // The button builds its own standalone HTML sheet — see lib/vehicleOverviewReport.js — rather
+    // than handing this dark cockpit surface to the printer, and SAVES it: what people do with this
+    // report is forward it, and a browser tab is not something you can attach to a mail. The old
+    // "Download dossier" button is gone: two documents on one page made a reader choose between them
     // before knowing what either contained.
-    print: 'Print / Save as PDF',
-    // A pop-up blocker makes Print look like a dead button. It is the one failure this page cannot
-    // detect any other way, so it is said out loud rather than left as nothing happening.
-    printBlocked: 'The printable report opens in a new tab — your browser blocked it. Allow pop-ups for this site and press Print again.',
+    download: 'Download report (HTML)',
+    // The file's own toolbar keeps the print button, so "save as PDF" is one click away inside it.
+    printSheet: 'Print / Save as PDF',
+    // A browser that refuses the download makes this look like a dead button. It is the one failure
+    // this page cannot detect any other way, so it is said out loud rather than left as nothing.
+    downloadFailed: 'The report could not be saved. Check that downloads are allowed for this site, then press the button again.',
     // The printable sheet's own search box. It reads the fitters' notes too, not just fault names —
     // "airbag" appears nowhere on this car except inside one workshop note.
     search: 'Search faults, garages, notes…',
@@ -6562,6 +6569,7 @@ const ar = {
       activity: 'تاريخ السيارة كاملًا كأداة تحقيق — بحث وفلاتر ومؤشرات وتجميع وترتيب فوق كل المصادر موحّدة: زيارات الورشة من جدول N-Maintenance (اضغط أيًّا منها لسجلها الكامل — الكراج، التكلفة، الأعطال، الملاحظات)، وسجل تدقيق سير عمل الصيانة (الفحوصات، الإرسال، الإصلاح، إعادة الفحص، القطع، الموافقات والمتابعات)، وسجل حركات اللوجستيات، وسجلات الفحص. كل صف يحمل من قام بالفعل ومتى؛ لا شيء قابل للتعديل، والعرض المفلتر بالضبط محفوظ في الرابط لمشاركته.',
       financials: 'كل عقد يحمله OfficeManager على هذه السيارة — إيجار (C) وصيانة (U) وحجز (R) — مرتّبة من الأحدث وقابلة للتصفية حسب النوع. المبالغ في كل سطر (مدين، دائن، الرصيد) هي فوترة العقد نفسه؛ أمّا تحليل التكلفة أسفلها فمُستنتج عكسيًا من تلك الفوترة عبر RealProfitService: الإيجار − الخصم + الاستخدام المحقّق − التشغيل − صيانة السيارة.',
       media: 'صور الحالة قبل/بعد وصور العدّاد المُلتقطة أثناء سير عمل الصيانة (مرحلتا الفحص والكراج).',
+      accidents: 'ملفات الحوادث المفتوحة على هذه السيارة — سير عمل قائم بذاته، لا مجرد ملاحظة صيانة. يذكر كل سطر مَن كان بحوزته السيارة لحظة الحادث، مُجمَّدًا عند التبليغ: يُنسخ اسم العميل ورقم عقد الإيجار وفترة الإيجار على الملف حينها ولا يُعاد احتسابها أبدًا، فيظل الملف يسمّي الشخص الصحيح بعد إغلاق ذلك العقد وتأجير السيارة مرارًا. المرحلة وحالة تقرير الشرطة وقرار المسؤولية هي حالة الملف نفسه — والمسؤولية لا تُستنتج أبدًا ممّن كان يقود، وتبقى غير محسومة حتى يحسمها شخص باسمه. لافتة حجز التأجير تقرأ المرجع نفسه الذي تقرأه بوابة الحجز (ContractEligibilityService)، فلا يمكن أن تتعارض مع ما يحدث عند الكاونتر. الإصلاحات تذاكر صيانة عادية مرتبطة بالملف كأب لها؛ والمبالغ تعيش على الملف كأرقام منفصلة: تقديري ومعتمَد وفعلي ومدفوع.',
       components: 'التركيبة المادية للمركبة، مُشتقّة من سير عمل الصيانة — لا تُدخل يدويًا أبدًا. يظهر المكوّن هنا عبر أحد بابين، والصف يوضّح أيهما. مُشترى: بلغت التذكرة مرحلة التركيب (قطعة اشتُريت ← استُلمت ← رُكّبت)؛ الهوية والمورّد والتكلفة والضمان وقراءة العدّاد كلها حقائق منسوخة من أمر الشراء. مُبلَّغ عنه: سجّل فني «استُبدل كذا» عند توثيق الإصلاح دون شراء خلفه — القطعة مركّبة فعلًا، لكن لا توجد أوراق، لذا تبقى التكلفة والمورّد فارغين لا أصفارًا، ولا يُدّعى ضمان. في الحالتين يُحيل التركيب القطعة المستبدَلة إلى التقاعد ويكتب كليهما في الجدول الزمني. أما العمر ونسبة العمر المستهلك وموقف الضمان والتكلفة لكل كم فتُشتق عند القراءة. الأرقام المالية تحتسب فقط القطع المعلومة التكلفة، وتذكر كم عددها. والمستهلكات التي تُجدَّد بالصيانة الدورية (الزيت والفلاتر المرافقة لتغيير الزيت) تُدمج من سجل الخدمة وتُوسم «خدمة»، لأنها عمل مُنفَّذ لا أصل متتبَّع. أما المفاتيح الاحتياطية فتُقرأ من السجل نفسه لكن بشكل منفصل، لأنها القطعة الوحيدة التي يختلف فيها الرقمان عادةً: «المفاتيح الموجودة في السيارة» هو ما يحمله السجل اليوم، بينما «الطلبات المسجّلة» و«المفاتيح المستلمة» تأتي من طلبات المفاتيح الاحتياطية وعمليات الشراء خلفها. والسجلات المستوردة من شيت «NEED SPARE KEY» توثّق الطلب وتواريخه فقط — وهي ليست دليلًا على وجود مفتاح، لذا لا تُضاف أبدًا إلى العدد الحالي.',
     },
   },
@@ -7610,9 +7618,13 @@ const ar = {
         desc: 'قبل أن نصرف على سيارة: هل يمكن أن تكون الشركة الصانعة أو الوكيل أو المورّد هو من يدفع بدلاً منّا؟ تُظهر البطاقات كم من الأسطول ما زال مغطّى، وكم تغطية توشك على الانتهاء (بالأشهر أو بالكيلومترات، أيهما ينتهي أولاً)، وكم استُرد أو وُفِّر. وأسفلها قائمة العمل: مراجعات تغطية يجب حسمها قبل السماح بالشراء، وحالات تنتظر ردّ وكيل صمت، ومطالبات يجب تقديمها. طلب الشراء على سيارة عليها تغطية سارية يُوقَف هنا بدل أن يُدفع بصمت — وكل تجاوز يُسجَّل باسم صاحبه وسببه.',
       },
       garages: { name: 'الورش', desc: 'الورش التي تُصان فيها سيارات الأسطول، مع الأعمال المحوّلة إلى كل منها.' },
+      accidents: {
+        name: 'الحوادث',
+        desc: 'كل حادث تعرّض له الأسطول، والأسئلة الأربعة التي يفتحها كل حادث: من كان بحوزته السيارة وقتها، وماذا يقول تقرير الشرطة، ومن المسؤول، ومن يدفع. البطاقات هي العمل المنتظر: تقارير شرطة لم يتابعها أحد، ومسؤولية لم يحسمها أحد، وشركات تأمين صمتت، وسيارات محجوزة خارج التأجير بسبب حادث لم يُغلق. الحادث الذي يقع أثناء عقد إيجار قائم يُصدَّر بالعميل والعقد، وتسجيل الحادث لا يُغلق ذلك العقد إطلاقًا. والمبالغ تبقى خمسة أرقام منفصلة — تقديري، معتمَد، فعلي، مدفوع، وغير محسوم — لأن التقدير ليس اعتمادًا والاعتماد ليس دفعًا.',
+      },
       'damage-accidents': {
         name: 'الأضرار والحوادث',
-        desc: 'سجلات الأضرار والحوادث معروضة كما هي لكل مركبة. تُلوَّن المسؤولية بالأحمر أو الأخضر بناءً على الطرف المسؤول والتأمين.',
+        desc: 'سجلات الأضرار والحوادث معروضة كما هي لكل مركبة، من سجل الصيانة التاريخي. تُلوَّن المسؤولية بالأحمر أو الأخضر بناءً على الطرف المسؤول والتأمين. هذا هو السجل المستورد؛ أما ملفات الحوادث الحيّة فتوجد تحت «الحوادث».',
       },
       'driver-dispatch': {
         name: 'توجيه السائقين',
@@ -10482,7 +10494,8 @@ const ar = {
 
   findingKeywords: {
     title: 'مكتبة مخاطر الأعطال',
-    subtitle: '{shown} من {total} عطل',
+    subtitle: '{shown} من {total} كلمة يفهمها النظام · قائمة الفاحص تعرض {selectable} · '
+      + '{garage} منها هنا يسجّلها الكراج بدلًا من ذلك',
     add: 'إضافة عطل',
     edit: 'تعديل العطل',
     addSub: 'أضف عطلًا وحدّد مستوى خطورته',
@@ -10559,6 +10572,7 @@ const ar = {
     clearSearch: 'مسح البحث',
     searchResults: '{count} عطل مطابق',
     selectedCount: '{count} محدَّد',
+    selectedOfTotal: '{count} محدَّد · {total} عطل في القائمة',
     selectedTitle: 'الملاحظات المحدَّدة',
     expandAll: 'فتح الكل',
     collapseAll: 'طي الكل',
@@ -10705,6 +10719,8 @@ const ar = {
       keyword: 'كلمة فقط',
     },
     searchTypes: 'ابحث عن عطل أو ضرر أو كلمة…',
+    typesBreakdown: 'كل ما قد يحتاج تحديد موضعه على السيارة: {faults} نوع عطل + {damage} نوع ضرر + '
+      + '{words} كلمة من المكتبة لا يملكها أي نوع.',
 
     source: {
       row: 'حُدِّد يدويًا لهذا النوع',
@@ -11307,8 +11323,9 @@ const ar = {
     openVehicle: 'فتح المركبة',
     openSystem: 'تقرير الأدلة الكامل',
     refresh: 'تحديث',
-    print: 'طباعة / حفظ PDF',
-    printBlocked: 'يفتح التقرير القابل للطباعة في تبويب جديد، وقد منعه المتصفح. اسمح بالنوافذ المنبثقة لهذا الموقع ثم اضغط «طباعة» مرة أخرى.',
+    download: 'تنزيل التقرير (HTML)',
+    printSheet: 'طباعة / حفظ PDF',
+    downloadFailed: 'تعذّر حفظ التقرير. تأكد من السماح بالتنزيلات لهذا الموقع ثم اضغط الزر مرة أخرى.',
     search: 'ابحث في الأعطال والورش والملاحظات…',
     hero: {
       label: 'ما يُظهره السجل',
