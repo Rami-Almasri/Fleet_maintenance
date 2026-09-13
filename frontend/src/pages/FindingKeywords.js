@@ -170,7 +170,17 @@ export default function FindingKeywords() {
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
           title={t('findingKeywords.title')}
-          subtitle={loading ? '…' : t('findingKeywords.subtitle', { shown: num(filtered.length), total: num(counts.total) })}
+          /* States the arithmetic instead of a bare total. This page counts the DICTIONARY (every word
+             the engine understands); the picker shows the MENU. They differ by design, and printing
+             only "111" next to a picker showing 103 left "one of these is broken" as the sole available
+             reading. dictionary = menu + garage-only (+ anything still half-added, which gets its own
+             amber line below because that one IS broken). */
+          subtitle={loading ? '…' : t('findingKeywords.subtitle', {
+            shown: num(filtered.length),
+            total: num(counts.total),
+            selectable: num(counts.selectable || 0),
+            garage: num(counts.garage_only || 0),
+          })}
         >
           {canAdd && (
             <Button onClick={openCreate}>

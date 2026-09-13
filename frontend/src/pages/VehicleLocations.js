@@ -583,6 +583,20 @@ export default function VehicleLocations() {
               ))}
             </div>
 
+            {/* WHAT THIS TAB'S NUMBER IS MADE OF.
+                The badge counts three catalogs at once — faults, damage types, and the library words
+                no type owns — because all three can need a place on the car. Read beside the Keyword
+                Risk Library and the picker, which count two other things, an unexplained total here
+                just looked like a third contradictory answer. It is a different question, so it says
+                which one it is answering. */}
+            <p className="text-xs text-slate-500">
+              {t('vehicleLocations.typesBreakdown', {
+                faults: num(policy.filter((p) => p.catalog === 'fault').length),
+                damage: num(policy.filter((p) => p.catalog === 'damage').length),
+                words: num(policy.filter((p) => p.catalog === 'keyword').length),
+              })}
+            </p>
+
             <div className="flex flex-col gap-3 sm:flex-row">
               <SearchInput className="flex-1" value={policySearch} onChange={setPolicySearch} placeholder={t('vehicleLocations.searchTypes')} />
               <Select className="sm:w-44" value={policyCatalog} onChange={(e) => setPolicyCatalog(e.target.value)}>

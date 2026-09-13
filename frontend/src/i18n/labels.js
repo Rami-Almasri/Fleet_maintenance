@@ -4436,7 +4436,8 @@ const en = {
 
   findingKeywords: {
     title: 'Keyword Risk Library',
-    subtitle: '{shown} of {total} fault keywords',
+    subtitle: '{shown} of {total} words the system understands · the inspector’s menu offers '
+      + '{selectable} · {garage} here are recorded by the garage instead',
     add: 'Add Keyword',
     edit: 'Edit Keyword',
     addSub: 'Add a fault keyword and grade its risk',
@@ -4521,6 +4522,7 @@ const en = {
     clearSearch: 'Clear search',
     searchResults: '{count} matching issues',
     selectedCount: '{count} selected',
+    selectedOfTotal: '{count} selected · {total} issues on the menu',
     selectedTitle: 'Selected findings',
     expandAll: 'Expand all',
     collapseAll: 'Collapse all',
@@ -4680,6 +4682,8 @@ const en = {
       keyword: 'Keyword only',
     },
     searchTypes: 'Search a fault, damage type or keyword…',
+    typesBreakdown: 'Everything that can need a place on the car: {faults} fault types + {damage} '
+      + 'damage types + {words} library words no type owns.',
 
     source: {
       row: 'Set by hand on this type',
@@ -10490,7 +10494,8 @@ const ar = {
 
   findingKeywords: {
     title: 'مكتبة مخاطر الأعطال',
-    subtitle: '{shown} من {total} عطل',
+    subtitle: '{shown} من {total} كلمة يفهمها النظام · قائمة الفاحص تعرض {selectable} · '
+      + '{garage} منها هنا يسجّلها الكراج بدلًا من ذلك',
     add: 'إضافة عطل',
     edit: 'تعديل العطل',
     addSub: 'أضف عطلًا وحدّد مستوى خطورته',
@@ -10567,6 +10572,7 @@ const ar = {
     clearSearch: 'مسح البحث',
     searchResults: '{count} عطل مطابق',
     selectedCount: '{count} محدَّد',
+    selectedOfTotal: '{count} محدَّد · {total} عطل في القائمة',
     selectedTitle: 'الملاحظات المحدَّدة',
     expandAll: 'فتح الكل',
     collapseAll: 'طي الكل',
@@ -10713,6 +10719,8 @@ const ar = {
       keyword: 'كلمة فقط',
     },
     searchTypes: 'ابحث عن عطل أو ضرر أو كلمة…',
+    typesBreakdown: 'كل ما قد يحتاج تحديد موضعه على السيارة: {faults} نوع عطل + {damage} نوع ضرر + '
+      + '{words} كلمة من المكتبة لا يملكها أي نوع.',
 
     source: {
       row: 'حُدِّد يدويًا لهذا النوع',
