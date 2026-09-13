@@ -99,6 +99,8 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_ACCIDENT_STAGE_CHANGED      => 'accident',
         VehicleLogEvent::EVENT_ACCIDENT_CLOSED             => 'accident',
         VehicleLogEvent::EVENT_ACCIDENT_REOPENED           => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_CUSTOMER_CHARGED   => 'accident',
+        VehicleLogEvent::EVENT_ACCIDENT_CHARGE_REVERSED    => 'accident',
     ];
 
     /** Human labels for the raw event types. Unlisted types fall back to a headline-cased slug. */
@@ -201,6 +203,8 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_ACCIDENT_STAGE_CHANGED      => 'Accident case advanced',
         VehicleLogEvent::EVENT_ACCIDENT_CLOSED             => 'Accident case closed',
         VehicleLogEvent::EVENT_ACCIDENT_REOPENED           => 'Accident case reopened',
+        VehicleLogEvent::EVENT_ACCIDENT_CUSTOMER_CHARGED   => 'Accident charged to the customer',
+        VehicleLogEvent::EVENT_ACCIDENT_CHARGE_REVERSED    => 'Customer charge withdrawn',
     ];
 
     /**

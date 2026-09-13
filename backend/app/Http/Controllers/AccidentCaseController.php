@@ -14,6 +14,7 @@ use App\Models\Maintenance;
 use App\Models\Vehicle;
 use App\Models\VehicleLocation;
 use App\Services\Accident\AccidentCaseService;
+use App\Services\Accident\AccidentChargeService;
 use App\Services\Accident\AccidentContextResolver;
 use App\Services\Accident\AccidentReportService;
 use Illuminate\Http\Request;
@@ -356,6 +357,60 @@ class AccidentCaseController extends Controller
             // The whole picture back, so the page never has to re-derive the totals it just changed.
             'financials' => $case->fresh()->financialBreakdown(),
         ], 'Amount recorded', 201);
+    }
+
+    // ── the customer charge ────────────────────────────────────────────────────────────────────
+
+    /**
+     * What would be billed, what the customer's credit would absorb, and what would be left — plus
+     * the named reasons it cannot be billed yet, when it cannot.
+     *
+     * Read-only and always answerable, including on cases that will never be charged: the page needs
+     * to render "the other party was at fault, nothing to bill" as confidently as it renders a due
+     * amount. The frontend never re-derives any of this.
+     */
+    public function chargeState(AccidentCase $case, AccidentChargeService $charges)
+    {
+        return ResponseHelper::SuccessResponse($charges->state($case), 'Accident charge state retrieved');
+    }
+
+    /**
+     * BILL THE CUSTOMER. Idempotent — a case already charged returns its existing charge untouched,
+     * so a retried or double-clicked request cannot bill twice.
+     *
+     * @see \App\Services\Accident\AccidentChargeService::charge() for the four gates.
+     */
+    public function charge(Request $request, AccidentCase $case, AccidentChargeService $charges)
+    {
+        $data = $request->validate([
+            // Defaults to 0 in the service, on purpose: the amount billed must equal the amount the
+            // case decided, and a silent 5% would put the ledger and the case permanently at odds.
+            'vat_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'invoice_date'   => ['nullable', 'date'],
+            'note'           => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $invoice = $charges->charge($case, $request->user(), $data);
+
+        return ResponseHelper::SuccessResponse([
+            'invoice' => [
+                'id'          => $invoice->id,
+                'invoice_ref' => $invoice->invoice_ref,
+                'amount'      => (float) $invoice->total_after_vat,
+            ],
+            // The whole position back, so the page never has to re-read what it just changed.
+            'charge' => $charges->state($case->fresh()),
+        ], 'Customer charged', 201);
+    }
+
+    /** Withdraw it. Reason mandatory; gated on `accidents.override` at the route. */
+    public function reverseCharge(Request $request, AccidentCase $case, AccidentChargeService $charges)
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'min:5', 'max:2000']]);
+
+        $charges->reverseCharge($case, $data['reason'], $request->user());
+
+        return ResponseHelper::SuccessResponse($charges->state($case->fresh()), 'Customer charge withdrawn');
     }
 
     // ── repairs ────────────────────────────────────────────────────────────────────────────────

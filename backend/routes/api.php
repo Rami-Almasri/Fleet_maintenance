@@ -354,6 +354,15 @@ Route::middleware('auth:sanctum')->prefix('accidents')->controller(\App\Http\Con
     Route::post('/{case}/liability', 'setLiability')->middleware('permission:accidents.liability');
     Route::post('/{case}/insurance', 'updateInsurance')->middleware('permission:accidents.insurance');
     Route::post('/{case}/financials', 'recordFinancial')->middleware('permission:accidents.financials');
+
+    // THE CUSTOMER CHARGE. Reading the position rides with `accidents.view` — the desk needs to see
+    // whether a renter has been billed without holding the authority to bill them. Raising the
+    // charge is `accidents.financials` (money leaving this system and landing on a real person's
+    // account), and WITHDRAWING one is `accidents.override`, the same bar as waiving a police report
+    // or reopening a settled case: taking a charge back off an account is a step above putting it on.
+    Route::get('/{case}/charge', 'chargeState')->middleware('permission:accidents.view');
+    Route::post('/{case}/charge', 'charge')->middleware('permission:accidents.financials');
+    Route::post('/{case}/charge/reverse', 'reverseCharge')->middleware('permission:accidents.override');
     // Raising the repair uses the SAME authority as sending any car straight to a garage — an
     // accident is not a reason to let somebody commit a car to a workshop who otherwise could not.
     // TWO middlewares = AND, deliberately. Working the case is not on its own authority to commit a

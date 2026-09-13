@@ -25,6 +25,10 @@ const ACCIDENT_EVENT_TYPES = [
   'accident_stage_changed',
   'accident_closed',
   'accident_reopened',
+  // The customer charge and its withdrawal — the two events that reach outside this system and
+  // land on a real person's account.
+  'accident_customer_charged',
+  'accident_charge_reversed',
 ];
 
 describe('accident events on the vehicle timeline', () => {

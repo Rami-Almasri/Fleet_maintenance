@@ -21,6 +21,12 @@ class Invoice extends Model
 {
     use HasFactory;
 
+    /**
+     * `accident_case_id` is deliberately ABSENT from the fillable set. It is the idempotency key for
+     * an accident charge (unique index), and a request body must never be able to claim that an
+     * arbitrary invoice settles an accident. AccidentChargeService sets it explicitly after the
+     * invoice is created. @see \App\Services\Accident\AccidentChargeService
+     */
     protected $fillable = [
         'invoice_no', 'invoice_ref', 'invoice_date', 'customer_id', 'contract_id',
         'vehicle_id', 'vendor_id',
@@ -117,6 +123,16 @@ class Invoice extends Model
     public function vehicle(): BelongsTo
     {
         return $this->belongsTo(Vehicle::class);
+    }
+
+    /**
+     * The accident this invoice bills the customer for. Null on every ordinary rental charge, and
+     * at most one invoice may carry any given case — the unique index is what makes charging an
+     * accident twice impossible rather than merely unlikely.
+     */
+    public function accidentCase(): BelongsTo
+    {
+        return $this->belongsTo(AccidentCase::class, 'accident_case_id');
     }
 
     /** Website-created invoice (editable here) vs. an OfficeManager-synced one (read-only). */

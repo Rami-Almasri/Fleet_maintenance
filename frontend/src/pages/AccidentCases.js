@@ -278,6 +278,11 @@ function Detail({ caseId }) {
   const c = useFetch(() => api.get(`/accidents/${caseId}`).then((r) => r.data.data), [caseId]);
   const timeline = useFetch(() => api.get(`/accidents/${caseId}/timeline`).then((r) => r.data.data), [caseId]);
   const docs = useFetch(() => api.get(`/accidents/${caseId}/documents`).then((r) => r.data.data), [caseId]);
+  // The customer-charge position. Its own call because it reaches into the accounting layer for a
+  // live balance — and its own AUTHORITY: the page renders `status` and `blockers` verbatim rather
+  // than working out from liability + amounts whether billing is allowed, so the button and the
+  // endpoint can never disagree about it.
+  const charge = useFetch(() => api.get(`/accidents/${caseId}/charge`).then((r) => r.data.data), [caseId]);
 
   const data = c.data;
 
@@ -293,6 +298,7 @@ function Detail({ caseId }) {
       c.reload({ silent: true });
       timeline.reload({ silent: true });
       docs.reload({ silent: true });
+      charge.reload({ silent: true });
     } catch (e) {
       // The service's refusals are sentences ("the police report is still outstanding"). Show them —
       // flattening them into a generic failure is what teaches people to click past a gate.
@@ -301,7 +307,7 @@ function Detail({ caseId }) {
     } finally {
       setBusy(false);
     }
-  }, [caseId, toast, c, timeline, docs, t]);
+  }, [caseId, toast, c, timeline, docs, charge, t]);
 
   // Damage items and documents are removed, not edited — so DELETE, not the post() helper above.
   // Sharing one helper for both verbs would have quietly sent a POST to a DELETE-only route.
@@ -313,12 +319,13 @@ function Detail({ caseId }) {
       c.reload({ silent: true });
       timeline.reload({ silent: true });
       docs.reload({ silent: true });
+      charge.reload({ silent: true });
     } catch (e) {
       toast.error(e?.response?.data?.message || t('Something went wrong'));
     } finally {
       setBusy(false);
     }
-  }, [caseId, toast, c, timeline, docs, t]);
+  }, [caseId, toast, c, timeline, docs, charge, t]);
 
   const upload = useCallback(async (file, kind, note) => {
     setBusy(true);
@@ -331,6 +338,7 @@ function Detail({ caseId }) {
       toast.success(t('Document uploaded'));
       setAction(null); setForm({});
       docs.reload({ silent: true });
+      charge.reload({ silent: true });
       c.reload({ silent: true });
       timeline.reload({ silent: true });
     } catch (e) {
@@ -338,7 +346,7 @@ function Detail({ caseId }) {
     } finally {
       setBusy(false);
     }
-  }, [caseId, toast, docs, c, timeline, t]);
+  }, [caseId, toast, docs, c, timeline, charge, t]);
 
   const gateTone = { critical: 'red', warning: 'amber', info: 'blue' };
 
@@ -750,6 +758,17 @@ function Detail({ caseId }) {
       {/* ── FINANCIALS ──────────────────────────────────────────────────────────────────────── */}
       {tab === 'Financials' && (
         <div className="space-y-4">
+          {/* THE CUSTOMER CHARGE, ABOVE THE LEDGER. The ledger below says what the accident COST and
+              who bears it; this says whether the person who bears it has actually been billed. That
+              is the question somebody opens this tab to answer, so it leads. */}
+          <CustomerCharge
+            state={charge.data}
+            loading={charge.loading}
+            can={can}
+            onCharge={() => open('charge', {})}
+            onWithdraw={() => open('withdraw_charge', {})}
+          />
+
           <Card className="p-4">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-bold text-slate-700">{t('The money')}</h2>
@@ -858,9 +877,161 @@ function Detail({ caseId }) {
       {/* ── the action modals ───────────────────────────────────────────────────────────────── */}
       <ActionModals
         action={action} form={form} setForm={setForm} close={close} busy={busy}
-        post={post} upload={upload} data={data} navigate={navigate}
+        post={post} upload={upload} data={data} navigate={navigate} chargeState={charge.data}
       />
     </div>
+  );
+}
+
+/**
+ * HAS THE CUSTOMER BEEN BILLED FOR THIS, AND WHAT IS LEFT TO COLLECT?
+ *
+ * Four resting states, and the card looks different in each because they mean genuinely different
+ * things to the person reading it:
+ *
+ *   nothing_to_charge  the verdict cleared the customer. FINISHED, not unfinished — so the card is
+ *                      quiet and grey, and offers no button. Rendering this as a warning would put a
+ *                      permanent amber nag on every accident somebody else caused.
+ *   not_chargeable     the case is not ready yet, and the server says exactly why. The blockers are
+ *                      shown as sentences, not as a disabled button with no explanation.
+ *   pending            billable now — the one state with a primary action.
+ *   charged            done. The card then stops being about the decision and starts being about
+ *                      the money: what their credit absorbed and what is still owed.
+ *
+ * NOTHING HERE IS DERIVED LOCALLY. `status`, `blockers`, `covered_by_wallet` and `outstanding` all
+ * come from the server, which reads them from the audit line written when the charge happened. The
+ * page cannot reach a different conclusion from the endpoint that enforces it.
+ */
+function CustomerCharge({ state, loading, can, onCharge, onWithdraw }) {
+  const { t } = useI18n();
+
+  if (loading) return <Card className="p-4"><Skeleton cols={3} rows={2} /></Card>;
+  if (!state) return null;
+
+  const cur = state.currency || 'AED';
+  const money = (v) => `${cur} ${num(v)}`;
+
+  // A cleared customer is a finished state. Quiet, grey, no action.
+  if (state.status === 'nothing_to_charge') {
+    return (
+      <Card className="p-4">
+        <h2 className="text-sm font-bold text-slate-700">{t('Customer charge')}</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          {state.blockers?.[0]?.message || t('Nothing is billable to the customer on this accident.')}
+        </p>
+      </Card>
+    );
+  }
+
+  if (state.status === 'charged') {
+    const settled = state.outstanding <= 0;
+    return (
+      <Card className={`p-4 ${settled ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40'}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-bold text-slate-700">
+              {t('Customer charge')}
+              <Badge tone={settled ? 'green' : 'amber'}>
+                {settled ? t('charged · fully covered') : t('charged · partly outstanding')}
+              </Badge>
+            </h2>
+            <p className="mt-1 text-xs text-slate-600">
+              {t('{amount} billed to {who} on invoice {ref}', {
+                amount: money(state.charged_amount),
+                who: state.customer?.name || t('the customer'),
+                ref: state.invoice?.invoice_ref || '—',
+              })}
+            </p>
+          </div>
+          {can('accidents.override') && (
+            <Button size="sm" variant="ghost" onClick={onWithdraw}>{t('Withdraw the charge')}</Button>
+          )}
+        </div>
+
+        {/* The split, stated as what HAPPENED at the moment of billing — not re-derived from
+            today's balance, which a later payment would quietly change. */}
+        <div className="mt-3 grid gap-3 border-t border-slate-200/70 pt-3 sm:grid-cols-4">
+          <Fact label={t('Billed')} value={<span className="font-bold">{money(state.charged_amount)}</span>} />
+          <Fact
+            label={t('Covered by their credit')}
+            value={<span className="font-bold text-emerald-700">{money(state.covered_by_wallet)}</span>}
+          />
+          <Fact
+            label={t('Still outstanding')}
+            value={<span className={`font-bold ${settled ? 'text-slate-500' : 'text-amber-700'}`}>{money(state.outstanding)}</span>}
+          />
+          <Fact
+            label={t('Their balance now')}
+            value={(
+              <span className="font-bold">
+                {money(Math.abs(state.customer_balance))}
+                <span className="ms-1 text-[11px] font-normal text-slate-500">
+                  {state.customer_balance > 0 ? t('owed') : state.customer_balance < 0 ? t('in credit') : t('settled')}
+                </span>
+              </span>
+            )}
+          />
+        </div>
+        {/* THREE cases, not two. A charge nothing was covered on must not claim "their credit
+            absorbed part of it" — the commonest outcome is a customer with no credit at all, and
+            telling them otherwise is the card asserting a transfer that never happened. */}
+        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+          {settled
+            ? t('Their available credit absorbed the whole charge, so there is nothing to collect. The balance above is what remains on their account.')
+            : state.covered_by_wallet > 0
+              ? t('Their available credit absorbed part of it; the rest is on their account to collect through the ordinary rental billing.')
+              : t('They held no available credit, so the whole amount is on their account to collect through the ordinary rental billing.')}
+        </p>
+      </Card>
+    );
+  }
+
+  // pending | not_chargeable
+  const ready = state.status === 'pending';
+  return (
+    <Card className={`p-4 ${ready ? 'border-indigo-200 bg-indigo-50/40' : ''}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-bold text-slate-700">
+            {t('Customer charge')}
+            <Badge tone={ready ? 'blue' : 'gray'}>{ready ? t('pending') : t('not billable yet')}</Badge>
+          </h2>
+          {ready && (
+            <p className="mt-1 text-xs text-slate-600">
+              {t('{amount} is confirmed against {who} and has not been billed.', {
+                amount: money(state.amount), who: state.customer?.name || t('the customer'),
+              })}
+            </p>
+          )}
+        </div>
+        {ready && can('accidents.financials') && (
+          <Button size="sm" onClick={onCharge}>{t('Charge the customer')}</Button>
+        )}
+      </div>
+
+      {/* WHY NOT, in the server's own words. A disabled button with no reason is what teaches
+          people that the system is broken rather than that the case is unfinished. */}
+      {state.blockers?.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {state.blockers.map((b) => (
+            <li key={b.key} className="flex items-start gap-2 text-xs text-slate-600">
+              <span aria-hidden className="mt-0.5 text-slate-400">•</span>{t(b.message)}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {ready && (
+        <div className="mt-3 grid gap-3 border-t border-slate-200/70 pt-3 sm:grid-cols-3">
+          <Fact label={t('Confirmed amount')} value={<span className="font-bold">{money(state.amount)}</span>} />
+          <Fact label={t('Their available credit')} value={money(state.wallet_before)} />
+          <Fact
+            label={t('Would be left to collect')}
+            value={<span className="font-bold text-amber-700">{money(state.outstanding)}</span>}
+          />
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -878,7 +1049,7 @@ function Fact({ label, value }) {
  * button will actually do — the same discipline the Send-a-car-in form uses, and for the same
  * reason: a confirmation the user reads AFTER the fact is not a confirmation.
  */
-function ActionModals({ action, form, setForm, close, busy, post, upload, data, navigate }) {
+function ActionModals({ action, form, setForm, close, busy, post, upload, data, navigate, chargeState }) {
   const { t } = useI18n();
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target?.type === 'checkbox' ? e.target.checked : e.target.value }));
 
@@ -1007,6 +1178,54 @@ function ActionModals({ action, form, setForm, close, busy, post, upload, data, 
           <Input type="number" step="0.01" min="0" label={t('Amount')} required value={form.amount || ''} onChange={set('amount')} />
           <Textarea label={t('Note')} rows={2} value={form.note || ''} onChange={set('note')} />
         </div>
+      </Modal>
+    );
+  }
+
+  if (action === 'charge') {
+    const st = chargeState || {};
+    const cur = st.currency || 'AED';
+    return (
+      <Modal open onClose={close} title={t('Charge the customer')}
+        subtitle={t('This puts the amount on their account through the ordinary rental ledger — the same place their rent and their credit already live.')}
+        footer={footer(t('Charge it'), () => post('/charge', form, t('Customer charged')))}>
+        <div className="space-y-3">
+          <div className="rounded-xl border border-slate-200 p-3 text-xs">
+            <dl className="grid gap-2 sm:grid-cols-3">
+              <Fact label={t('Amount')} value={<span className="font-bold">{cur} {num(st.amount)}</span>} />
+              <Fact label={t('Customer')} value={st.customer?.name || '—'} />
+              <Fact label={t('Contract')} value={st.contract?.contract_no || '—'} />
+            </dl>
+          </div>
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+            {st.covered_by_wallet > 0
+              ? t('{covered} of this will be absorbed by credit they already hold; {rest} will be left on their account to collect.', {
+                  covered: `${cur} ${num(st.covered_by_wallet)}`, rest: `${cur} ${num(st.outstanding)}`,
+                })
+              : t('They hold no available credit, so the full amount will sit on their account to collect.')}
+          </p>
+          {/* VAT is zero unless somebody says otherwise: the amount billed must equal the amount the
+              case decided, or the ledger and the case disagree by 5% forever. */}
+          <Input
+            type="number" step="0.01" min="0" max="100"
+            label={t('VAT %')}
+            hint={t('Left at 0 so the charge matches the amount agreed on this case. Set it only if this recharge is VAT-able.')}
+            value={form.vat_percentage ?? ''}
+            onChange={set('vat_percentage')}
+            placeholder="0"
+          />
+          <Textarea label={t('Add to the note on their invoice')} rows={2} value={form.note || ''} onChange={set('note')} />
+        </div>
+      </Modal>
+    );
+  }
+
+  if (action === 'withdraw_charge') {
+    return (
+      <Modal open onClose={close} title={t('Withdraw the customer charge')}
+        subtitle={t('The invoice is removed from their account and the balance goes back exactly as it was. The accident’s history keeps both the charge and this withdrawal.')}
+        footer={footer(t('Withdraw it'), () => post('/charge/reverse', form, t('Charge withdrawn')), !(form.reason || '').trim())}>
+        <Textarea label={t('Why is it being withdrawn?')} required rows={3} value={form.reason || ''} onChange={set('reason')} />
       </Modal>
     );
   }

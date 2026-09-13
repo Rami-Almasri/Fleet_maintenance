@@ -281,6 +281,18 @@ class AccidentCase extends Model
         return $this->hasMany(VehicleDocument::class, 'accident_case_id');
     }
 
+    /**
+     * THE CUSTOMER CHARGE — the manual invoice that put this accident on the renter's account.
+     *
+     * A hasOne rather than a hasMany, matching the unique index: an accident is billed once or not
+     * at all. Withdrawing a charge removes the invoice, so the absence of this relation is the
+     * honest state "not currently billed" rather than "never was" — the timeline holds the history.
+     */
+    public function customerCharge(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(Invoice::class, 'accident_case_id');
+    }
+
     /** This case's own slice of the car's timeline. */
     public function timeline(): HasMany
     {
