@@ -1040,6 +1040,12 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
     protected $fillable = [
         'contract_id',
         'vehicle_id',
+        // The ACCIDENT this repair belongs to, when it has one. The case is the parent business
+        // context — it holds the police report, the liability verdict and the insurer — and one
+        // accident can raise several tickets. A ticket with this set runs the ordinary workflow with
+        // nothing special-cased; the link exists so the repair is traceable back to why it happened.
+        // @see \App\Models\AccidentCase
+        'accident_case_id',
         'vendor_id',
         // Planned Garage Transfer — the destination garage while the car is still physically at its
         // current one (vendor_id). Set at transfer-request, cleared on arrival at the destination.
@@ -1665,6 +1671,16 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
     public function vehicle(): BelongsTo
     {
         return $this->belongsTo(Vehicle::class);
+    }
+
+    /**
+     * The accident that caused this repair, when there was one. Null on the overwhelming majority of
+     * tickets — most repairs are wear, not a crash — and reading it is how the ticket's page offers
+     * the way back to the police report, the liability verdict and the insurer's decision.
+     */
+    public function accidentCase(): BelongsTo
+    {
+        return $this->belongsTo(AccidentCase::class, 'accident_case_id');
     }
 
     /** The garage / workshop. */

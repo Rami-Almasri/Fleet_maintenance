@@ -51,6 +51,14 @@ const statusLabel = (t, group) => (
       : t('Available')
 );
 
+// BOTH SENTENCES ARE ABOUT OPENING A TICKET, and neither is true of every caller.
+//
+// On the accident path nothing is diagnosed and no test drive is being arranged, so "will trigger a
+// new diagnostic entry" describes something that will not happen — and "make sure it has been
+// returned before starting a test drive" is worse than merely wrong: a crash on a car that is still
+// out with a customer is the single most common accident there is, and telling the person filing it
+// to wait for the car to come back is advice that loses the report. Callers whose action does not
+// open a ticket pass `warnings={false}`.
 const statusWarning = (t, group) => (
   group === 'maintenance' ? t('This vehicle is currently in maintenance. Proceeding will trigger a new diagnostic entry.')
     : group === 'rented' ? t('This vehicle is currently rented out to a customer. Make sure it has been returned before starting a test drive.')
@@ -75,7 +83,7 @@ const toRow = (v) => ({
   search: `${v.plate_no || ''} ${v.make || ''} ${v.model || ''} ${v.id}`.toLowerCase(),
 });
 
-export default function VehicleStatusSelect({ value, onChange, vehicles = [], blocked = [], placeholder, loading = false }) {
+export default function VehicleStatusSelect({ value, onChange, vehicles = [], blocked = [], placeholder, loading = false, warnings = true }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -208,7 +216,7 @@ export default function VehicleStatusSelect({ value, onChange, vehicles = [], bl
   ) : null;
 
   const selMeta = selected ? STATUS[selected.group] : null;
-  const selWarning = selected ? statusWarning(t, selected.group) : null;
+  const selWarning = (warnings && selected) ? statusWarning(t, selected.group) : null;
 
   return (
     <div ref={ref}>

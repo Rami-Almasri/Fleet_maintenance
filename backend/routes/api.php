@@ -299,6 +299,82 @@ Route::middleware('auth:sanctum')->prefix('warranty')->controller(\App\Http\Cont
     Route::post('/cases/{case}/close', 'close')->middleware('permission:warranty.close');
 });
 
+// ── ACCIDENT CASES — the file opened when a car is damaged in an incident ───────────────────────
+//
+// A first-class workflow, NOT a maintenance note. The repair a crash causes is an ordinary
+// maintenance ticket parented to the case (`maintenances.accident_case_id`); the case itself holds
+// the four questions the ticket has no place for and which routinely outlive it — who had the car,
+// what the police wrote down, whose fault it was, and who pays.
+//
+// Nine permissions rather than the usual view/manage pair, for the same reason the warranty block
+// above has six: this area contains four genuinely different levels of trust, and collapsing them
+// would make three of the guardrails decorative (@see \App\Support\AccidentResponsibility):
+//
+//   accidents.view           read the board, a case, the dashboard.
+//   accidents.report         OPEN a case. The lowest bar in the feature ON PURPOSE — a crash that
+//                            goes unreported because the reporter lacked a permission is the worst
+//                            outcome available, so anyone who can raise a maintenance request can
+//                            report an accident.
+//   accidents.manage         the narrative: details, damage, assessment, documents, repair links.
+//   accidents.police.verify  assert the police report has been READ. Deliberately not the same
+//                            permission as uploading it — an uploader verifying their own upload is
+//                            a formality, not a check.
+//   accidents.liability      DECIDE whose fault it was. The most contested field in the system.
+//   accidents.insurance      run the claim.
+//   accidents.financials     the money: estimates, approvals, settlements.
+//   accidents.close          close the case.
+//   accidents.override       waive the police report; reopen a closed case. Reason mandatory,
+//                            audited by name — a rule consciously set aside, never skipped.
+//
+// Static segments precede /{case} throughout so "dashboard" / "options" are never swallowed as a
+// model binding.
+Route::middleware('auth:sanctum')->prefix('accidents')->controller(\App\Http\Controllers\AccidentCaseController::class)->group(function () {
+    Route::get('/dashboard', 'dashboard')->middleware('permission:accidents.view');
+    // Read-only context preview + the vocabularies the intake form needs. Open to the reporting bar,
+    // because it is what the intake form itself calls before anything exists.
+    Route::get('/options', 'intakeOptions')->middleware('permission:accidents.view|accidents.report');
+    Route::get('/vehicle/{vehicle}', 'forVehicle')->middleware('permission:accidents.view|vehicles.view');
+
+    Route::get('/', 'index')->middleware('permission:accidents.view');
+    Route::post('/', 'store')->middleware('permission:accidents.report');
+    Route::get('/{case}', 'show')->middleware('permission:accidents.view');
+    Route::get('/{case}/timeline', 'timeline')->middleware('permission:accidents.view');
+    Route::post('/{case}', 'update')->middleware('permission:accidents.manage');
+
+    // Damage + assessment.
+    Route::post('/{case}/damage', 'addDamage')->middleware('permission:accidents.manage');
+    Route::delete('/{case}/damage/{item}', 'removeDamage')->middleware('permission:accidents.manage');
+    Route::post('/{case}/assess', 'assess')->middleware('permission:accidents.manage');
+
+    // The police report — recording it, verifying it, and the audited waiver.
+    Route::post('/{case}/police', 'recordPolice')->middleware('permission:accidents.manage');
+    Route::post('/{case}/police/verify', 'verifyPolice')->middleware('permission:accidents.police.verify');
+    Route::post('/{case}/police/bypass', 'bypassPolice')->middleware('permission:accidents.override');
+
+    Route::post('/{case}/liability', 'setLiability')->middleware('permission:accidents.liability');
+    Route::post('/{case}/insurance', 'updateInsurance')->middleware('permission:accidents.insurance');
+    Route::post('/{case}/financials', 'recordFinancial')->middleware('permission:accidents.financials');
+    // Raising the repair uses the SAME authority as sending any car straight to a garage — an
+    // accident is not a reason to let somebody commit a car to a workshop who otherwise could not.
+    // TWO middlewares = AND, deliberately. Working the case is not on its own authority to commit a
+    // car to a workshop, and an accident must not become a side door around the dispatch bar.
+    Route::post('/{case}/repair', 'repair')
+        ->middleware(['permission:accidents.manage', 'permission:maintenance.initiate|maintenance.manage']);
+
+    Route::post('/{case}/advance', 'advance')->middleware('permission:accidents.manage');
+    Route::post('/{case}/close', 'close')->middleware('permission:accidents.close');
+    Route::post('/{case}/reopen', 'reopen')->middleware('permission:accidents.override');
+});
+
+// The accident dossier. Reuses `vehicle_documents` — there is no second media system, and there must
+// never be one. @see \App\Http\Controllers\AccidentDocumentController for why the kind is declared
+// rather than inferred, and why nothing here is ever superseded.
+Route::middleware('auth:sanctum')->prefix('accidents/{case}/documents')->controller(\App\Http\Controllers\AccidentDocumentController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:accidents.view');
+    Route::post('/', 'store')->middleware('permission:accidents.manage|accidents.report');
+    Route::delete('/{document}', 'destroy')->middleware('permission:accidents.manage');
+});
+
 // Vehicle Status Dashboard — the team's all-day follow-up board (one derived row per car: status,
 // current owner, last/next action, days-in-status, blocked). Read-only aggregation (insights.view);
 // the Supervisor's "Set to Ready" sign-off reuses the same authority that closes a workflow ticket.
