@@ -276,6 +276,17 @@ class VehicleLogEvent extends Model
     public const EVENT_ACCIDENT_STAGE_CHANGED   = 'accident_stage_changed';    // the case moved along the ladder
     public const EVENT_ACCIDENT_CLOSED          = 'accident_closed';
     public const EVENT_ACCIDENT_REOPENED        = 'accident_reopened';         // authorised, with a reason
+    /**
+     * The customer was billed for it, and the billing was withdrawn.
+     *
+     * These two carry the fullest `meta` of any event in the feature — the invoice, the source
+     * ledger rows, the liability verdict behind it, and the customer's balance on BOTH sides of the
+     * move. A charge is the one accident action that reaches outside this system and lands on a real
+     * person's account, so it is the one where "who decided this, on what basis, and what did it do
+     * to their balance" has to be answerable from the log alone.
+     */
+    public const EVENT_ACCIDENT_CUSTOMER_CHARGED = 'accident_customer_charged';
+    public const EVENT_ACCIDENT_CHARGE_REVERSED  = 'accident_charge_reversed';
 
     /**
      * Audit bucket per event. Reuses Maintenance::FINDING_SOURCES vocabulary so the workflow
@@ -399,6 +410,8 @@ class VehicleLogEvent extends Model
         self::EVENT_ACCIDENT_STAGE_CHANGED       => Maintenance::FINDING_INSPECTOR,
         self::EVENT_ACCIDENT_CLOSED              => Maintenance::FINDING_INSPECTOR,
         self::EVENT_ACCIDENT_REOPENED            => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_CUSTOMER_CHARGED    => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_CHARGE_REVERSED     => Maintenance::FINDING_INSPECTOR,
     ];
 
     /** Every accident event, in ladder order — the CASE timeline's own vocabulary. */
@@ -411,6 +424,7 @@ class VehicleLogEvent extends Model
         self::EVENT_ACCIDENT_FINANCIAL_RECORDED, self::EVENT_ACCIDENT_REPAIR_LINKED,
         self::EVENT_ACCIDENT_DOCUMENT_ADDED, self::EVENT_ACCIDENT_STAGE_CHANGED,
         self::EVENT_ACCIDENT_CLOSED, self::EVENT_ACCIDENT_REOPENED,
+        self::EVENT_ACCIDENT_CUSTOMER_CHARGED, self::EVENT_ACCIDENT_CHARGE_REVERSED,
     ];
 
     protected $fillable = [

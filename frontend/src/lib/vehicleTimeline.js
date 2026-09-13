@@ -123,6 +123,10 @@ const EVENT_KIND = {
   accident_stage_changed: 'accident', accident_closed: 'accident', accident_reopened: 'accident',
   police_report_recorded: 'accident', police_report_verified: 'accident',
   police_report_bypassed: 'accident',
+  // Billing the renter for the crash, and taking that billing back. They stay under `accident`
+  // rather than moving to a money bucket because the question they answer is about the CRASH —
+  // "what happened to this car, and what did it cost whom" reads as one story or as none.
+  accident_customer_charged: 'accident', accident_charge_reversed: 'accident',
   // Reported by people (complaints entity + driver handover notes)
   complaint_logged: 'complaint', driver_observation: 'observation',
   // Workflow lifecycle
