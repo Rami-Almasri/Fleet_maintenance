@@ -114,8 +114,11 @@
 .mwf-lane-hd .ic{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:10px;
   color:var(--tone);background:color-mix(in srgb,var(--tone) 15%,var(--panel))}
 .mwf-lane-hd .ic svg{width:16px;height:16px}
+.mwf-lane-hd .tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .mwf-lane-hd .nm{font-size:12.5px;font-weight:700;letter-spacing:-.01em;color:var(--ink);line-height:1.25;
-  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mwf-lane-hd .hn{font-size:10px;font-weight:500;color:var(--ink-3);line-height:1.3;
+  display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
 .mwf-lane-hd .ct{margin-inline-start:auto;font-size:12px;font-weight:800;border-radius:8px;padding:2px 9px;flex:none;
   color:var(--tone);background:color-mix(in srgb,var(--tone) 15%,var(--panel))}
 .mwf-lane-bd{display:flex;flex-direction:column;gap:9px;padding:10px;flex:1}
@@ -136,45 +139,63 @@
 .mwf-card.sel{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan),0 0 26px -12px rgba(34,211,238,.7)}
 .mwf-rail{width:3px;flex:none;position:relative;z-index:1}
 .mwf-card-bd{position:relative;z-index:1;flex:1;min-width:0;padding:11px 12px;display:flex;flex-direction:column;gap:9px}
-/* tone aura — a soft stage-colored wash at the top of each card, so a lane reads by feel not just label */
-.mwf-card::before{content:"";position:absolute;inset:0 0 auto 0;height:66px;pointer-events:none;z-index:0;
-  background:linear-gradient(180deg,color-mix(in srgb,var(--tone,transparent) 15%,transparent),transparent)}
-.mwf-card:hover::before{background:linear-gradient(180deg,color-mix(in srgb,var(--tone,transparent) 22%,transparent),transparent)}
+/* The stage tone lives on the identity band now (.mwf-band), not as a wash over the whole card head —
+   two tints stacked on the same 60px read as a gradient bug rather than as a lane. */
 
-/* ---- pipeline journey spine — the card's "where is this car" at a glance ---- */
-.mwf-stage{display:flex;flex-direction:column;gap:6px}
+/* ---- pipeline journey spine — the card's "where is this car" at a glance ----
+   Drawn as the stages themselves: what is behind the car is ticked, where it stands is lit in the
+   stage tone, what is ahead is still grey. */
+.mwf-stage{display:flex;flex-direction:column;gap:9px;padding:10px 11px;border-radius:11px;
+  background:var(--ov);border:1px solid var(--line)}
 .mwf-stage-hd{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-.mwf-stage-nm{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-1);
+.mwf-stage-nm{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mwf-stage-step{flex:none;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.05em;color:var(--ink-3)}
-.mwf-stage-step.exc{font-weight:800}
+.mwf-stage-step{flex:none;font-size:11px;font-weight:800;letter-spacing:-.01em;color:var(--ink-2)}
+.mwf-stage-step.exc{font-weight:800;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase}
+
+.mwf-nodes{display:flex;align-items:center}
+.mwf-node{display:flex;align-items:center;min-width:0}
+.mwf-node:first-child{flex:none}
+.mwf-node:not(:first-child){flex:1}
+.mwf-node .bar{flex:1;height:2.5px;border-radius:2px;background:var(--line-2);transition:background .3s}
+.mwf-node b{flex:none;display:grid;place-items:center;width:19px;height:19px;border-radius:50%;
+  font-size:10px;font-weight:800;line-height:1;color:var(--ink-3);
+  background:var(--line-2);border:1px solid transparent;transition:.25s}
+.mwf-node.done b,.mwf-node.now b{color:#fff}
+.mwf-node.now b{width:22px;height:22px;font-size:11px}
+
+/* exception lanes keep the single strip — they have no place in a linear queue to point at */
 .mwf-pipe{display:flex;gap:3px;align-items:center}
-.mwf-pipe-seg{flex:1;height:5px;border-radius:3px;background:var(--line-2);
-  transition:background .3s,height .3s,box-shadow .3s}
-.mwf-pipe-seg.now{height:7px;animation:mwf-seg-pulse 1.9s ease-in-out infinite}
+.mwf-pipe-seg{flex:1;height:5px;border-radius:3px;background:var(--line-2)}
 .mwf-pipe-seg.exc{height:6px;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.16) 0 4px,transparent 4px 8px)}
-@keyframes mwf-seg-pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.4)}}
 
 /* ---- the car itself ----
    The photograph leads the card. We hold no picture for roughly a third of the fleet; those cards
    fall back to the marque logo and then to a silhouette, never to a different car. */
-.mwf-shot{height:52px;width:74px;flex:none;display:grid;place-items:center;overflow:hidden}
-.mwf-shot-img{max-width:100%;max-height:52px;object-fit:contain}
+.mwf-shot{height:58px;width:86px;flex:none;display:grid;place-items:center;overflow:hidden}
+.mwf-shot-img{max-width:100%;max-height:58px;object-fit:contain}
 .mwf-shot-logo{max-width:38px;max-height:34px;object-fit:contain;opacity:.8}
 .mwf-shot-silhouette{width:30px;height:30px;color:var(--ink-3);opacity:.35}
 
-.mwf-card-top{display:flex;align-items:center;gap:10px}
-.mwf-id{display:flex;flex-direction:column;min-width:0;gap:2px;flex:1}
+/* the identity band — the car, its plate, how long it has stood here, and the two facts that decide
+   whether you pick the card up. Washed in the stage tone, so the lane reads by feel. */
+.mwf-band{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:12px;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--tone) 15%,transparent),transparent 70%)}
+.mwf-band-id{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.mwf-band-top{display:flex;align-items:flex-start;gap:7px}
+.mwf-when{display:flex;flex-direction:column;align-items:flex-end;margin-inline-start:auto;line-height:1.25;flex:none}
+[dir=rtl] .mwf-when{align-items:flex-start}
+.mwf-when b{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;color:var(--ink-2)}
+.mwf-when b.over{color:var(--crit)}
+.mwf-when b svg{flex:none}
+.mwf-when i{font-style:normal;font-size:10px;font-weight:500;color:var(--ink-3);white-space:nowrap}
 .mwf-plate{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:13px;font-weight:800;
   letter-spacing:.06em;color:var(--ink);background:var(--ov2);border:1px solid var(--line-2);
   padding:3px 9px;border-radius:8px;line-height:1}
 .mwf-plate svg{color:var(--cyan);flex:none}
-.mwf-car{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:-.01em;color:var(--ink);
-  padding-inline-start:2px;margin-top:4px;line-height:1.3;
+.mwf-car{margin:0;font-size:14px;font-weight:800;text-transform:uppercase;letter-spacing:-.02em;color:var(--ink);
+  padding-inline-start:1px;line-height:1.2;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.mwf-id-right{display:flex;align-items:center;gap:5px;flex:none;align-self:flex-start}
-.mwf-age{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3)}
-.mwf-age.over{color:var(--crit)}
 .mwf-jump{display:grid;place-items:center;padding:2px;border-radius:7px;color:var(--ink-3);transition:.15s}
 .mwf-jump:hover{color:var(--cyan);background:var(--ov2)}
 
@@ -207,16 +228,31 @@
 /* severity/complaint/disabled pills: allow wrap so no label is ever cut off */
 .mwf .opx-chip,.mwf-pill{white-space:normal;height:auto;overflow-wrap:anywhere}
 
-.mwf-agenda{font-size:11.5px;line-height:1.5;color:var(--ink-2);background:rgba(245,165,36,.07);
-  border:1px solid rgba(245,165,36,.18);border-inline-start:2.5px solid var(--paused);border-radius:8px;padding:7px 10px;margin:0;
+/* the raised note — an icon, a heading where the note carries one, and the measurement under it */
+.mwf-agenda{display:flex;gap:9px;font-size:11.5px;line-height:1.5;color:var(--ink-2);
+  background:rgba(245,165,36,.07);border:1px solid rgba(245,165,36,.18);
+  border-inline-start:2.5px solid var(--paused);border-radius:10px;padding:9px 11px;margin:0;
   overflow-wrap:anywhere;word-break:break-word}
+.mwf-agenda .ic{flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:50%;
+  font-size:13px;background:rgba(245,165,36,.16)}
+.mwf-agenda .tx{min-width:0;display:flex;flex-direction:column;gap:2px}
+.mwf-agenda .tx b{font-size:12px;font-weight:800;letter-spacing:-.01em;color:var(--ink)}
 
-.mwf-tasks{display:flex;flex-direction:column;gap:5px;padding:8px;border-radius:10px;background:var(--ov);border:1px solid var(--line)}
-.mwf-tasks-hd{display:flex;align-items:flex-start;gap:5px;font-size:11px;font-weight:600;color:var(--ink-2)}
+/* the fault block — where the work is happening, and everything that is wrong with the car */
+.mwf-tasks{display:flex;flex-direction:column;gap:5px;padding:0 9px 9px;border-radius:11px;
+  background:var(--ov);border:1px solid var(--line);overflow:hidden}
+.mwf-tasks-hd{display:flex;align-items:flex-start;gap:6px;margin:0 -9px 4px;padding:8px 9px;
+  font-size:11px;font-weight:700;color:var(--tone,var(--ink-2));
+  background:color-mix(in srgb,var(--tone) 11%,transparent);
+  border-bottom:1px solid var(--line)}
 .mwf-tasks-hd svg{flex:none;margin-top:2px}
-.mwf-tasks-hd em{font-style:italic;color:var(--ink-3)}
-.mwf-tasks-hd .gn{flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word;line-height:1.45}
-.mwf-tasks-hd .ct{flex:none;margin-top:1px}
+.mwf-tasks-hd em{font-style:italic;opacity:.75}
+.mwf-tasks-hd .ln{flex:none;text-transform:uppercase;letter-spacing:.04em;line-height:1.45}
+.mwf-tasks-hd .ln::after{content:"·";margin-inline-start:6px;opacity:.6}
+.mwf-tasks-hd .gn{flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word;line-height:1.45;
+  text-transform:uppercase;letter-spacing:.02em}
+.mwf-tasks-hd .ct{flex:none;font-size:10px;font-weight:800;white-space:nowrap;border-radius:999px;
+  padding:2px 8px;background:color-mix(in srgb,var(--tone) 16%,var(--panel))}
 .mwf-task{display:flex;align-items:flex-start;gap:6px;font-size:11px;line-height:1.45;color:var(--ink-2);min-width:0}
 .mwf-task>span:not(.mwf-dot):not(.mwf-fail){overflow-wrap:anywhere;word-break:break-word}
 .mwf-dot{width:6px;height:6px;border-radius:50%;flex:none;margin-top:5px}
@@ -243,13 +279,24 @@
   background:transparent;cursor:pointer;transition:.15s}
 .mwf-ghost:hover{color:var(--cyan);border-color:var(--cyan);background:var(--ov2)}
 
-.mwf-cta{width:100%;justify-content:center}
+/* who raised the ticket, and the day it was opened */
+.mwf-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:10.5px;color:var(--ink-3)}
+.mwf-meta span{display:inline-flex;align-items:center;gap:5px;min-width:0;overflow-wrap:anywhere}
+.mwf-meta span svg{flex:none}
+.mwf-meta .e{margin-inline-start:auto;white-space:nowrap}
+
+/* the one move this stage offers — full width, and in the stage's own colour, so the card's action
+   and the lane it belongs to are visibly the same thing. Danger actions keep the danger tone. */
+.mwf-cta{width:100%;justify-content:center;height:40px;border-radius:11px;font-weight:700}
+.mwf-cta.primary{background:var(--tone);border-color:var(--tone);color:#fff}
+.mwf-cta.primary:hover:not(:disabled){filter:brightness(1.08)}
 .mwf-cta:disabled{opacity:.5;cursor:not-allowed}
 .mwf-warn{margin:0;text-align:center;font-size:10.5px;color:var(--paused)}
 
 /* ---- action footer — icon tools (route / follow-up) + primary CTA on one tidy row ---- */
 .mwf-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:10px;border-top:1px solid var(--line)}
-.mwf-foot-tools{display:flex;gap:6px;flex-wrap:wrap;flex:none}
+.mwf-foot-tools{display:flex;gap:6px;flex-wrap:wrap;flex:1 1 100%}
+.mwf-foot-tools .mwf-tool{flex:1 1 100px;justify-content:center;height:36px;border-radius:10px}
 .mwf-foot-tools:empty{display:none}
 .mwf-tool{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 11px;border-radius:9px;
   border:1px solid var(--line-2);background:var(--panel);color:var(--ink-2);cursor:pointer;transition:.15s;
@@ -258,8 +305,8 @@
 .mwf-tool:hover{color:var(--cyan);border-color:var(--cyan);background:var(--ov2);transform:translateY(-1px)}
 .mwf-tool:hover svg{color:var(--cyan)}
 .mwf-tool:active{transform:none}
-/* CTA takes the remaining row; drops to its own line when the tools already fill the width */
-.mwf-foot .mwf-cta{flex:1 1 130px;width:auto}
+/* the tools share one row above; the stage action keeps the full width of its own */
+.mwf-foot .mwf-cta{flex:1 1 100%;width:100%}
 
 /* ---- cycle guide — inline "how the cycle works" flow map ---- */
 .mwf-cycle{background:linear-gradient(180deg,var(--panel),var(--deep));border:1px solid var(--line);

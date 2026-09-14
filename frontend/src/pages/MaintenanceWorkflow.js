@@ -111,18 +111,20 @@ const SORTS = {
   plate:    (a, b) => String(a.plate || '').localeCompare(String(b.plate || '')),
 };
 
-// The pipeline "journey" spine — a segmented bar showing how far a ticket has moved through the 8
-// canonical stages. Filled segments glow in the stage tone; the current one pulses. Off-pipeline
-// (exception) lanes have no linear position, so they render a single tone strip instead of segments.
+// The pipeline "journey" spine — how far this ticket has moved through the 8 canonical stages, drawn
+// as the stages themselves: a passed stage is ticked, the one the car is standing in is lit in the
+// stage tone, the rest are still ahead. Off-pipeline (exception) lanes have no linear position, so
+// they say so rather than inventing a place in a queue they are not in.
 function PipelineBar({ laneKey, laneName, tone }) {
+  const { t } = useI18n();
   const idx = PIPELINE_KEYS.indexOf(laneKey);
   const total = PIPELINE_KEYS.length;
   if (idx < 0) {
     return (
       <div className="mwf-stage">
         <div className="mwf-stage-hd">
-          <span className="mwf-stage-nm">{laneName}</span>
-          <span className="mwf-stage-step exc" style={{ color: tone }}>OFF-PIPELINE</span>
+          <span className="mwf-stage-nm">{t('workflow.board.serviceProgress')}</span>
+          <span className="mwf-stage-step exc" style={{ color: tone }}>{t('workflow.board.offPipeline')}</span>
         </div>
         <div className="mwf-pipe">
           <span className="mwf-pipe-seg exc" style={{ background: tone, boxShadow: `0 0 10px ${tone}` }} />
@@ -133,16 +135,24 @@ function PipelineBar({ laneKey, laneName, tone }) {
   return (
     <div className="mwf-stage">
       <div className="mwf-stage-hd">
-        <span className="mwf-stage-nm">{laneName}</span>
-        <span className="mwf-stage-step">Step {idx + 1}/{total}</span>
+        <span className="mwf-stage-nm">{t('workflow.board.serviceProgress')}</span>
+        <span className="mwf-stage-step">{t('workflow.board.stepOf', { n: idx + 1, total })}</span>
       </div>
-      <div className="mwf-pipe" role="progressbar" aria-valuenow={idx + 1} aria-valuemin={1} aria-valuemax={total} aria-label={`${laneName} — step ${idx + 1} of ${total}`}>
+      <div
+        className="mwf-nodes"
+        role="progressbar"
+        aria-valuenow={idx + 1}
+        aria-valuemin={1}
+        aria-valuemax={total}
+        aria-label={`${laneName} — ${t('workflow.board.stepOf', { n: idx + 1, total })}`}
+      >
         {PIPELINE_KEYS.map((k, i) => (
-          <span
-            key={k}
-            className={`mwf-pipe-seg ${i === idx ? 'now' : ''} ${i <= idx ? 'on' : ''}`}
-            style={i <= idx ? { background: tone, ...(i === idx ? { boxShadow: `0 0 9px ${tone}` } : null) } : undefined}
-          />
+          <span key={k} className={`mwf-node ${i < idx ? 'done' : ''} ${i === idx ? 'now' : ''}`}>
+            {i > 0 && <i className={`bar ${i <= idx ? 'on' : ''}`} style={i <= idx ? { background: tone } : undefined} />}
+            <b style={i <= idx ? { background: tone, borderColor: tone, ...(i === idx ? { boxShadow: `0 0 0 3px color-mix(in srgb, ${tone} 26%, transparent)` } : null) } : undefined}>
+              {i < idx ? '✓' : i + 1}
+            </b>
+          </span>
         ))}
       </div>
     </div>
@@ -161,6 +171,18 @@ function expectedReturn(iso) {
     label: d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' }),
     over: d < today,
   };
+}
+
+// A stamp as a plain day ("3 Sep 2026"), or with the clock ("3 Sep 2026, 10:24"). Arabic stays
+// Gregorian with Latin digits so a date never changes calendar under the reader.
+function fmtStamp(iso, lang, withTime = false) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const loc = lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined;
+  const day = d.toLocaleDateString(loc, { day: 'numeric', month: 'short', year: 'numeric' });
+  if (!withTime) return day;
+  return `${day}, ${d.toLocaleTimeString(lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined, { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 // Fault-severity tone (resource's fault_severity_tone) → dark opx chip class.
@@ -239,7 +261,7 @@ const SEV_FILTERS = [
 // affordance (severity, complaint/breakdown flags, live position, single-garage fault routing,
 // custody gate, delegation, the one primary stage action) — only the skin changed to the .opx tokens.
 function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect, onAct }) {
-  const { t, tf, tp } = useI18n();
+  const { t, tf, tp, lang } = useI18n();
   const cardRef = useRef(null);
   useEffect(() => {
     if (active && cardRef.current) cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -274,6 +296,11 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
   const isComplaint = tk.trigger_reason === 'customer_reported';
   const isDisabled = tk.maintenance_type === 'breakdown' || tk.is_recovery;
   const age = stageAge(tk, t);
+  // The day this card entered the stage it is standing in — the very stamp `age` counts from, printed
+  // rather than counted, so "11d ago" can be checked against a date instead of trusted.
+  const stageDay = fmtStamp(tk.last_state_change_at || tk.created_at, lang);
+  // Who raised the ticket and when it was opened. Both come off the ticket; neither is inferred.
+  const openedOn = fmtStamp(tk.created_at, lang, true);
   const expected = expectedReturn(tk.expected_return_date);
   // Parts still owed on the ticket — a DERIVED read of its part requests, not a workflow state. The
   // ticket stays in whatever lane it is in; this only decides whether the header badge shows. Falls
@@ -301,30 +328,54 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
     >
       <span className="mwf-rail" style={{ background: tone }} />
       <div className="mwf-card-bd">
-        {/* The car itself — photograph, plate, model — then time-in-stage + jump-to-command-view.
-            A card on this board is a CAR before it is a ticket: the picture is what a dispatcher
-            recognises from across the room, so it leads. */}
-        <div className="mwf-card-top">
-          <div className="mwf-shot"><CarShot car={tk.car} /></div>
-          <div className="mwf-id">
-            <span className="mwf-plate"><Icon.Car className="h-3.5 w-3.5" strokeWidth={2} />{tk.plate || `#${tk.id}`}</span>
-            {tk.car && <span className="mwf-car" title={tk.car}>{vehicleName(tk.car, '')}</span>}
-          </div>
-          <div className="mwf-id-right">
-            {age && (
-              <span className={`mwf-age ${age.over ? 'over' : ''}`} title={t('queue.timeInStage')}>
-                <Icon.Clock className="h-3 w-3" />{age.label}
+        {/* THE CAR — photograph, plate, how long it has stood here, model, and the two facts that
+            decide whether you pick this card up: how bad it is, and whether it is in a workshop.
+            A card on this board is a CAR before it is a ticket, so the picture leads. The band wears
+            a wash of the stage tone, which is what tells you the lane at a glance. */}
+        <div className="mwf-band">
+          <span className="mwf-shot"><CarShot car={tk.car} /></span>
+          <div className="mwf-band-id">
+            <div className="mwf-band-top">
+              <span className="mwf-plate"><Icon.Car className="h-3.5 w-3.5" strokeWidth={2} />{tk.plate || `#${tk.id}`}</span>
+              {/* The relative age and the day it actually happened are ONE fact said twice — the same
+                  stage-entry stamp — so they sit together and can never disagree. */}
+              <span className="mwf-when">
+                {age && (
+                  <b className={age.over ? 'over' : ''} title={t('queue.timeInStage')}>
+                    <Icon.Clock className="h-3 w-3" />{age.label}
+                  </b>
+                )}
+                {stageDay && <i>{stageDay}</i>}
               </span>
-            )}
-            <Link
-              to={`/maintenance-workflow/${tk.id}`}
-              onClick={(e) => e.stopPropagation()}
-              className="mwf-jump"
-              title={t('workflow.detail.eyebrow', { id: tk.id })}
-              aria-label={t('workflow.detail.eyebrow', { id: tk.id })}
-            >
-              <Icon.ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-            </Link>
+              <Link
+                to={`/maintenance-workflow/${tk.id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="mwf-jump"
+                title={t('workflow.detail.eyebrow', { id: tk.id })}
+                aria-label={t('workflow.detail.eyebrow', { id: tk.id })}
+              >
+                <Icon.ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+            </div>
+            {tk.car && <h3 className="mwf-car" title={tk.car}>{vehicleName(tk.car, '')}</h3>}
+            <div className="mwf-flags">
+              {tk.fault_severity && (
+                <span className={`opx-chip ${sevCls}`}><span className="cd" />{tk.fault_severity_emoji} {t(`workflow.faultSeverity.${tk.fault_severity}`)}</span>
+              )}
+              {/* WHERE this repair happens — the decision taken at Decide. Without it an on-site job read
+                  "Not dispatched" like any car waiting for a garage, so a dispatcher could not tell a car
+                  that is WAITING for a workshop from one that was never going to a workshop at all. Shown
+                  on every ticket, not just the on-site ones: "in garage" answers the same question, and a
+                  chip that appears only sometimes teaches nobody. */}
+              {tk.repair_location && (
+                <span
+                  className={`mwf-pill ${tk.is_on_site ? 'onsite' : 'shop'}`}
+                  title={t(tk.is_on_site ? 'workflow.board.onSiteTip' : 'workflow.board.inShopTip')}
+                >
+                  {tk.is_on_site ? '🧰' : '🏭'} {t(tk.is_on_site ? 'workflow.board.onSite' : 'workflow.board.inShop')}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -374,22 +425,6 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
               <span className="mwf-pill crit">⛔ {t('workflow.status.disabled')}</span>
               {tk.is_recovery && <span className="mwf-pill paused" title={tk.recovery_unit_phone || ''}>🛻 {tk.recovery_unit_name}</span>}
             </>
-          )}
-          {tk.fault_severity && (
-            <span className={`opx-chip ${sevCls}`}><span className="cd" />{tk.fault_severity_emoji} {t(`workflow.faultSeverity.${tk.fault_severity}`)}</span>
-          )}
-          {/* WHERE this repair happens — the decision taken at Decide, and until now invisible on the
-              board. Without it an on-site job read "Not dispatched" like any car waiting for a garage,
-              so a dispatcher could not tell a car that is WAITING for a workshop from one that was never
-              going to a workshop at all. Shown on every ticket, not just the on-site ones: "in garage" is
-              the answer to the same question, and a chip that appears only sometimes teaches nobody. */}
-          {tk.repair_location && (
-            <span
-              className={`mwf-pill ${tk.is_on_site ? 'onsite' : 'shop'}`}
-              title={t(tk.is_on_site ? 'workflow.board.onSiteTip' : 'workflow.board.inShopTip')}
-            >
-              {tk.is_on_site ? '🧰' : '🏭'} {t(tk.is_on_site ? 'workflow.board.onSite' : 'workflow.board.inShop')}
-            </span>
           )}
           {/* Parts blocker — the car is sitting on an outstanding part request. Purely visual: the ticket
               keeps its lane and the vehicle keeps its operational status. Hover/focus lists exactly what
@@ -443,9 +478,28 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
           )}
         </div>
 
-        {/* System / driver-raised agenda (a complaint has its own pill above) */}
+        {/* System / driver-raised agenda (a complaint has its own pill above). The note is composed
+            elsewhere as "<what it is> — <what was measured>"; where it carries that dash the first
+            clause is set as the note's heading. Nothing is rewritten, and a note without the dash is
+            shown whole — the split is typography, not parsing. */}
         {tk.customer_complaint && tk.trigger_reason !== 'customer_reported' && (
-          <p className="mwf-agenda" title={tk.customer_complaint}>🕗 {tk.customer_complaint}</p>
+          <div className="mwf-agenda" title={tk.customer_complaint}>
+            <span className="ic" aria-hidden="true">🕗</span>
+            <div className="tx">
+              {(() => {
+                const cut = tk.customer_complaint.indexOf('—');
+                if (cut > 0 && cut < 60) {
+                  return (
+                    <>
+                      <b>{tk.customer_complaint.slice(0, cut).trim()}</b>
+                      <span>{tk.customer_complaint.slice(cut + 1).trim()}</span>
+                    </>
+                  );
+                }
+                return <span>{tk.customer_complaint}</span>;
+              })()}
+            </div>
+          </div>
         )}
 
         {/* Live position — where the car actually is */}
@@ -462,15 +516,18 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
         {/* Single-garage fault routing */}
         {tasks.length > 0 && (
           <div className="mwf-tasks">
+            {/* The block's header answers "where is this work happening, and how much of it is there" —
+                the stage it is in, the garage it is routed to, and the fault count. */}
             <div className="mwf-tasks-hd">
               <Icon.Wrench className="h-3 w-3" />
+              <span className="ln">{laneName}</span>
               {/* "Not dispatched" is only true of a car that is SUPPOSED to go to a garage. An on-site
                   job never is, so it says where the work actually happens instead of reading as a car
                   nobody has sent anywhere. A mobile vendor, when one is recorded, still shows by name. */}
               <span className="gn" title={tk.garage || t(tk.is_on_site ? 'workflow.board.onSiteTip' : 'workflow.task.noGarage')}>
                 {tk.garage || <em>{t(tk.is_on_site ? 'workflow.board.onSiteNoGarage' : 'workflow.task.unassigned')}</em>}
               </span>
-              <span className="ct">{tasks.length}</span>
+              <span className="ct">{tp('workflow.board.faultCount', tasks.length)}</span>
             </div>
             {tasks.map((task) => {
               const st = TASK_STATUS[task.status] || TASK_STATUS.pending;
@@ -505,6 +562,20 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
               <span className="ct">{looseParts.length}</span>
             </div>
             {looseParts.map((p) => <PartRow key={p.id} part={p} />)}
+          </div>
+        )}
+
+        {/* Who raised this ticket, and when it was opened — the two facts a card was missing when
+            somebody asks "whose is this and how long has it existed?". Distinct from the stage age
+            above, which only counts the CURRENT stage. */}
+        {(tk.requested_by_name || openedOn) && (
+          <div className="mwf-meta">
+            {tk.requested_by_name && (
+              <span><Icon.Users className="h-3 w-3" />{tk.requested_by_name}</span>
+            )}
+            {openedOn && (
+              <span className="e"><Icon.Calendar className="h-3 w-3" />{t('workflow.board.addedOn', { date: openedOn })}</span>
+            )}
           </div>
         )}
 
@@ -572,7 +643,13 @@ function Lane({ lane, loading, expanded, onToggle, cardProps }) {
       <span className="mwf-lane-accent" style={{ background: lane.tone }} />
       <div className="mwf-lane-hd">
         <span className="ic" aria-hidden="true"><Ic /></span>
-        <span className="nm" title={lane.hint}>{lane.name}</span>
+        {/* The stage's name, and underneath it the stage's own hint — what a car in this column is
+            actually waiting for. It was a tooltip; a column heading that has to be hovered to be
+            understood is a column heading nobody understands. */}
+        <span className="tx">
+          <span className="nm">{lane.name}</span>
+          <span className="hn">{lane.hint}</span>
+        </span>
         <span className="ct">{tickets.length}</span>
       </div>
       <div className="mwf-lane-bd">

@@ -3168,6 +3168,13 @@ const en = {
       tagline: 'Manage and track your fleet maintenance workflow',
       liveNow: 'Live',
       newTicket: 'New Ticket',
+      // The card's journey spine. The stage's own name is already the lane header and the fault
+      // block's first word, so the spine is labelled by what it measures instead of repeating it.
+      serviceProgress: 'Service progress',
+      stepOf: 'Step {n}/{total}',
+      offPipeline: 'Off-pipeline',
+      faultCount: { one: '1 fault', other: '{n} faults' },
+      addedOn: 'Added {date}',
       // The narrowings, and what the board says once they hide something.
       allStatus: 'All status',
       allBrands: 'All brands',
@@ -9368,6 +9375,11 @@ const ar = {
       tagline: 'أدِر سير عمل صيانة أسطولك وتابعه',
       liveNow: 'مباشر',
       newTicket: 'تذكرة جديدة',
+      serviceProgress: 'مسار الخدمة',
+      stepOf: 'الخطوة {n}/{total}',
+      offPipeline: 'خارج المسار',
+      faultCount: { one: 'عطل واحد', other: '{n} أعطال' },
+      addedOn: 'أُضيفت في {date}',
       allStatus: 'كل الحالات',
       allBrands: 'كل الماركات',
       allGarages: 'كل الكراجات',
