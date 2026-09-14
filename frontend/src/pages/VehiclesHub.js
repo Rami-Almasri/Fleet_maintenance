@@ -7,6 +7,7 @@ import CostIntelligence from './CostIntelligence';
 import FleetUtilization from './FleetUtilization';
 import CompletedRepairs from './CompletedRepairs';
 import MaintenanceHistory from './MaintenanceHistory';
+import DamageAccidents from './DamageAccidents';
 import { isFeatureEnabled } from '../config/features';
 
 /**
@@ -20,12 +21,18 @@ import { isFeatureEnabled } from '../config/features';
  *   • Completed Repairs  → the signed-off ledger: who requested it, who drove it, where it was
  *                          fixed, what was found and what it cost
  *   • History            → how often each car saw the workshop and how long it stayed, trip by trip
+ *   • Damage & Accidents → the imported damage log, as-is per car, coloured by who was liable
  *
- * Four of the five used to be separate destinations, scattered across three modules: Repair Records
+ * Five of the six used to be separate destinations, scattered across four modules: Repair Records
  * (/repair-records) in Maintenance, Cost Intelligence (/cost-intelligence) in Finance, Fleet
- * Analytics (/fleet-utilization) in Fleet Intelligence. Every one of them is a per-car table keyed
- * on the same fleet, and reading any of them meant leaving the car list to go and find another page.
- * All four old routes redirect in here on their own tab.
+ * Analytics (/fleet-utilization) in Fleet Intelligence, and the damage log (/damage-accidents) in
+ * Damage Management. Every one of them is a per-car table keyed on the same fleet, and reading any
+ * of them meant leaving the car list to go and find another page. All five old routes redirect in
+ * here on their own tab.
+ *
+ * The damage log belongs here and NOT under Damage Management, because it is a READ of the
+ * historical maintenance log — one more per-car ledger, like Completed Repairs. What stays under
+ * Damage Management is /accidents: the live crash file with work waiting on somebody.
  *
  * The order is deliberate: what we own, then how each car performs, then what was done to it.
  *
@@ -52,6 +59,7 @@ export default function VehiclesHub() {
       { key: 'utilization', label: t('Fleet Utilization'), icon: <Icon.Gauge className="h-4 w-4" />, permission: 'insights.view', was: '/fleet-utilization', Component: FleetUtilization },
       { key: 'signed-off', label: t('Completed Repairs'), icon: <Icon.Check className="h-4 w-4" />, permission: 'maintenance.view', was: '/completed-repairs', Component: CompletedRepairs },
       { key: 'per-car', label: t('History'), icon: <Icon.Clock className="h-4 w-4" />, permission: 'maintenance.view', was: '/maintenance-history', Component: MaintenanceHistory },
+      { key: 'damage', label: t('Damage & Accidents'), icon: <Icon.Alert className="h-4 w-4" />, permission: 'maintenance.view', was: '/damage-accidents', Component: DamageAccidents },
     ].filter((tab) => isFeatureEnabled(tab.flag)),
     [t],
   );

@@ -44,7 +44,6 @@ import SuppliersHub from './pages/SuppliersHub';
 import GaragesHub from './pages/GaragesHub';
 import FieldReportsHub from './pages/FieldReportsHub';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
-import DamageAccidents from './pages/DamageAccidents';
 import AccidentCases from './pages/AccidentCases';
 import RecommendationIntelligence from './pages/RecommendationIntelligence';
 import DailyMaintenanceIntelligence from './pages/reports/DailyMaintenanceIntelligence';
@@ -358,7 +357,10 @@ export default function App() {
                       redirect the old URL so the unfinished page isn't reachable directly. */}
                   <Route path="/maintenance-analytics" element={<Navigate to="/apps/fleet-intelligence" replace />} />
                   <Route path="/maintenance-history" element={<RedirectToTab to="/vehicles" tab="per-car" />} />
-                  <Route path="/damage-accidents" element={<DamageAccidents />} />
+                  {/* The imported damage log is a per-car ledger like Completed Repairs, so it is a
+                      tab of Vehicles now. The live crash file stays its own destination — see the
+                      /accidents block below. */}
+                  <Route path="/damage-accidents" element={<RedirectToTab to="/vehicles" tab="damage" />} />
                 </Route>
 
                 {/* Parts Purchase + Repair Intelligence — its own permission group so a parts-only role
@@ -382,12 +384,13 @@ export default function App() {
                   <Route path="/part-invoices" element={<RedirectToTab to="/parts" tab="invoices" />} />
                 </Route>
 
-                {/* Accident cases — the crash file. A separate route from /damage-accidents on
-                    purpose: that page is a READ of the historical maintenance log (damage records
-                    as they were imported), while this is the live WORKFLOW — who had the car, the
-                    police report, the liability verdict, the insurer and the money. Different
-                    lifecycle, different permission (`accidents.view`), and it is where every
-                    accident notification deep-links, which is why the case id is in the path. */}
+                {/* Accident cases — the crash file. It stays its own destination while the damage
+                    log became a tab of /vehicles, on purpose: that log is a READ of the historical
+                    maintenance log (damage records as they were imported), while this is the live
+                    WORKFLOW — who had the car, the police report, the liability verdict, the
+                    insurer and the money. Different lifecycle, different permission
+                    (`accidents.view`), and it is where every accident notification deep-links,
+                    which is why the case id is in the path. */}
                 <Route element={<RequirePermission permission="accidents.view" />}>
                   <Route path="/accidents" element={<AccidentCases />} />
                   <Route path="/accidents/:caseId" element={<AccidentCases />} />
