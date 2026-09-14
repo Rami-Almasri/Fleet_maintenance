@@ -17,7 +17,7 @@ import Tabs from '../../components/ui/Tabs';
 import VehicleWorkflowPanel from '../../components/vehicles/VehicleWorkflowPanel';
 import VehicleCheckpointsPanel from '../../components/vehicles/VehicleCheckpointsPanel';
 import VehicleComplaintsPanel from '../../components/vehicles/VehicleComplaintsPanel';
-import VehicleAccidentsPanel from '../../components/vehicles/VehicleAccidentsPanel';
+import VehicleAccidentHoldBanner from '../../components/vehicles/VehicleAccidentHoldBanner';
 import VehicleInvestigationTimeline from '../../components/vehicles/VehicleInvestigationTimeline';
 import VehicleComponentsPanel from '../../components/vehicles/VehicleComponentsPanel';
 import VehicleSpareKeysPanel from '../../components/vehicles/VehicleSpareKeysPanel';
@@ -299,9 +299,21 @@ const CONTRACT_TYPE_LABEL = { C: 'Rental', U: 'Maintenance', R: 'Booking' };
 // Top-level tabs for the profile. Keys are also the ?tab= URL value (deep-linkable / shareable).
 // 'timeline' (the old Maintenance Log feed) was merged into 'activity' — the one Timeline tab. It stays
 // in the key list so old ?tab=timeline links still resolve; changeTab() redirects them to 'activity'.
-const TAB_KEYS = ['overview', 'plate', 'visits', 'components', 'journey', 'activity', 'checkpoints', 'complaints', 'accidents', 'financials', 'media'];
-const TAB_ALIASES = { timeline: 'activity' };
+//
+// 'accidents' was a tab of its own and is now the Timeline read through its Accident filter. A crash is
+// something that HAPPENED TO THE CAR, on the same clock as every other thing that happened to it — the
+// separate tab told that story out of sequence, next to the repair it caused rather than among it. The
+// case's own state (liability, police report, who had the car, the money) was never the tab's to hold
+// anyway: it lives on /accidents/{id}, which every accident row on the Timeline links straight to.
+const TAB_KEYS = ['overview', 'plate', 'visits', 'components', 'journey', 'activity', 'checkpoints', 'complaints', 'financials', 'media'];
+const TAB_ALIASES = { timeline: 'activity', accidents: 'activity' };
 const resolveTab = (key) => TAB_ALIASES[key] || key;
+
+// Aliases that mean "the Timeline, narrowed to this" rather than just "the Timeline". Redirecting
+// ?tab=accidents to a bare timeline would answer a narrower question with the car's whole history and
+// leave the reader to find the crash; the namespaced filter param lands them on the accident rows.
+// Keyed by the RAW ?tab= value, since the alias has already collapsed by the time we read it.
+const TAB_ALIAS_FILTER = { accidents: { 'tl.type': 'accident' } };
 
 // Per-tab "Data Origin" line — the standing traceability rule: every surface names where its
 // numbers come from, so a manager on any tab still sees the source (no black boxes).
@@ -311,10 +323,9 @@ const TAB_ORIGIN = {
   visits: 'Each maintenance visit is an OfficeManager type-U contract, enriched with its workshop events from the N-Maintenance sheet log (garage, issues, priority, cost).',
   journey: 'The same in-app maintenance-workflow audit trail (vehicle event log), reshaped per ticket: each workflow_status transition marks a stage, timed to the next transition — so you see every stage the car went through and how long it sat in each.',
   checkpoints: 'Workshop progress updates filed by the responsible follow-up owners (Waleed/Abdullah, or a ticket’s assigned users): the revised completion date, the reason it moved, a progress note and photos/videos. The On Schedule / Overdue status is derived automatically from the promised date; reminders escalate before a job goes overdue.',
-  activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits (click one for its full record — garage, cost, issues, notes), the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share.',
+  activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits (click one for its full record — garage, cost, issues, notes), the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share. Accidents read here too, through the Accident filter: every event an accident case writes — reported, damage recorded, police report verified, liability set, renter charged, closed — in sequence with everything else that happened to the car. That filter counts CASES, not events, because one crash writes a dozen rows and “9 accidents” for one crash would be a different fact from the one the number is being asked for; the rows are all still listed. The case’s own state — who had the car at the moment of the crash (frozen when it was reported, never recomputed), the police-report status, the liability verdict, and the estimate / approved / actual / paid figures — lives on the accident case itself, which every accident row opens.',
   financials: 'Every contract OfficeManager holds against this car — rental (C), maintenance (U) and booking (R) — listed newest first and filterable by type. The money on each line (debit, credit, balance) is the contract’s own billing; the cost analysis below it is reverse-engineered from that billing via RealProfitService: rent − discount + realized usage − operating − car-level maintenance.',
   media: 'Pre/post condition & odometer photos captured during the maintenance workflow (inspection & garage steps).',
-  accidents: 'Accident cases opened against this car — a first-class workflow, not a maintenance note. Each row names WHO HAD THE CAR at the moment of the crash, frozen when the accident was reported: the customer, the rental contract and the rental window are copied onto the case then and never recomputed, so a case still names the right person after that contract closes and the car is let again. The stage, the police-report status and the liability verdict are the case’s own state — liability is never inferred from who was driving, and starts undecided until a named person rules on it. The rental-hold banner reads the same authority the booking gate reads (ContractEligibilityService), so it can never disagree with what happens at the counter. Repairs are ordinary maintenance tickets parented to the case; the money lives on the case as separate estimate / approved / actual / paid figures.',
   components: 'The vehicle’s physical configuration, DERIVED from the maintenance workflow — never typed in. A component appears here through one of two doors, and the row says which. PURCHASED: a ticket reached its install step (part purchased → received → installed); identity, supplier, cost, warranty and odometer are FACTS copied from the purchase order. REPORTED: a technician recorded “replaced X” at repair capture with no purchase behind it — the part is genuinely fitted, but there is no paperwork, so cost and supplier are blank rather than zero, and no warranty is claimed. Either way the install retires the part it replaced and writes both to the timeline. Age, life-used, warranty standing and cost/km are DERIVED at read time. Money figures count only the parts whose cost is known, and say how many that is. Consumables refreshed by routine servicing (oil, filters bundled with an oil change) are merged in from the service log and tagged “Service”, because they are performed work rather than tracked assets. SPARE KEYS are the same asset ledger read separately, because they are the one part whose two counts routinely differ: “keys on this car” is what the ledger holds today, while “requirements raised” and “keys ever received” come from the spare-key requirements and the purchases behind them. History imported from the “NEED SPARE KEY” sheet records the requirement and its dates only — it is not evidence that a key exists, so it never adds to the current count.',
 };
 
@@ -441,6 +452,22 @@ export default function VehicleProfile() {
     deepLinksTimeline ? 'activity' : (TAB_KEYS.includes(tabParam) ? tabParam : 'overview')
   );
 
+  // A retired tab's link rewrites itself to the surface that replaced it, filter and all — so an
+  // ?tab=accidents URL already out there in a message or a bookmark still opens the accidents, and the
+  // address bar afterwards says where they actually are. Runs once, and only for a raw alias we hold a
+  // filter for; `replace` keeps the dead URL out of the back button.
+  const rawTab = searchParams.get('tab');
+  useEffect(() => {
+    const filter = TAB_ALIAS_FILTER[rawTab];
+    if (!filter) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', resolveTab(rawTab));
+      for (const [k, val] of Object.entries(filter)) next.set(k, val);
+      return next;
+    }, { replace: true });
+  }, [rawTab, setSearchParams]);
+
   // Switch tab + reflect it in the URL (shareable/back-button), preserving any other params.
   const changeTab = (key) => {
     const tab = resolveTab(key);
@@ -448,6 +475,18 @@ export default function VehicleProfile() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.set('tab', tab);
+      return next;
+    }, { replace: true });
+  };
+
+  // "Show me the accidents" — the Timeline, already narrowed to them. Sets the same namespaced param
+  // the Timeline's own Accident chip writes, so this and a click on the chip land on one URL.
+  const openAccidents = () => {
+    setActiveTab('activity');
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', 'activity');
+      next.set('tl.type', 'accident');
       return next;
     }, { replace: true });
   };
@@ -850,10 +889,8 @@ export default function VehicleProfile() {
               { key: 'journey', label: t('Journey'), badge: num(journeys.length) },
               { key: 'checkpoints', label: t('Progress') },
               { key: 'complaints', label: t('Complaints') },
-              // Its own tab rather than a section of Complaints: what a customer said about the car
-              // and what happened TO the car are different kinds of fact, and an unresolved accident
-              // is the one that stops it being let.
-              { key: 'accidents', label: t('Accidents') },
+              // No Accidents tab: a crash reads on the Timeline, in sequence with everything else that
+              // happened to the car, via its Accident filter. @see TAB_ALIAS_FILTER
               { key: 'media', label: t('Media') },
             ]}
           />
@@ -865,6 +902,10 @@ export default function VehicleProfile() {
         {/* Repeat replacements — the one thing about this car's hardware a manager must see WITHOUT
             opening a tab: the same part has been fitted here more than once. Renders nothing when
             there is no repeat, so it costs no space on a healthy car. */}
+        {/* The one accident fact that is about the car's PRESENT standing rather than its history:
+            an unresolved case is holding it out of the rental pool. Self-hides otherwise. */}
+        <VehicleAccidentHoldBanner vehicleId={id} onOpenAccidents={openAccidents} />
+
         <ComponentRepeatAlert vehicleId={id} onOpenComponents={() => changeTab('components')} />
 
         {/* Executive overview dashboard — Quick KPIs, vehicle health, revenue/expense
@@ -1238,14 +1279,6 @@ export default function VehicleProfile() {
         {activeTab === 'complaints' && (
         <div role="tabpanel" id="panel-complaints" aria-labelledby="tab-complaints" className="space-y-6">
           <VehicleComplaintsPanel vehicleId={id} />
-        </div>
-        )}
-
-        {/* ── ACCIDENTS ──────────────────── every crash on file + the rental hold, if any */}
-        {activeTab === 'accidents' && (
-        <div role="tabpanel" id="panel-accidents" aria-labelledby="tab-accidents" className="space-y-6">
-          <VehicleAccidentsPanel vehicleId={id} />
-          <DataOrigin tab="accidents" />
         </div>
         )}
 
