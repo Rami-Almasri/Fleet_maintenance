@@ -44,6 +44,24 @@ class VehicleController extends Controller
     }
 
     /**
+     * Fleet pulse: the trend layer behind the Vehicles page KPI strip — the four states today,
+     * the same four on the same day last month, the percentage change, and 12 monthly points per
+     * state for the tile sparklines.
+     *
+     * Replayed from contracts, not from a snapshot table (there isn't one). The counts here are
+     * contract-only on BOTH dates so the comparison is like-for-like; the live headline number on
+     * each tile still comes from /Vehicle. @see \App\Services\FleetMixService
+     */
+    public function fleetPulse(\App\Services\FleetMixService $mix)
+    {
+        try {
+            return ResponseHelper::SuccessResponse($mix->pulse(), 'Fleet pulse retrieved successfully', 200);
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * Fleet Utilization: per-car split of calendar time into rented / in-maintenance / idle over a
      * window, with days owned as the denominator. `period` picks a preset window (or pass explicit
      * from/to); `status=all` includes sold/disposed cars for historical analysis.

@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from 'react';
  *               renders nothing at all, so a row with no secondary actions has no dangling control.
  * @param label  accessible name for the trigger, e.g. "More actions for invoice 33333"
  */
-export default function ActionMenu({ items = [], label = 'More actions', align = 'end' }) {
+export default function ActionMenu({ items = [], label = 'More actions', align = 'end', glyph = '⋮' }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef(null);
 
@@ -50,7 +50,7 @@ export default function ActionMenu({ items = [], label = 'More actions', align =
         onClick={() => setOpen((o) => !o)}
         className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
       >
-        <span aria-hidden="true" className="text-lg leading-none">⋮</span>
+        <span aria-hidden="true" className="text-lg leading-none">{glyph}</span>
       </button>
 
       {open && (

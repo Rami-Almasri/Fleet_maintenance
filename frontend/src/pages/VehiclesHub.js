@@ -1,6 +1,9 @@
 import { useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import TabbedHub from '../components/ui/TabbedHub';
 import Icon from '../components/ui/Icon';
+import ActionMenu from '../components/ui/ActionMenu';
+import { usePermissions } from '../hooks/usePermissions';
 import { useI18n } from '../i18n/I18nContext';
 import Vehicles from './Vehicles';
 import CostIntelligence from './CostIntelligence';
@@ -51,6 +54,14 @@ import { isFeatureEnabled } from '../config/features';
  */
 export default function VehiclesHub() {
   const { t } = useI18n();
+  const { can } = usePermissions();
+  const [searchParams] = useSearchParams();
+
+  // The header button belongs to the REGISTRY, not to the hub: "Add Vehicle" means nothing while
+  // you are reading the cost board or the repair ledger, and a control that does nothing where it
+  // sits is worse than no control. Registry is the default tab, hence the null check.
+  const tab = searchParams.get('tab');
+  const onRegistry = !tab || tab === 'registry';
 
   const tabs = useMemo(
     () => [
@@ -70,6 +81,34 @@ export default function VehiclesHub() {
       subtitle={t('Every car in the fleet — what it costs to run, how much of its owned time it earns, and the finished work behind it: the signed-off ledger of what was fixed, and each car’s workshop history, trip by trip.')}
       ariaLabel={t('Vehicle sections')}
       tabs={tabs}
-    />
+    >
+      {onRegistry && can('vehicles.manage') && (
+        /* The registry page owns the create form and the export; this button only asks for them,
+           over a window event. See AddVehicleBridge in pages/Vehicles.js. */
+        <div className="inline-flex items-stretch overflow-hidden rounded-xl bg-indigo-600 shadow-sm shadow-indigo-600/20">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('fleet:add-vehicle'))}
+            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" className="h-4 w-4">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            {t('vehicles.addVehicle')}
+          </button>
+          <span className="my-2 w-px bg-white/25" />
+          <span className="flex items-center pe-1 text-white [&_button]:text-white [&_button:hover]:bg-indigo-700">
+            <ActionMenu
+              glyph="⌄"
+              label={t('vehicles.moreFleetActions')}
+              items={[
+                { key: 'add', label: t('vehicles.addVehicle'), onSelect: () => window.dispatchEvent(new CustomEvent('fleet:add-vehicle')) },
+                { key: 'export', label: t('vehicles.export'), onSelect: () => window.dispatchEvent(new CustomEvent('fleet:export-registry')) },
+              ]}
+            />
+          </span>
+        </div>
+      )}
+    </TabbedHub>
   );
 }

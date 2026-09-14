@@ -94,6 +94,7 @@ Route::prefix('auth')->controller(\App\Http\Controllers\WorkforceController::cla
 Route::middleware('auth:sanctum')->prefix('Vehicle')->controller(VehicleController::class)->group(function () {
 
     Route::get('/', 'index')->middleware('permission:vehicles.view');
+    Route::get('/fleet-mix', 'fleetPulse')->middleware('permission:vehicles.view');      // KPI trend strip: the four states today vs the same day last month, replayed from contracts (static — must precede /{vehicle})
     Route::get('/utilization', 'utilization')->middleware('permission:insights.view');   // fleet rented/maintenance/idle days (static — must precede /{vehicle})
     Route::get('/active-shop-stays', 'activeShopStays')->middleware('permission:insights.view'); // ops: cars on rent but stuck in the shop (static — must precede /{vehicle})
     Route::get('/maintenance-overlaps', 'maintenanceOverlaps')->middleware('permission:insights.view'); // ops: maintenance↔rental overlap history for true off-road shop days (static — must precede /{vehicle})
