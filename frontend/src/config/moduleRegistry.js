@@ -104,16 +104,16 @@ export const MODULES = [
     tone: 'indigo',
     tagline: 'Vehicles, rentals and the daily movement of the fleet',
     sections: [
-      // Three tabs: the fleet register, plus the two repair ledgers the retired Repair Records page
-      // held. Registry is vehicles.view, the ledgers maintenance.view — so permissionAny, and the
-      // hub filters tab by tab against the routes they replaced.
-      { name: 'Vehicles', route: '/vehicles', permissionAny: ['vehicles.view', 'maintenance.view', 'insights.view'], icon: Icon.Car, desc: 'Every car in the fleet — open a row for its full profile, history and documents — plus what each car costs to run per kilometre, day and rental, how its owned time splits into rented, in-maintenance and idle days, the signed-off repair ledger, and each car’s workshop history, trip by trip.' },
+      // One destination for the cars: the fleet register, the two analytics boards, the two repair
+      // ledgers the retired Repair Records page held, and the imported damage log. Registry is
+      // vehicles.view, the ledgers maintenance.view, the boards insights.view — so permissionAny,
+      // and the hub filters tab by tab against the routes they replaced.
+      { name: 'Vehicles', route: '/vehicles', permissionAny: ['vehicles.view', 'maintenance.view', 'insights.view'], icon: Icon.Car, desc: 'Every car in the fleet — open a row for its full profile, history and documents — plus what each car costs to run per kilometre, day and rental, how its owned time splits into rented, in-maintenance and idle days, the signed-off repair ledger, each car’s workshop history trip by trip, and the imported damage and accident log coloured by liable party and insurance.' },
       { name: 'Contracts', route: '/contracts', permission: 'contracts.view', icon: Icon.Invoice, desc: 'Rental contracts synced from OfficeManager — all open, plus recently closed.' },
       { name: 'Customers', route: '/customers', permission: 'customers.view', icon: Icon.Users, desc: 'Customer contacts, contracts and available wallet (carried-forward credit).' },
       { name: 'Drivers', route: '/drivers', permission: 'drivers.view', icon: Icon.Users, desc: 'Fleet drivers with licence number, expiry and status — expiring licences flagged.' },
       { name: 'Driver Dispatch', route: '/driver-dispatch', permission: 'logistics.view', icon: Icon.Truck, desc: 'Send a vehicle between locations and track which driver holds it and where.' },
       { name: 'Fleet Health', route: '/inspections/schedules', permission: 'inspections.view', icon: Icon.Shield, desc: 'Service-due and registration/insurance expiry surfaces, consolidated in one hub.' },
-      { name: 'Damage & Accidents', route: '/damage-accidents', permission: 'maintenance.view', icon: Icon.Alert, desc: 'Damage and accident records per vehicle, coloured by liable party and insurance.' },
       { name: 'Maintenance Swap', route: '/maintenance-swap', permission: 'insights.view', icon: Icon.Refresh, desc: 'Keep a customer on the road — assign a replacement car while theirs is repaired.' },
       { name: 'Odometer Approvals', route: '/odometer-approvals', permission: 'vehicles.approve_odometer', icon: Icon.Gauge, desc: 'Review queue for significant manual odometer edits — approve or reject each.' },
       { name: 'Reports', route: '/apps/reports', permission: 'insights.view', icon: Icon.Chart, desc: 'Operational reports, audit trails and data-quality surfaces in one place.' },
