@@ -25,6 +25,15 @@ use Illuminate\Support\Facades\Storage;
  */
 class AccidentCaseSurfacesTest extends FoundationTestCase
 {
+
+    /**
+     * Any live damage type. Damage is named from the catalog rather than typed, so a test that
+     * hard-coded "Front bumper" would be asserting the old free-text contract.
+     */
+    protected function aDamageType(): int
+    {
+        return (int) \App\Models\DamageCatalog::where('is_active', true)->value('id');
+    }
     private function rented(?string $outDate = null, ?string $inDate = null): array
     {
         $vehicle = $this->makeVehicle();
@@ -70,7 +79,9 @@ class AccidentCaseSurfacesTest extends FoundationTestCase
         $this->assertSame(AccidentCase::ACCIDENT_TYPES, $res->json('data.accident_types'));
         $this->assertSame(AccidentCase::LIABILITY_STATUSES, $res->json('data.liability'));
         $this->assertSame(AccidentFinancialEntry::PHASES, $res->json('data.phases'));
-        $this->assertNotEmpty($res->json('data.damage_catalog'), 'the damage vocabulary is reused, not reinvented');
+        $this->assertNotEmpty($res->json('data.damage_groups'), 'the damage vocabulary is reused, not reinvented');
+        $this->assertNotEmpty($res->json('data.damage_groups.0.items'), 'grouped, because a flat list of 27 is a scroll not a choice');
+        $this->assertNotEmpty($res->json('data.location_groups'), 'and the WHERE axis alongside it');
         $this->assertArrayHasKey('police_report', $res->json('data.document_kinds'));
 
         $preview = $res->json('data.context_preview');
@@ -153,7 +164,12 @@ class AccidentCaseSurfacesTest extends FoundationTestCase
         $this->assertFalse($rental->contains('id', $yard));
 
         $this->assertGreaterThanOrEqual(1, $dash['police_waived'], 'the guardrail counts its own bypasses');
-        $this->assertSame(AccidentCase::STAGES, $this->getJson('/api/accidents')->json('data.stages'));
+        // The board draws its columns from the PUBLISHED workflow, in its configured order — so a
+        // reorder on the settings screen reaches the board without a deploy, and the board can never
+        // offer a column the service would refuse to move a case into.
+        $published = \App\Models\AccidentWorkflowStage::whereHas('workflow', fn ($w) => $w->where('status', 'active'))
+            ->orderBy('position')->pluck('key')->all();
+        $this->assertSame($published, array_column($this->getJson('/api/accidents')->json('data.stages'), 'key'));
     }
 
     /** Search reaches the frozen customer and contract, not just the case's own columns. */
@@ -295,7 +311,7 @@ class AccidentCaseSurfacesTest extends FoundationTestCase
         $this->assertSame($id, $res->json('data.cases.0.id'));
         $this->assertSame(0, $res->json('data.cases.0.damage_items_count'));
 
-        $this->postJson("/api/accidents/$id/damage", ['area_label' => 'Wing'])->assertCreated();
+        $this->postJson("/api/accidents/$id/damage", ['damage_catalog_id' => $this->aDamageType()])->assertCreated();
         $this->assertSame(1, $this->getJson("/api/accidents/vehicle/{$vehicle->id}")->json('data.cases.0.damage_items_count'));
 
         $this->postJson("/api/accidents/$id/police/bypass", ['reason' => 'No report available.'])->assertOk();
@@ -395,7 +411,7 @@ class AccidentCaseSurfacesTest extends FoundationTestCase
             'phase' => 'paid', 'party' => 'insurance', 'amount' => 100,
         ])->assertStatus(422)->assertJsonValidationErrors('stage');
 
-        $this->postJson("/api/accidents/$id/damage", ['area_label' => 'Roof'])
+        $this->postJson("/api/accidents/$id/damage", ['damage_catalog_id' => $this->aDamageType()])
             ->assertStatus(422)->assertJsonValidationErrors('stage');
 
         // Closing states the final position on the timeline rather than leaving it to be re-derived.
@@ -427,7 +443,6 @@ class AccidentCaseSurfacesTest extends FoundationTestCase
         $this->assertNotNull($catalog, 'the damage catalog must be seeded for this test to mean anything');
 
         $item = $this->postJson("/api/accidents/$id/damage", [
-            'area_label'          => 'Left front door',
             'damage_catalog_id'   => $catalog->id,
             'vehicle_location_id' => $location?->id,
             'severity'            => 'moderate',
@@ -436,8 +451,72 @@ class AccidentCaseSurfacesTest extends FoundationTestCase
         ])->assertCreated();
 
         $this->assertSame($catalog->id, $item->json('data.damage_catalog_id'));
+        // The display label is DERIVED from the two vocabularies, never typed — that is what keeps
+        // "how much did bumper damage cost us?" a group-by rather than a spelling lottery.
+        $expected = trim($catalog->name . ($location ? ' — ' . $location->name : ''));
+        $this->assertSame($expected, $item->json('data.area_label'));
         $this->assertTrue($item->json('data.requires_replacement'));
         $this->assertFalse($item->json('data.repaired'), 'nothing has fixed it yet');
+    }
+
+    /**
+     * DAMAGE IS NAMED FROM THE CATALOG, NOT TYPED — the regression guard on the whole point of the
+     * picker.
+     *
+     * A free-text area is uncountable the moment two people spell it differently, and nothing
+     * anywhere reports that the grouping broke. So the endpoint refuses a bare label and the label it
+     * stores is DERIVED. If somebody ever "helpfully" makes `area_label` acceptable again, this goes
+     * red rather than the reporting going quietly wrong six months later.
+     */
+    public function test_damage_cannot_be_recorded_as_free_text(): void
+    {
+        $vehicle = $this->makeVehicle();
+        $id = $this->report($vehicle);
+
+        // The old contract — a typed area and nothing else.
+        $this->postJson("/api/accidents/$id/damage", ['area_label' => 'front bumper'])
+            ->assertStatus(422)->assertJsonValidationErrors('damage_catalog_id');
+
+        // …and it cannot sneak in at intake either.
+        $this->postJson('/api/accidents', [
+            'vehicle_id' => $this->makeVehicle()->id,
+            'description' => 'Typed damage.',
+            'damage_items' => [['area_label' => 'left door']],
+        ])->assertStatus(422)->assertJsonValidationErrors('damage_items.0.damage_catalog_id');
+
+        $this->assertSame(0, \App\Models\AccidentDamageItem::where('accident_case_id', $id)->count());
+    }
+
+    /**
+     * And the payoff: because the id is stored, the dashboard can GROUP BY what actually gets broken.
+     * This is the query a free-text field makes impossible.
+     */
+    public function test_the_dashboard_groups_damage_by_type_and_by_area(): void
+    {
+        $vehicle = $this->makeVehicle();
+        $id = $this->report($vehicle);
+
+        $catalog  = DamageCatalog::where('is_active', true)->firstOrFail();
+        $location = VehicleLocation::where('is_active', true)->first();
+
+        foreach ([1200, 800] as $cost) {
+            $this->postJson("/api/accidents/$id/damage", [
+                'damage_catalog_id'   => $catalog->id,
+                'vehicle_location_id' => $location?->id,
+                'estimated_cost'      => $cost,
+            ])->assertCreated();
+        }
+
+        $dash = $this->getJson('/api/accidents/dashboard')->assertOk()->json('data');
+
+        $row = collect($dash['by_damage_type'])->firstWhere('name', $catalog->name);
+        $this->assertNotNull($row, 'the damage type is reportable by name');
+        $this->assertGreaterThanOrEqual(2, $row['items']);
+        $this->assertGreaterThanOrEqual(2000, $row['estimated'], 'and its spend adds up');
+
+        if ($location) {
+            $this->assertArrayHasKey($location->name, $dash['by_damage_area']);
+        }
     }
 
     /** An accident in the future is a typo, and the intake says so rather than storing it. */

@@ -14,6 +14,7 @@ import { Input, Select, Textarea } from '../components/ui/Field';
 import { num, fmtDate } from '../lib/format';
 import AccidentContextBanner from '../components/accidents/AccidentContextBanner';
 import AccidentProgress from '../components/accidents/AccidentProgress';
+import AccidentDamagePicker from '../components/accidents/AccidentDamagePicker';
 
 /**
  * ACCIDENT CASES — the board of what is waiting on somebody, and the file behind each crash.
@@ -283,6 +284,10 @@ function Detail({ caseId }) {
   // than working out from liability + amounts whether billing is allowed, so the button and the
   // endpoint can never disagree about it.
   const charge = useFetch(() => api.get(`/accidents/${caseId}/charge`).then((r) => r.data.data), [caseId]);
+  // The damage + location vocabularies. Fetched once at the Detail level rather than inside the
+  // modal so opening "Add damage" is instant — a picker that spins on open is a picker people learn
+  // to avoid, and the whole point of it is that it must be easier than typing.
+  const vocab = useFetch(() => api.get('/accidents/options').then((r) => r.data.data), []);
 
   const data = c.data;
 
@@ -877,7 +882,7 @@ function Detail({ caseId }) {
       {/* ── the action modals ───────────────────────────────────────────────────────────────── */}
       <ActionModals
         action={action} form={form} setForm={setForm} close={close} busy={busy}
-        post={post} upload={upload} data={data} navigate={navigate} chargeState={charge.data}
+        post={post} upload={upload} data={data} navigate={navigate} chargeState={charge.data} vocab={vocab.data}
       />
     </div>
   );
@@ -1049,7 +1054,7 @@ function Fact({ label, value }) {
  * button will actually do — the same discipline the Send-a-car-in form uses, and for the same
  * reason: a confirmation the user reads AFTER the fact is not a confirmation.
  */
-function ActionModals({ action, form, setForm, close, busy, post, upload, data, navigate, chargeState }) {
+function ActionModals({ action, form, setForm, close, busy, post, upload, data, navigate, chargeState, vocab }) {
   const { t } = useI18n();
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target?.type === 'checkbox' ? e.target.checked : e.target.value }));
 
@@ -1232,15 +1237,28 @@ function ActionModals({ action, form, setForm, close, busy, post, upload, data, 
 
   if (action === 'damage') {
     return (
-      <Modal open onClose={close} title={t('Record damage')}
-        footer={footer(t('Add'), () => post('/damage', form, t('Damage recorded')), !(form.area_label || '').trim())}>
-        <div className="space-y-3">
-          <Input label={t('Which area?')} required value={form.area_label || ''} onChange={set('area_label')} placeholder={t('Front bumper')} />
-          <Select label={t('Severity')} value={form.severity || 'unknown'} onChange={set('severity')}>
-            {['minor', 'moderate', 'severe', 'unknown'].map((k) => <option key={k} value={k}>{t(k)}</option>)}
-          </Select>
-          <Input type="number" step="0.01" min="0" label={t('Estimated cost')} value={form.estimated_cost || ''} onChange={set('estimated_cost')} />
-          <Textarea label={t('Description')} rows={2} value={form.description || ''} onChange={set('description')} />
+      <Modal open onClose={close} size="lg" title={t('Record damage')}
+        subtitle={t('Named from the damage catalog so it can be counted and costed later — not typed.')}
+        footer={footer(t('Add'), () => post('/damage', form, t('Damage recorded')), !form.damage_catalog_id)}>
+        <div className="space-y-4">
+          <AccidentDamagePicker
+            damageGroups={vocab?.damage_groups || []}
+            locationGroups={vocab?.location_groups || []}
+            value={form}
+            onChange={(next) => setForm((f) => ({ ...f, ...next }))}
+          />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Select label={t('Severity')} value={form.severity || 'unknown'} onChange={set('severity')}>
+              {['minor', 'moderate', 'severe', 'unknown'].map((k) => <option key={k} value={k}>{t(k)}</option>)}
+            </Select>
+            <Input type="number" step="0.01" min="0" label={t('Estimated cost')} value={form.estimated_cost || ''} onChange={set('estimated_cost')} />
+          </div>
+          {/* The specifics live here, beside the category — detail, never instead of it. */}
+          <Textarea
+            label={t('Anything else about it?')}
+            hint={t('Free text is welcome here — it is detail about the damage above, not a replacement for naming it.')}
+            rows={2} value={form.description || ''} onChange={set('description')}
+          />
         </div>
       </Modal>
     );

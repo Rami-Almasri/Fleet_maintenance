@@ -897,6 +897,42 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                     )}
                     <Fact label={t('workflow.detail.contract')} value={tk.linked_contract_no} mono />
                   </dl>
+                  {/* THE ACCIDENT BEHIND THIS TICKET.
+                      Read-only on purpose, and placed above the fault text because on a crashed car it is
+                      the fault text's explanation. Every control belongs to the accident case — this
+                      panel links out rather than duplicating them, so an accident can never be advanced
+                      from two screens that disagree about where it has got to.
+                      @see backend AccidentWorkflowService */}
+                  {tk.accident && (
+                    <div className="mt-3 border-t border-slate-100 pt-3">
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                        {t('workflow.accident.panelTitle')}
+                      </p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold text-white"
+                          style={{ background: tk.accident.tone || '#e11d48' }}
+                        >
+                          🚨 {tk.accident.stage_label}
+                        </span>
+                        <span className="font-mono text-xs text-slate-500">{tk.accident.reference}</span>
+                        {tk.accident.drivable === false && (
+                          <span className="text-xs text-rose-600">{t('workflow.accident.notDrivable')}</span>
+                        )}
+                        {tk.accident.drivable === true && (
+                          <span className="text-xs text-slate-500">{t('workflow.accident.drivable')}</span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">{t('workflow.accident.panelHint')}</p>
+                      <Link
+                        to={tk.accident.url}
+                        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline"
+                      >
+                        {t('workflow.accident.openCase')} <Icon.ArrowRight className="h-3 w-3" aria-hidden="true" />
+                      </Link>
+                    </div>
+                  )}
+
                   {/* customer_complaint holds the issue text for every origin — label it by trigger_reason so a
                       system routine agenda / driver note isn't mislabeled as a "Customer complaint". */}
                   {tk.customer_complaint && (

@@ -7,6 +7,7 @@
 // contexts (ThemeContext / I18nContext), and the account block reflects the
 // logged-in user from AuthContext. No new backend is required.
 
+import { Link } from 'react-router-dom';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../auth/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
@@ -63,7 +64,7 @@ const pretty = (s) =>
 export default function Settings() {
   const { theme } = useTheme();
   const { user, logout } = useAuth();
-  const { roles, permissions, isSuperAdmin } = usePermissions();
+  const { roles, permissions, isSuperAdmin, can } = usePermissions();
   const { t } = useI18n();
 
   const initial = (user?.name || '?').charAt(0).toUpperCase();
@@ -161,6 +162,26 @@ export default function Settings() {
             )}
           </div>
         </SectionCard>
+
+        {/* PROCESS CONFIGURATION — the settings that change how the system behaves for everyone,
+            rather than how it looks for you. Kept apart from the appearance controls above for that
+            reason: a theme is a preference, the accident process is an operating rule. Shown only to
+            somebody who may actually change it, since a link that always refuses teaches nothing. */}
+        {can('accidents.workflow.configure') && (
+          <SectionCard title={t('settings.process.title')} subtitle={t('settings.process.subtitle')}>
+            <div className="px-1">
+              <Row title={t('settings.process.accidentWorkflow')} desc={t('settings.process.accidentWorkflowDesc')} last>
+                <Link
+                  to="/settings/accident-workflow"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  {t('settings.process.open')}
+                  <Icon.ArrowRight className="h-4 w-4 rtl:-scale-x-100" />
+                </Link>
+              </Row>
+            </div>
+          </SectionCard>
+        )}
 
         {/* Keyboard shortcuts */}
         <SectionCard

@@ -27,6 +27,15 @@ use Laravel\Sanctum\Sanctum;
  */
 class AccidentCaseWorkflowTest extends FoundationTestCase
 {
+
+    /**
+     * Any live damage type. Damage is named from the catalog rather than typed, so a test that
+     * hard-coded "Front bumper" would be asserting the old free-text contract.
+     */
+    protected function aDamageType(): int
+    {
+        return (int) \App\Models\DamageCatalog::where('is_active', true)->value('id');
+    }
     /** A car on hire right now, with a real customer and a real open type-C contract behind it. */
     private function rentedVehicle(): array
     {
@@ -49,6 +58,28 @@ class AccidentCaseWorkflowTest extends FoundationTestCase
         ]);
 
         return [$vehicle, $customer, $contract];
+    }
+
+    /**
+     * Walk a case forward to a named rung, opening each gate on the way.
+     *
+     * Exists so that a test about the POLICE gate does not have to know what comes before it — which
+     * is exactly the coupling a configurable ladder is supposed to remove. A test that hard-codes the
+     * route to a stage is the old problem wearing a different hat.
+     */
+    protected function advanceTo(int $id, string $stageKey): void
+    {
+        for ($i = 0; $i < 12; $i++) {
+            $stage = $this->getJson("/api/accidents/$id")->json('data.stage');
+            if ($stage === $stageKey) {
+                return;
+            }
+            $res = $this->postJson("/api/accidents/$id/advance");
+            if ($res->status() !== 200) {
+                $this->fail("Could not reach '$stageKey' — stuck at '$stage': " . $res->getContent());
+            }
+        }
+        $this->fail("Never reached '$stageKey'.");
     }
 
     private function report(Vehicle $vehicle, array $extra = [])
@@ -177,23 +208,33 @@ class AccidentCaseWorkflowTest extends FoundationTestCase
 
     // ── 5 · the police report gate ────────────────────────────────────────────────────────────
 
-    /** A new case starts at the gate, visibly missing its paperwork rather than silently lacking it. */
-    public function test_a_new_case_lands_on_the_police_stage_with_the_report_missing(): void
+    /**
+     * A new case lands on the CONFIGURED first rung — whatever the office named it — with its
+     * paperwork visibly missing rather than silently lacking.
+     *
+     * Asserted against the workflow table rather than a constant. A test naming 'reported' would just
+     * be the old hard-coding moved into the suite, and would go green on a workflow nobody can use.
+     */
+    public function test_a_new_case_lands_on_the_configured_initial_stage(): void
     {
         [$vehicle] = $this->rentedVehicle();
 
         $res = $this->report($vehicle)->assertCreated();
 
-        $this->assertSame(AccidentCase::STAGE_AWAITING_POLICE, $res->json('data.stage'));
+        $initial = \App\Models\AccidentWorkflowStage::whereHas('workflow', fn ($w) => $w->where('status', 'active'))
+            ->where('is_initial', true)->firstOrFail();
+
+        $this->assertSame($initial->key, $res->json('data.stage'));
         $this->assertSame(AccidentCase::POLICE_MISSING, $res->json('data.police.status'));
         $this->assertContains('police', array_column($res->json('data.gates'), 'key'));
     }
 
     /** Recording is not verifying, and the case says which of the two has happened. */
-    public function test_recording_then_verifying_the_police_report_advances_the_case(): void
+    public function test_recording_then_verifying_the_police_report_opens_the_gate(): void
     {
         [$vehicle] = $this->rentedVehicle();
         $id = $this->idOf($this->report($vehicle));
+        $this->advanceTo($id, 'police_report');
 
         $recorded = $this->postJson("/api/accidents/$id/police", [
             'police_report_no'   => 'DXB-2026-99887',
@@ -203,25 +244,38 @@ class AccidentCaseWorkflowTest extends FoundationTestCase
 
         $this->assertSame(AccidentCase::POLICE_RECORDED, $recorded->json('data.police.status'));
         $this->assertFalse($recorded->json('data.police.satisfied'), 'recorded is not verified');
-        $this->assertSame(AccidentCase::STAGE_AWAITING_POLICE, $recorded->json('data.stage'));
+        $this->assertSame('police_report', $recorded->json('data.stage'), 'and it has not moved');
 
         $verified = $this->postJson("/api/accidents/$id/police/verify")->assertOk();
 
         $this->assertSame(AccidentCase::POLICE_VERIFIED, $verified->json('data.police.status'));
         $this->assertTrue($verified->json('data.police.satisfied'));
-        $this->assertSame(AccidentCase::STAGE_ASSESSMENT, $verified->json('data.stage'));
         $this->assertNotNull($verified->json('data.police.verified_by_name'), 'a verification carries a name');
+        // STILL ON THE SAME RUNG — but now free to leave it. Verifying used to teleport the case to a
+        // hard-coded next stage, which was a statement about one arrangement and would be a lie the
+        // moment somebody reordered the list. It opens the gate; moving is a separate, deliberate act.
+        $this->assertSame('police_report', $verified->json('data.stage'));
+        $this->assertTrue($verified->json('data.workflow.can_advance'));
     }
 
-    /** The gate is real: nothing walks past an unanswered documentation question. */
-    public function test_a_case_cannot_advance_past_the_police_stage_undocumented(): void
+    /**
+     * THE GATE STILL HOLDS — and it now belongs to the stage rather than to its position.
+     *
+     * The single most important test of the refactor. The protection that used to be an inline check
+     * comparing a stage NAME is now a row in the configuration, and it has to refuse just as hard.
+     */
+    public function test_a_case_cannot_leave_the_police_stage_undocumented(): void
     {
         [$vehicle] = $this->rentedVehicle();
         $id = $this->idOf($this->report($vehicle));
+        $this->advanceTo($id, 'police_report');
 
-        $this->postJson("/api/accidents/$id/advance", ['stage' => AccidentCase::STAGE_INSURANCE])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('police_status');
+        $res = $this->postJson("/api/accidents/$id/advance")->assertStatus(422);
+        $this->assertStringContainsString('police report',
+            strtolower($res->json('message') . json_encode($res->json('errors'))));
+
+        $this->assertSame('police_report', $this->getJson("/api/accidents/$id")->json('data.stage'),
+            'and the case has not moved');
     }
 
     /** …and the exception is allowed, attributed, and permanently visible. */
@@ -373,8 +427,20 @@ class AccidentCaseWorkflowTest extends FoundationTestCase
         $this->assertSame($id, (int) $ticket->fresh()->accident_case_id);
 
         $show = $this->getJson("/api/accidents/$id")->assertOk();
-        $this->assertSame($ticket->id, $show->json('data.repairs.0.id'));
-        $this->assertSame('/maintenance-workflow/' . $ticket->id, $show->json('data.repairs.0.url'));
+
+        // The case now carries TWO tickets and they mean different things: the fenced accident-cycle
+        // ticket that put the car on the maintenance board when it was reported, and this one — a real
+        // repair somebody authorised. Only the second is a repair, and the payload says so.
+        $repairs = collect($show->json('data.repairs'));
+        $this->assertSame([$ticket->id], $repairs->pluck('id')->all(),
+            'the fenced cycle ticket is not a repair');
+        $this->assertSame('/maintenance-workflow/' . $ticket->id, $repairs->first()['url']);
+
+        $cycle = $show->json('data.cycle_ticket');
+        $this->assertNotNull($cycle, 'the car is on the maintenance board');
+        $this->assertNotSame($ticket->id, $cycle['id']);
+        $this->assertSame(Maintenance::WF_ACCIDENT_CYCLE,
+            Maintenance::find($cycle['id'])->workflow_status);
     }
 
     /**
@@ -386,7 +452,7 @@ class AccidentCaseWorkflowTest extends FoundationTestCase
     {
         $vehicle = $this->makeVehicle(['status' => 'ready', 'operational_status' => 'available']);
         $id = $this->idOf($this->report($vehicle));
-        $this->postJson("/api/accidents/$id/damage", ['area_label' => 'Rear bumper'])->assertCreated();
+        $this->postJson("/api/accidents/$id/damage", ['damage_catalog_id' => $this->aDamageType()])->assertCreated();
 
         $res = $this->postJson("/api/accidents/$id/repair", ['note' => 'Body shop work.'])->assertCreated();
 
@@ -426,7 +492,8 @@ class AccidentCaseWorkflowTest extends FoundationTestCase
 
         $this->assertContains(VehicleLogEvent::EVENT_ACCIDENT_REPORTED, $rows);
         $this->assertContains(VehicleLogEvent::EVENT_ACCIDENT_CONTEXT_CAPTURED, $rows);
-        $this->assertContains(VehicleLogEvent::EVENT_ACCIDENT_STAGE_CHANGED, $rows);
+        // No stage-change row at birth any more: a case is BORN on the first rung rather than being
+        // reported and then immediately shunted, which is one fewer fictional event in the history.
 
         // The car's timeline endpoint carries them, with the link that opens the case.
         $feed = $this->getJson("/api/Vehicle/{$vehicle->id}/activity")->assertOk();
@@ -494,7 +561,9 @@ class AccidentCaseWorkflowTest extends FoundationTestCase
             'reason' => 'The insurer came back six months later and disputed the settlement.',
         ])->assertOk();
 
-        $this->assertSame(AccidentCase::STAGE_SETTLEMENT, $res->json('data.stage'));
+        // Back one rung, whatever the office called it — not to a hard-coded "settlement".
+        $this->assertFalse($res->json('data.is_closed'), 'the case is open again');
+        $this->assertNotSame('closed', $res->json('data.stage'));
         $this->assertDatabaseHas('vehicle_log_events', [
             'accident_case_id' => $id, 'event_type' => VehicleLogEvent::EVENT_ACCIDENT_REOPENED,
         ]);
@@ -578,13 +647,14 @@ class AccidentCaseWorkflowTest extends FoundationTestCase
             ->assertStatus(422)->assertJsonValidationErrors('damage_items');
 
         $this->postJson("/api/accidents/$id/damage", [
-            'area_label' => 'Front bumper', 'severity' => 'moderate', 'estimated_cost' => 1800,
+            'damage_catalog_id' => $this->aDamageType(), 'severity' => 'moderate', 'estimated_cost' => 1800,
         ])->assertCreated();
 
         $res = $this->postJson("/api/accidents/$id/assess", ['drivable' => true])->assertOk();
 
         $this->assertNotNull($res->json('data.assessed_at'));
         $this->assertNotNull($res->json('data.assessed_by_name'));
-        $this->assertSame(AccidentCase::STAGE_LIABILITY, $res->json('data.stage'));
+        // The assessment records a FACT. It no longer teleports the case to a hard-coded rung — where
+        // it goes next is the configuration's answer, given when somebody advances it.
     }
 }

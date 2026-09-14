@@ -79,6 +79,14 @@ class RolesAndPermissionsSeeder extends Seeder
         'accidents.financials',              // estimates, approvals, settlements
         'accidents.close',                   // close the case
         'accidents.override',                // waive the police report; reopen a closed case. Reason mandatory.
+        // Moving a case BACKWARDS along its ladder — reopening a stage usually means an earlier
+        // answer was wrong, so it sits above ordinary case work rather than inside it.
+        'accidents.workflow.rewind',
+        // CONFIGURING the ladder itself: add, rename, reorder, disable stages and choose their gates.
+        // Deliberately the narrowest permission in the feature — this is the one that changes the
+        // process for every future accident, and it belongs to whoever owns the process, not to
+        // everybody who works a case.
+        'accidents.workflow.configure',
         'components.view',                   // Asset Layer: see a car's installed components / history / warehouse inventory
         'components.manage',                 // Asset Layer: install / remove / transfer / dispose components + curate the catalog
         'components.backfill',               // Asset Layer: run the legacy-data backfill (super-admin/admin only)
@@ -138,7 +146,7 @@ class RolesAndPermissionsSeeder extends Seeder
             // a waived police report and for a settlement somebody reopened.
             'accidents.view', 'accidents.report', 'accidents.manage', 'accidents.police.verify',
             'accidents.liability', 'accidents.insurance', 'accidents.financials', 'accidents.close',
-            'accidents.override',
+            'accidents.override', 'accidents.workflow.rewind', 'accidents.workflow.configure',
             'components.view', 'components.manage', // Asset Layer: full operational control includes asset custody
             'registration.view', 'registration.manage',
             // The full financial set, for the same reason the labor and warranty overrides sit here: the
@@ -196,6 +204,7 @@ class RolesAndPermissionsSeeder extends Seeder
             // workshop side is not the side that uploaded it. Not liability and not the money — a
             // repair estimate is not a verdict on who pays for it.
             'accidents.view', 'accidents.report', 'accidents.manage', 'accidents.police.verify',
+            'accidents.workflow.rewind',
             'components.view', 'components.manage', // Asset Layer: the workshop-manager role owns install/remove/transfer
             'logistics.view',
             'registration.view', 'insights.view', 'intelligence.view', 'dashboard.view',

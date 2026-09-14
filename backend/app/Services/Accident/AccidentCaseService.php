@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleDocument;
 use App\Models\VehicleLogEvent;
+use App\Services\Accident\AccidentWorkflowService;
 use App\Services\MaintenanceWorkflowService;
 use App\Services\NotificationScanner;
 use App\Services\VehicleLogService;
@@ -61,6 +62,7 @@ class AccidentCaseService
         private NotificationScanner $notifier,
         private AccidentContextResolver $context,
         private MaintenanceWorkflowService $workflow,
+        private AccidentWorkflowService $stages,
     ) {}
 
     // ══ OPENING ═══════════════════════════════════════════════════════════════════════════════
@@ -130,7 +132,9 @@ class AccidentCaseService
             }
 
             $case->reference        = $this->nextReference($occurredAt);
-            $case->stage            = AccidentCase::STAGE_REPORTED;
+            // WHERE A CASE IS BORN comes from the published workflow, not from a constant — so an
+            // office that renames or replaces the first rung does not need a deploy.
+            $this->stages->startCase($case);
             $case->reported_by      = $actor->id;
             $case->reported_by_name = $actor->name ?: $actor->email;
             $case->reported_at      = Carbon::now();
@@ -168,19 +172,17 @@ class AccidentCaseService
                 $this->addDamageItem($case, $item, $actor, notify: false);
             }
 
-            // Straight to the gate. A yard scrape with nobody driving has no police report to chase,
-            // so it skips to assessment — but that is a NAMED exception in one place, not a silent
-            // "the field is empty so let's not ask".
-            $needsPolice = ! in_array($case->responsible_party_type, [
-                AccidentCase::PARTY_WORKSHOP, AccidentCase::PARTY_PARKED,
-            ], true);
+            // ON THE MAINTENANCE BOARD FROM MINUTE ONE, in a FENCED lane. The workshop needs to know a
+            // car is out of the running long before anybody has authorised work on it — a car that only
+            // appears once the insurer finishes is a car the board lied about for a fortnight. The
+            // ticket grounds nothing, alerts no garage and commits to no repair; it is the accident file
+            // made visible where the fleet is actually run. @see Maintenance::WF_ACCIDENT_CYCLE
+            $this->workflow->openAccidentCycle($case, $actor);
 
-            $this->moveStage(
-                $case,
-                $needsPolice ? AccidentCase::STAGE_AWAITING_POLICE : AccidentCase::STAGE_ASSESSMENT,
-                $actor,
-                $needsPolice ? 'Police report required' : 'No police report expected for this context',
-            );
+            // The case now sits on the configured first rung. Whether a police report is expected,
+            // and at which point, is a property of the workflow the office published — not a branch
+            // in this method. A yard scrape skips it by WAIVING it, which is recorded, rather than by
+            // a rule here quietly deciding the paperwork was never needed.
 
             $this->tell(AccidentResponsibility::accidentDesk(), $case, 'accident_reported',
                 $case->wasWithCustomer() ? 'critical' : 'warning',
@@ -262,7 +264,7 @@ class AccidentCaseService
         $item = $case->damageItems()->create([
             'damage_catalog_id'    => $data['damage_catalog_id'] ?? null,
             'vehicle_location_id'  => $data['vehicle_location_id'] ?? null,
-            'area_label'           => $data['area_label'],
+            'area_label'           => $this->damageLabel($data),
             'severity'             => $data['severity'] ?? AccidentDamageItem::SEVERITY_UNKNOWN,
             'description'          => $data['description'] ?? null,
             'requires_replacement' => $data['requires_replacement'] ?? null,
@@ -280,6 +282,37 @@ class AccidentCaseService
             ]);
 
         return $item;
+    }
+
+    /**
+     * THE DISPLAY NAME, DERIVED FROM THE VOCABULARY — never typed.
+     *
+     * `area_label` is a denormalised convenience so every list, timeline line and export can render
+     * a damage item without joining two catalogs. It is NOT the record: `damage_catalog_id` and
+     * `vehicle_location_id` are, and they are what "how much did bumper damage cost us?" groups by.
+     *
+     * Reading it off the catalogs is what keeps the two in step. The moment a person can type this
+     * field, "Front Bumper", "front bumper " and "f.bumper" become three areas, the grouping breaks,
+     * and nothing anywhere says it broke — which is exactly the state this method exists to prevent.
+     *
+     * A label passed in explicitly is honoured ONLY as a last resort, for rows that predate the
+     * picker or arrive from an importer with no catalog match.
+     */
+    private function damageLabel(array $data): string
+    {
+        $catalog  = ! empty($data['damage_catalog_id'])
+            ? \App\Models\DamageCatalog::find($data['damage_catalog_id']) : null;
+        $location = ! empty($data['vehicle_location_id'])
+            ? \App\Models\VehicleLocation::find($data['vehicle_location_id']) : null;
+
+        // "Bumper Damage — Front Bumper" reads as one fact. The dash rather than a comma because the
+        // second half qualifies the first; they are not two things that were damaged.
+        $parts = array_filter([$catalog?->name, $location?->name]);
+        if ($parts !== []) {
+            return implode(' — ', $parts);
+        }
+
+        return trim((string) ($data['area_label'] ?? '')) ?: 'Unspecified damage';
     }
 
     /** Remove a damage item entered in error. The timeline keeps the row that says it was there. */
@@ -331,11 +364,10 @@ class AccidentCaseService
                 'estimate' => (float) $items->sum('estimated_cost'),
             ]);
 
-        if ($case->stage === AccidentCase::STAGE_ASSESSMENT || $case->stage === AccidentCase::STAGE_AWAITING_POLICE) {
-            $this->moveStage($case, AccidentCase::STAGE_LIABILITY, $actor, 'Assessment complete');
-            $this->tell(AccidentResponsibility::liabilityAuthority(), $case, 'accident_liability_due', 'warning',
-                'Liability decision needed', $this->sentence($case, 'The damage is assessed. Somebody has to decide whose fault it was.'), $actor);
-        }
+        // The damage is recorded; whether that satisfies the current rung's gate is the workflow's
+        // question, asked when somebody presses Advance.
+        $this->tell(AccidentResponsibility::liabilityAuthority(), $case, 'accident_liability_due', 'warning',
+            'Damage assessed', $this->sentence($case, 'The damage is assessed and the case is ready to move on.'), $actor);
 
         return $case->fresh();
     }
@@ -417,10 +449,6 @@ class AccidentCaseService
                 'note'            => $note,
             ]);
 
-        if ($case->stage === AccidentCase::STAGE_AWAITING_POLICE) {
-            $this->moveStage($case, AccidentCase::STAGE_ASSESSMENT, $actor, 'Police report verified');
-        }
-
         return $case->fresh();
     }
 
@@ -468,10 +496,6 @@ class AccidentCaseService
         $this->tell(AccidentResponsibility::accidentDesk(), $case, 'accident_police_bypassed', 'warning',
             'Police report waived on ' . $case->reference,
             $this->sentence($case, $case->police_bypassed_by_name . ' waived the police report: ' . $reason), $actor);
-
-        if ($case->stage === AccidentCase::STAGE_AWAITING_POLICE) {
-            $this->moveStage($case, AccidentCase::STAGE_ASSESSMENT, $actor, 'Police report waived');
-        }
 
         return $case->fresh();
     }
@@ -532,10 +556,6 @@ class AccidentCaseService
                 // a first one — it usually means an insurer or a court disagreed with us.
                 'revised'    => $previous['status'] !== AccidentCase::LIABILITY_PENDING,
             ]);
-
-        if ($case->stage === AccidentCase::STAGE_LIABILITY) {
-            $this->moveStage($case, AccidentCase::STAGE_INSURANCE, $actor, 'Liability decided');
-        }
 
         return $case->fresh();
     }
@@ -601,11 +621,6 @@ class AccidentCaseService
             $this->tell(AccidentResponsibility::financeAuthority(), $case, 'accident_claim_answered', 'warning',
                 'Insurer answered on ' . $case->reference,
                 $this->sentence($case, $this->claimSentence($case) . ' Record what they will actually pay.'), $actor);
-        }
-
-        if ($case->stage === AccidentCase::STAGE_INSURANCE
-            && in_array($case->claim_status, [AccidentCase::CLAIM_APPROVED, AccidentCase::CLAIM_PARTIALLY_APPROVED, AccidentCase::CLAIM_REJECTED], true)) {
-            $this->moveStage($case, AccidentCase::STAGE_REPAIR, $actor, 'Insurer answered');
         }
 
         return $case->fresh();
@@ -740,10 +755,6 @@ class AccidentCaseService
                 'workflow_status' => $ticket->workflow_status,
             ], ['maintenance_id' => $ticket->id]);
 
-        if ($case->stage === AccidentCase::STAGE_INSURANCE || $case->stage === AccidentCase::STAGE_LIABILITY) {
-            $this->moveStage($case, AccidentCase::STAGE_REPAIR, $actor, 'Repair raised');
-        }
-
         return $ticket;
     }
 
@@ -792,64 +803,95 @@ class AccidentCaseService
     // ══ THE LADDER ════════════════════════════════════════════════════════════════════════════
 
     /**
-     * Move a case along by hand. FORWARD ONLY — a case that has been to the insurer does not go back
-     * to "reported", and allowing it would make the timeline unreadable.
+     * MOVE THE CASE ON — to whatever the configured workflow says comes next.
      *
-     * The documentation gate lives here: nothing may pass `awaiting_police` while the police report
-     * is neither verified nor consciously waived. That is the one hard rule on the ladder, and the
-     * escape hatch is bypassPoliceReport() — an authorised, reasoned, permanently-recorded exception
-     * rather than a quiet skip.
+     * There is no stage name in this method and no position arithmetic. The engine reads the case's
+     * own pinned workflow, evaluates the gate attached to the rung it is standing on, and moves it to
+     * the next rung that applies. Reorder the process in the UI and this method's behaviour changes
+     * with it, which is the entire point.
+     *
+     * The old version of this method compared stage NAMES and carried the police gate inline. That
+     * meant reordering would have silently switched the guardrail off — the check would still have
+     * been looking at position two while the police report had moved to position five.
+     *
+     * @see AccidentWorkflowService::advance()
      */
-    public function advance(AccidentCase $case, string $stage, User $actor, ?string $note = null): AccidentCase
+    public function advance(AccidentCase $case, User $actor, ?string $note = null): AccidentCase
     {
         $this->assertOpen($case);
 
-        if (! in_array($stage, AccidentCase::STAGES, true)) {
-            throw ValidationException::withMessages(['stage' => 'Unknown accident stage.']);
-        }
-        if ($stage === AccidentCase::STAGE_CLOSED) {
-            throw ValidationException::withMessages([
-                'stage' => 'Close the case through the close action — closing records who did it and why.',
-            ]);
-        }
-
-        $from = array_search($case->stage, AccidentCase::STAGES, true);
-        $to   = array_search($stage, AccidentCase::STAGES, true);
-        if ($to <= $from) {
-            throw ValidationException::withMessages([
-                'stage' => 'An accident case only moves forward. It is already at "' . $case->stage . '".',
-            ]);
-        }
-
-        // THE GATE. Leaving the police stage means the paperwork question has an answer.
-        if ($case->stage === AccidentCase::STAGE_AWAITING_POLICE && ! $case->policeSatisfied()) {
-            throw ValidationException::withMessages([
-                'police_status' => 'The police report is still outstanding. Verify it, or waive it with a reason — this case cannot move on with the question unanswered.',
-            ]);
-        }
-
-        return $this->moveStage($case, $stage, $actor, $note)->fresh();
+        return $this->syncCycle($this->stages->advance($case, $actor, $note), $actor, $note);
     }
 
-    /** The stage write itself + its timeline row. Used by advance() and by the automatic steps. */
-    private function moveStage(AccidentCase $case, string $stage, User $actor, ?string $note = null): AccidentCase
+    /**
+     * KEEP THE MAINTENANCE BOARD HONEST after the case moves.
+     *
+     * The accident case is the single source of truth for where a crashed car is up to; the fenced
+     * maintenance ticket is how the workshop SEES that, and it carries no second opinion. This method is
+     * the one-way valve between them: the case moves, and if it has now reached a rung that means repair
+     * is authorised, the ticket leaves the fence and joins the ordinary maintenance lifecycle.
+     *
+     * Which rung that is comes from the CONFIGURATION — the stage whose requirement is `repair_linked` —
+     * not from a stage called "repair". An office that renames it, moves it or inserts two approvals in
+     * front of it keeps a working hand-off, which is the entire point of the change.
+     *
+     * Deliberately one-way. Rewinding a case behind the repair rung does NOT drag the ticket back into
+     * the fence: by then a garage may hold the car, and an accident file must not be able to cancel work
+     * that is already under way. The way to stop a repair is to stop the repair.
+     */
+    private function syncCycle(AccidentCase $case, User $actor, ?string $note = null): AccidentCase
     {
-        if ($case->stage === $stage) {
+        $stage = $this->stages->currentStage($case);
+        if (! $stage || $stage->requirement_key !== 'repair_linked') {
             return $case;
         }
 
-        $previous = $case->stage;
-        $case->stage = $stage;
-        $case->save();
+        $ticket = $case->repairs()
+            ->where('workflow_status', Maintenance::WF_ACCIDENT_CYCLE)
+            ->orderBy('id')->first();
 
-        $this->audit($case, VehicleLogEvent::EVENT_ACCIDENT_STAGE_CHANGED, $actor,
-            'Accident case moved to ' . str_replace('_', ' ', $stage), [
-                'previous_stage' => $previous,
-                'new_stage'      => $stage,
-                'note'           => $note,
-            ]);
+        if ($ticket) {
+            // On-site when the car still drives and nothing had to be towed — a scraped mirror does not
+            // need a garage slot. Anything else goes to the Supervisor's dispatch queue.
+            $onSite = $case->drivable === true && ! $case->towing_required;
+            $this->workflow->authoriseAccidentRepair($ticket, $actor, $onSite, $note);
+        }
 
-        return $case;
+        return $case->fresh();
+    }
+
+    /**
+     * Jump forward to a named rung, skipping OPTIONAL stages only. The gate on the stage being left
+     * still applies — skipping ahead must never skip a rule.
+     */
+    public function jumpTo(AccidentCase $case, string $stageKey, User $actor, ?string $note = null): AccidentCase
+    {
+        $this->assertOpen($case);
+
+        return $this->syncCycle($this->stages->jumpTo($case, $stageKey, $actor, $note), $actor, $note);
+    }
+
+    /**
+     * GO BACK. Authorised at the route, reasoned here, and recorded as its own kind of movement —
+     * a case moving backwards is nearly always somebody discovering an earlier answer was wrong,
+     * and that is exactly what the history needs to say.
+     */
+    public function rewind(AccidentCase $case, string $stageKey, string $reason, User $actor): AccidentCase
+    {
+        $this->assertOpen($case);
+
+        return $this->stages->rewind($case, $stageKey, $reason, $actor);
+    }
+
+    /**
+     * Mark a stage whose gate is `manual_confirmation` as done — the mechanism that lets a stage the
+     * office invented last week work with no migration behind it.
+     */
+    public function confirmStage(AccidentCase $case, string $stageKey, User $actor, ?string $note = null)
+    {
+        $this->assertOpen($case);
+
+        return $this->stages->confirmStage($case, $stageKey, $actor, $note);
     }
 
     /**
@@ -883,7 +925,10 @@ class AccidentCaseService
 
         $breakdown = $case->financialBreakdown();
 
-        $case->stage          = AccidentCase::STAGE_CLOSED;
+        // The TERMINAL rung of this case's own workflow — whatever the office called it. Falls back
+        // to the legacy key only for a case whose workflow no longer declares an ending.
+        $case->stage          = $this->stages->ladderFor($case)
+            ->last(fn ($s) => $s->is_terminal)?->key ?? 'closed';
         $case->closed_at      = Carbon::now();
         $case->closed_by      = $actor->id;
         $case->closed_by_name = $actor->name ?: $actor->email;
@@ -901,6 +946,16 @@ class AccidentCaseService
                 'outstanding' => round($breakdown['actual'] - $breakdown['paid'], 2),
                 'note'        => $note,
             ]);
+
+        // NO GHOST ROWS. A case that ends without a repair ever being authorised — written off, fixed by
+        // the other party's insurer, judged not worth doing — leaves a fenced ticket on the maintenance
+        // board that nobody can action and nobody can clear. Close it out with the case.
+        //
+        // Only the FENCED one. A ticket that already left for a garage is a real repair with its own
+        // ending, and closing the accident file must not reach into the workshop and cancel it.
+        foreach ($case->repairs()->where('workflow_status', Maintenance::WF_ACCIDENT_CYCLE)->get() as $fenced) {
+            $this->workflow->closeAccidentCycle($fenced, $actor, $note ?: 'Accident case closed — no repair was authorised.');
+        }
 
         return $case->fresh();
     }
@@ -921,9 +976,18 @@ class AccidentCaseService
             throw ValidationException::withMessages(['reason' => 'Say why the case is being reopened.']);
         }
 
-        // Back to settlement, not to the beginning: what is being reopened is almost always the
-        // money, and dropping a repaired car back to "reported" would misstate its whole history.
-        $case->stage         = AccidentCase::STAGE_SETTLEMENT;
+        // BACK ONE RUNG, not back to the beginning. What is being reopened is almost always the last
+        // thing that happened — the money, usually — and dropping a repaired car to the first stage
+        // would misstate its whole history.
+        //
+        // Which rung that is comes from the case's own workflow rather than a named constant, so an
+        // office that renamed or removed "Settlement" still gets a sensible landing place.
+        $closedStage = $this->stages->currentStage($case);
+        $previous    = $this->stages->ladderFor($case)
+            ->filter(fn ($s) => ! $s->is_terminal && (! $closedStage || $s->position < $closedStage->position))
+            ->last();
+
+        $case->stage         = $previous?->key ?? $case->stage;
         $case->reopened_at   = Carbon::now();
         $case->reopened_by   = $actor->id;
         $case->reopen_reason = $reason;
@@ -933,7 +997,7 @@ class AccidentCaseService
         $this->audit($case, VehicleLogEvent::EVENT_ACCIDENT_REOPENED, $actor,
             'Accident case reopened by ' . ($actor->name ?: $actor->email), [
                 'reason'        => $reason,
-                'previous_stage' => AccidentCase::STAGE_CLOSED,
+                'previous_stage' => $closedStage?->key,
                 'new_stage'     => $case->stage,
                 'closed_by'     => $case->closed_by_name,
             ]);

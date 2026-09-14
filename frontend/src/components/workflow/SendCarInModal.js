@@ -348,8 +348,16 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     occurred_at: '', location: '', accident_type: '',
     drivable: null, towing_required: null,
     other_party_involved: false, other_party_name: '', other_party_plate: '',
-    damage: '',   // free text, split into damage items on submit
+    // The damage types somebody can already SEE, picked from the catalog rather than typed. It used
+    // to be a comma-separated box, which meant "front bumper" / "Front Bumper" / "f. bumper" were
+    // three different areas the moment three people filed a report — countable in the schema and
+    // uncountable in practice. WHERE on the car is deliberately not asked here: at the roadside the
+    // damage type is answerable and the precise panel often is not, and the assessment stage exists
+    // to add it. @see AccidentDamagePicker
+    damage_ids: [],
   });
+  // The damage vocabulary, off the same /accidents/options call that produces the context preview.
+  const [accVocab, setAccVocab] = useState(null);
   // Who the SERVER says has the car — read-only, and shown while they are still typing rather than
   // sprung on them after they submit. What is actually frozen onto the case is resolved again
   // server-side at report time; this is a courtesy, not the record.
@@ -441,7 +449,11 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
     const params = new URLSearchParams({ vehicle_id: String(Number(vehicleId)) });
     if (acc.occurred_at) params.set('occurred_at', acc.occurred_at);
     api.get(`/accidents/options?${params.toString()}`)
-      .then((r) => { if (alive) setAccContext(r?.data?.data?.context_preview || null); })
+      .then((r) => {
+        if (!alive) return;
+        setAccContext(r?.data?.data?.context_preview || null);
+        setAccVocab(r?.data?.data || null);
+      })
       .catch(() => { if (alive) setAccContext(null); });
     return () => { alive = false; };
   }, [isAccident, vehicleId, acc.occurred_at]);
@@ -723,9 +735,7 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
           // The areas somebody could already see, one item each — countable from the first minute,
           // rather than a paragraph nobody can group by. Anything they cannot name yet is added at
           // the assessment stage by whoever actually looks at the car.
-          damage_items: acc.damage
-            .split(',').map((s) => s.trim()).filter(Boolean).slice(0, 30)
-            .map((area) => ({ area_label: area })),
+          damage_items: acc.damage_ids.slice(0, 30).map((id) => ({ damage_catalog_id: id })),
         });
         const created = resp?.data?.data;
         onDone?.(t('Accident reported — the case is open'));
@@ -1458,14 +1468,56 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
                   <option key={k} value={k}>{t(k.replace(/_/g, ' '))}</option>
                 ))}
               </Select>
-              <Input
-                label={t('Visible damage')}
-                hint={t('Separate areas with commas')}
-                value={acc.damage}
-                onChange={(e) => setAcc((a) => ({ ...a, damage: e.target.value }))}
-                placeholder={t('Front bumper, left door')}
-              />
             </div>
+
+            {/* ── VISIBLE DAMAGE — tapped, not typed ────────────────────────────────────────────
+                Optional: a person beside a crashed car may not be able to itemise it, and the
+                assessment stage exists for exactly that. But anything they DO record is named from
+                the catalog, so an accident's damage is countable from the first minute. */}
+            {(accVocab?.damage_groups || []).length > 0 && (
+              <div>
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <span className="text-sm font-medium text-slate-700">{t('Visible damage')}</span>
+                  <span className="text-[11px] text-slate-400">
+                    {acc.damage_ids.length > 0
+                      ? t('{n} selected', { n: acc.damage_ids.length })
+                      : t('Optional — tap what you can see')}
+                  </span>
+                </div>
+                <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2">
+                  {accVocab.damage_groups.map((g) => (
+                    <div key={g.key} className="mb-2 last:mb-0">
+                      <p className="px-1 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        {(lang === 'ar' && g.label_ar) || g.label}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {g.items.map((i) => {
+                          const on = acc.damage_ids.includes(i.id);
+                          return (
+                            <button
+                              key={i.id}
+                              type="button"
+                              aria-pressed={on}
+                              onClick={() => setAcc((a) => ({
+                                ...a,
+                                damage_ids: on
+                                  ? a.damage_ids.filter((x) => x !== i.id)
+                                  : [...a.damage_ids, i.id],
+                              }))}
+                              className={`rounded-full px-3 py-1 text-xs font-medium ring-1 transition ${on
+                                ? 'bg-rose-600 text-white ring-rose-600'
+                                : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}
+                            >
+                              {(lang === 'ar' && i.name_ar) || i.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* CAN IT BE DRIVEN — three answers, not two. "Not assessed" is a different fact from
                 "no", and a checkbox would collapse them into the same thing. */}

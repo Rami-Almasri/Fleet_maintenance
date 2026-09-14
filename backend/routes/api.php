@@ -348,9 +348,48 @@ Route::middleware('auth:sanctum')->prefix('accidents')->controller(\App\Http\Con
     Route::post('/{case}/repair', 'repair')
         ->middleware(['permission:accidents.manage', 'permission:maintenance.initiate|maintenance.manage']);
 
+    // MOVING ALONG THE CONFIGURED LADDER. Advancing is ordinary case work; going BACKWARDS is a step
+    // above — reopening a stage usually means an earlier answer was wrong, and that deserves the same
+    // bar as waiving a police report. Confirming a manual stage is the generic "somebody did this".
     Route::post('/{case}/advance', 'advance')->middleware('permission:accidents.manage');
+    Route::post('/{case}/confirm-stage', 'confirmStage')->middleware('permission:accidents.manage');
+    Route::post('/{case}/rewind', 'rewind')->middleware('permission:accidents.workflow.rewind');
     Route::post('/{case}/close', 'close')->middleware('permission:accidents.close');
     Route::post('/{case}/reopen', 'reopen')->middleware('permission:accidents.override');
+});
+
+// ── CONFIGURING THE ACCIDENT PROCESS ITSELF ──────────────────────────────────────────────────────
+//
+// Every route here is gated on `accidents.workflow.configure` — deliberately a DIFFERENT permission
+// from `accidents.manage`, and held by far fewer people. Working a case and redesigning the process
+// every case is worked through are not the same job: the first is daily operational work, the second
+// changes what the system will and will not allow for every crash from then on. Somebody who can
+// record a police report must not thereby be able to delete the stage that demands one.
+//
+// READING the configuration rides with `accidents.view`, because the case screen has to render the
+// ladder it is standing on — and a page that cannot name its own stages is useless.
+//
+// @see \App\Http\Controllers\AccidentWorkflowConfigController
+Route::middleware('auth:sanctum')->prefix('accident-workflow')->controller(\App\Http\Controllers\AccidentWorkflowConfigController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:accidents.view');
+
+    Route::middleware('permission:accidents.workflow.configure')->group(function () {
+        Route::post('/draft', 'openDraft');
+        Route::delete('/{workflow}/draft', 'discardDraft');
+
+        Route::post('/{workflow}/stages', 'addStage');
+        Route::patch('/stages/{stage}', 'updateStage');
+        Route::delete('/stages/{stage}', 'deleteStage');
+
+        // The drag-and-drop save, and the two flags that cannot be set by dragging.
+        Route::post('/{workflow}/reorder', 'reorder');
+        Route::post('/{workflow}/initial', 'setInitial');
+        Route::post('/{workflow}/terminal', 'setTerminal');
+
+        // A dry run of publish — same rules, no commitment. Called on every edit.
+        Route::get('/{workflow}/validate', 'validateDraft');
+        Route::post('/{workflow}/publish', 'publish');
+    });
 });
 
 // The accident dossier. Reuses `vehicle_documents` — there is no second media system, and there must

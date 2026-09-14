@@ -274,6 +274,14 @@ class VehicleLogEvent extends Model
     public const EVENT_ACCIDENT_REPAIR_LINKED   = 'accident_repair_linked';    // a maintenance ticket was parented here
     public const EVENT_ACCIDENT_DOCUMENT_ADDED  = 'accident_document_added';   // a file joined the dossier
     public const EVENT_ACCIDENT_STAGE_CHANGED   = 'accident_stage_changed';    // the case moved along the ladder
+    /**
+     * A stage whose gate is `manual_confirmation` was marked done by a person.
+     *
+     * Its own type rather than a note on the stage change, because the two are different acts and
+     * often different people: confirming the recovery truck is booked is not the same as moving the
+     * case on, and a stage can be confirmed long before anybody advances it.
+     */
+    public const EVENT_ACCIDENT_STAGE_CONFIRMED = 'accident_stage_confirmed';
     public const EVENT_ACCIDENT_CLOSED          = 'accident_closed';
     public const EVENT_ACCIDENT_REOPENED        = 'accident_reopened';         // authorised, with a reason
     /**
@@ -408,6 +416,7 @@ class VehicleLogEvent extends Model
         self::EVENT_ACCIDENT_REPAIR_LINKED       => Maintenance::FINDING_INSPECTOR,
         self::EVENT_ACCIDENT_DOCUMENT_ADDED      => Maintenance::FINDING_INSPECTOR,
         self::EVENT_ACCIDENT_STAGE_CHANGED       => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_ACCIDENT_STAGE_CONFIRMED     => Maintenance::FINDING_INSPECTOR,
         self::EVENT_ACCIDENT_CLOSED              => Maintenance::FINDING_INSPECTOR,
         self::EVENT_ACCIDENT_REOPENED            => Maintenance::FINDING_INSPECTOR,
         self::EVENT_ACCIDENT_CUSTOMER_CHARGED    => Maintenance::FINDING_INSPECTOR,
@@ -423,6 +432,7 @@ class VehicleLogEvent extends Model
         self::EVENT_ACCIDENT_LIABILITY_SET, self::EVENT_ACCIDENT_CLAIM_UPDATED,
         self::EVENT_ACCIDENT_FINANCIAL_RECORDED, self::EVENT_ACCIDENT_REPAIR_LINKED,
         self::EVENT_ACCIDENT_DOCUMENT_ADDED, self::EVENT_ACCIDENT_STAGE_CHANGED,
+        self::EVENT_ACCIDENT_STAGE_CONFIRMED,
         self::EVENT_ACCIDENT_CLOSED, self::EVENT_ACCIDENT_REOPENED,
         self::EVENT_ACCIDENT_CUSTOMER_CHARGED, self::EVENT_ACCIDENT_CHARGE_REVERSED,
     ];
