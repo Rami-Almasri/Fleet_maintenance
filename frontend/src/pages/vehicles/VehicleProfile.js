@@ -29,7 +29,7 @@ import MulkiyaCard from '../../components/vehicles/MulkiyaCard';
 import VehicleWarrantyCard from '../../components/warranties/VehicleWarrantyCard';
 import VehicleServiceContractCard from '../../components/warranties/VehicleServiceContractCard';
 import VehicleCostIntelligence from './VehicleCostIntelligence';
-import { aed2, fmtDate, fmtClock, fmtSeconds, num } from '../../lib/format';
+import { aed2, fmtDate, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
 import { faultTagSegments, isServiceOnlyVisit, visitsForFault } from '../../lib/faultCategories';
 import { useI18n } from '../../i18n/I18nContext';
@@ -136,133 +136,6 @@ const WF_STATUS_META = {
   complaint_resolved:     { label: 'Complaint Resolved', tone: 'green',  icon: 'IN' },
 };
 
-// Humanise a stage duration (seconds) into the two most significant units: "2d 3h", "4h 12m",
-// "35m", "48s" — via the shared, locale-aware fmtSeconds. A running/open stage passes null and
-// renders as a live ticking-style "so far" label upstream, so here we only format finished spans.
-const fmtDuration = (seconds) => (seconds == null ? null : fmtSeconds(seconds));
-
-// Resolve a stage's display label + tone from its workflow_status, falling back to the legacy
-// OUT/IN/Test vocabulary for the handful of rows that carry only an event_type.
-function stageMeta(stg) {
-  const wf = stg.workflow_status ? WF_STATUS_META[stg.workflow_status] : null;
-  const legacyStage = wfStage(stg.event_type);
-  const label = wf?.label || legacyStage;
-  const tone = wf?.tone || EVENT_TONE[legacyStage] || 'gray';
-  return { label, tone, style: EVENT_STYLE[tone] || EVENT_STYLE.gray };
-}
-
-// Workflow states where the car is physically AT the workshop — the "in maintenance" window used to
-// split a ticket's real shop time out of its full open-to-close lifespan. Mirrors the backend's
-// Maintenance::WF_AT_GARAGE (under_repair · repair_review · ready_for_pickup), minus the terminal
-// `closed` (a finished ticket contributes no ongoing shop time).
-const SHOP_STATES = new Set(['under_repair', 'repair_review', 'ready_for_pickup']);
-
-// One car's Workflow Journeys — a bar-meter PER maintenance ticket showing every stage the car
-// passed through and how long it sat in each. Reads the profile's `workflow_journeys` payload
-// (reshaped from the same VehicleLogEvent trail the Timeline tab shows as a flat feed). The point is
-// "where did the time go" — a proportional stacked bar makes a stuck stage jump out at a glance.
-function WorkflowJourneys({ journeys }) {
-  const { t } = useI18n();
-  if (!journeys.length) {
-    return (
-      <Card className="p-10 text-center">
-        <p className="text-sm text-slate-500">{t('vehicleProfile.journeys.empty')}</p>
-        <p className="mt-1 text-xs text-slate-400">{t('vehicleProfile.journeys.emptyHint')}</p>
-      </Card>
-    );
-  }
-  return (
-    <div className="space-y-5">
-      {journeys.map((j) => {
-        const total = j.total_seconds || 0;
-        // "Days in maintenance" = time the car was actually at the workshop (under repair, in the
-        // post-repair video review, or done-but-waiting-for-pickup) — a subset of the ticket's total
-        // lifespan, which also counts intake, dispatch, transit, QA and idle waiting. Splitting the two
-        // shows how much of a long ticket was real shop time vs. time the car sat waiting.
-        const shopSeconds = (j.stages || []).reduce(
-          (a, s) => a + (SHOP_STATES.has(s.workflow_status) ? (s.seconds || 0) : 0),
-          0,
-        );
-        return (
-          <Card key={j.ticket_id} className="overflow-hidden">
-            {/* Header — which ticket, when it opened, and the total time it has taken so far */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
-              <div className="flex items-center gap-3">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-                  <Icon.Wrench className="h-5 w-5" />
-                </span>
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">{t('Ticket #{id}', { id: j.ticket_id })}</h3>
-                  <p className="text-xs text-slate-400">
-                    {t('Opened {date}', { date: fmtDate(j.opened_at) })} · {j.stage_count === 1 ? t('1 stage') : t('{n} stages', { n: num(j.stage_count) })}
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {/* All days — the whole ticket lifespan (open → close / now). */}
-                {j.is_open
-                  ? <Badge tone="blue">{t('Live · {d}', { d: fmtSeconds(total) })}</Badge>
-                  : <Badge tone="green">{t('Closed · {d} total', { d: fmtSeconds(total) })}</Badge>}
-                {/* Days in maintenance — only the time actually spent at the workshop. */}
-                <Badge tone="amber">{t('In maintenance · {d}', { d: fmtSeconds(shopSeconds) })}</Badge>
-              </div>
-            </div>
-
-            <div className="px-6 py-5">
-              {/* Proportional stacked bar — each stage's width = its share of the total time */}
-              <div className="mb-1 flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
-                {j.stages.map((stg, i) => {
-                  const { style, label } = stageMeta(stg);
-                  const pct = total > 0 && stg.seconds != null ? (stg.seconds / total) * 100 : (j.is_open && i === j.stages.length - 1 ? 100 : 0);
-                  if (pct <= 0) return null;
-                  return (
-                    <div
-                      key={i}
-                      className={`${style.dot} h-full`}
-                      style={{ width: `${pct}%` }}
-                      title={`${t(label)} · ${fmtDuration(stg.seconds) || t('in progress')}`}
-                    />
-                  );
-                })}
-              </div>
-              <p className="mb-4 text-end text-[11px] text-slate-400">{t('time in each stage (proportional)')}</p>
-
-              {/* Stage-by-stage detail — a vertical rail, the current stage still ticking */}
-              <ol className="relative space-y-3 border-s border-slate-200 ps-5">
-                {j.stages.map((stg, i) => {
-                  const { label, tone, style } = stageMeta(stg);
-                  const isCurrent = j.is_open && i === j.stages.length - 1;
-                  const dur = fmtDuration(stg.seconds);
-                  return (
-                    <li key={i} className="relative">
-                      <span className={`absolute -start-[27px] mt-1 flex h-3.5 w-3.5 items-center justify-center rounded-full ring-4 ring-white ${style.dot}`} />
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Badge tone={tone}>{t(label)}</Badge>
-                          {isCurrent && <span className="text-xs font-medium text-blue-600">{t('vehicleProfile.journeys.currentStage')}</span>}
-                        </div>
-                        <span className={`text-xs font-semibold tabular-nums ${isCurrent ? 'text-blue-600' : 'text-slate-600'}`}>
-                          {isCurrent ? t('{d} so far', { d: dur || fmtSeconds(0) }) : (dur || '—')}
-                        </span>
-                      </div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-400">
-                        <span>{fmtDate(stg.entered_at)} · {fmtClock(stg.entered_at)}</span>
-                        {stg.garage && <span className="text-slate-500">{stg.garage}</span>}
-                        {stg.actor && <span>· {stg.actor}</span>}
-                      </div>
-                      {stg.description && <p className="mt-1 text-sm leading-relaxed text-slate-600">{stg.description}</p>}
-                    </li>
-                  );
-                })}
-              </ol>
-            </div>
-          </Card>
-        );
-      })}
-    </div>
-  );
-}
-
 // Multi-line workshop notes -> a tidy bulleted list; lines made only of -, *, = … become dividers.
 function NotesList({ text }) {
   const { t } = useI18n();
@@ -305,8 +178,11 @@ const CONTRACT_TYPE_LABEL = { C: 'Rental', U: 'Maintenance', R: 'Booking' };
 // separate tab told that story out of sequence, next to the repair it caused rather than among it. The
 // case's own state (liability, police report, who had the car, the money) was never the tab's to hold
 // anyway: it lives on /accidents/{id}, which every accident row on the Timeline links straight to.
-const TAB_KEYS = ['overview', 'plate', 'visits', 'components', 'journey', 'activity', 'checkpoints', 'complaints', 'financials', 'media'];
-const TAB_ALIASES = { timeline: 'activity', accidents: 'activity' };
+//
+// 'journey' (the per-ticket stage meter) is gone too — the same workflow audit trail it reshaped is
+// already the Timeline, so it stays in TAB_ALIASES only to keep old ?tab=journey links resolving.
+const TAB_KEYS = ['overview', 'plate', 'visits', 'components', 'activity', 'checkpoints', 'complaints', 'financials', 'media'];
+const TAB_ALIASES = { timeline: 'activity', accidents: 'activity', journey: 'activity' };
 const resolveTab = (key) => TAB_ALIASES[key] || key;
 
 // Aliases that mean "the Timeline, narrowed to this" rather than just "the Timeline". Redirecting
@@ -321,7 +197,6 @@ const TAB_ORIGIN = {
   overview: 'Live figures derived from OfficeManager contracts via RealProfitService. Outstanding fines from the F RTA source. Cost of Ownership adds the purchase price from the FASTER Asset sheet.',
   maintenance: 'Health, findings & workflow tickets from the in-app maintenance workflow. Service log & tyre brand/DOT/tread/warranty from the ticket line items.',
   visits: 'Each maintenance visit is an OfficeManager type-U contract, enriched with its workshop events from the N-Maintenance sheet log (garage, issues, priority, cost).',
-  journey: 'The same in-app maintenance-workflow audit trail (vehicle event log), reshaped per ticket: each workflow_status transition marks a stage, timed to the next transition — so you see every stage the car went through and how long it sat in each.',
   checkpoints: 'Workshop progress updates filed by the responsible follow-up owners (Waleed/Abdullah, or a ticket’s assigned users): the revised completion date, the reason it moved, a progress note and photos/videos. The On Schedule / Overdue status is derived automatically from the promised date; reminders escalate before a job goes overdue.',
   activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits (click one for its full record — garage, cost, issues, notes), the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share. Accidents read here too, through the Accident filter: every event an accident case writes — reported, damage recorded, police report verified, liability set, renter charged, closed — in sequence with everything else that happened to the car. That filter counts CASES, not events, because one crash writes a dozen rows and “9 accidents” for one crash would be a different fact from the one the number is being asked for; the rows are all still listed. The case’s own state — who had the car at the moment of the crash (frozen when it was reported, never recomputed), the police-report status, the liability verdict, and the estimate / approved / actual / paid figures — lives on the accident case itself, which every accident row opens.',
   financials: 'Every contract OfficeManager holds against this car — rental (C), maintenance (U) and booking (R) — listed newest first and filterable by type. The money on each line (debit, credit, balance) is the contract’s own billing; the cost analysis below it is reverse-engineered from that billing via RealProfitService: rent − discount + realized usage − operating − car-level maintenance.',
@@ -687,8 +562,6 @@ export default function VehicleProfile() {
   const maintenanceLog = data.maintenance_log || [];
   // One unified history: legacy sheet workshop events + the manual workflow audit trail + follow-ups.
   const timeline = data.timeline || maintenanceLog;
-  // Per-ticket stage meter — every workflow stage the car passed through + time in each.
-  const journeys = data.workflow_journeys || [];
   const analytics = data.maintenance_analytics || [];
   const stats = data.stats || {};
 
@@ -886,7 +759,6 @@ export default function VehicleProfile() {
               // No badge — the profile only knows the legacy row count; the panel itself reports the
               // true merged total ("Showing N of M events") once the activity feed lands.
               { key: 'activity', label: t('Timeline') },
-              { key: 'journey', label: t('Journey'), badge: num(journeys.length) },
               { key: 'checkpoints', label: t('Progress') },
               { key: 'complaints', label: t('Complaints') },
               // No Accidents tab: a crash reads on the Timeline, in sequence with everything else that
@@ -1086,14 +958,6 @@ export default function VehicleProfile() {
         </div>
         )}
 
-
-        {/* ── JOURNEY ─────────── per-ticket stage meter: every stage the car went through + time in each */}
-        {activeTab === 'journey' && (
-        <div role="tabpanel" id="panel-journey" aria-labelledby="tab-journey" className="space-y-6">
-          <WorkflowJourneys journeys={journeys} />
-          <DataOrigin tab="journey" />
-        </div>
-        )}
 
         {/* ── INSTALLED COMPONENTS ─── the car as a ROLLING ASSET: every part fitted to it today, plus
             the full replacement history of each slot. Read-only by design — the maintenance workflow is

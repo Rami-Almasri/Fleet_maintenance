@@ -779,83 +779,6 @@ class VehicleController extends Controller
                 ->sortByDesc(fn ($i) => $i['ts'] ?? $i['date'] ?? '')
                 ->values();
 
-            // Workflow Journeys — the SAME VehicleLogEvent trail, but reshaped from a flat feed into
-            // one bar-meter PER TICKET showing every workflow STAGE the car passed through and HOW LONG
-            // it sat in each. The log stamps workflow_status on each transition; walking a ticket's
-            // events in order and collapsing consecutive rows that share a workflow_status yields the
-            // distinct stage segments, each timed to the next transition (the last open stage runs to now).
-            // Sub-events with a null workflow_status (status pings, per-fault rows) don't open a stage —
-            // they happen inside the current one. Terminal stages carry no running clock.
-            $now = Carbon::now();
-            $terminal = ['closed', 'diagnostic_cleared', 'complaint_resolved'];
-            $journeys = $logEvents
-                ->filter(fn ($e) => $e->maintenance_id && $e->occurred_at)
-                ->groupBy('maintenance_id')
-                ->map(function ($events, $ticketId) use ($now, $terminal) {
-                    $ordered = $events->sortBy('occurred_at')->values();
-
-                    // Collapse the ordered events into stage segments keyed by workflow_status.
-                    $stages = [];
-                    foreach ($ordered as $e) {
-                        if ($e->workflow_status === null) {
-                            continue; // a sub-event inside the current stage — doesn't open a new one
-                        }
-                        $last = empty($stages) ? null : $stages[count($stages) - 1];
-                        if ($last && $last['workflow_status'] === $e->workflow_status) {
-                            continue; // still the same stage — no new segment
-                        }
-                        $meta = (array) ($e->meta ?? []);
-                        $stages[] = [
-                            'workflow_status' => $e->workflow_status,
-                            'event_type'      => $e->event_type,
-                            'entered_at'      => $e->occurred_at->toIso8601String(),
-                            '_entered'        => $e->occurred_at,          // kept for duration maths, stripped below
-                            'actor'           => $e->actor?->name,
-                            'source'          => $e->source_tag,
-                            'garage'          => $meta['garage'] ?? null,
-                            'description'     => $e->description,
-                        ];
-                    }
-
-                    if (empty($stages)) {
-                        return null; // a ticket whose events never stamped a workflow_status — nothing to chart
-                    }
-
-                    // Time each segment: from its entry to the NEXT stage's entry. The final stage runs to
-                    // now while the ticket is live, or stops (no clock) once it reached a terminal status.
-                    $count = count($stages);
-                    $lastStatus = $stages[$count - 1]['workflow_status'];
-                    $isOpen = ! in_array($lastStatus, $terminal, true);
-                    foreach ($stages as $i => &$stage) {
-                        $start = $stage['_entered'];
-                        if ($i + 1 < $count) {
-                            $end = $stages[$i + 1]['_entered'];
-                        } else {
-                            $end = $isOpen ? $now : null; // terminal stage → no running clock
-                        }
-                        $stage['seconds'] = $end ? max(0, $start->diffInSeconds($end)) : null;
-                        unset($stage['_entered']);
-                    }
-                    unset($stage);
-
-                    $openedAt = $stages[0]['entered_at'];
-                    $totalSeconds = collect($stages)->sum(fn ($s) => $s['seconds'] ?? 0);
-
-                    return [
-                        'ticket_id'     => (int) $ticketId,
-                        'opened_at'     => $openedAt,
-                        'closed_at'     => $isOpen ? null : $stages[$count - 1]['entered_at'],
-                        'is_open'       => $isOpen,
-                        'current_stage' => $lastStatus,
-                        'stage_count'   => $count,
-                        'total_seconds' => $totalSeconds,
-                        'stages'        => $stages,
-                    ];
-                })
-                ->filter()
-                ->sortByDesc('opened_at')
-                ->values();
-
             $data = [
                 'vehicle'      => VehicleResource::make($vehicle),
                 'registration' => $reg ? [
@@ -888,8 +811,6 @@ class VehicleController extends Controller
                 'maintenance_log' => $maintenanceLog,
                 // Unified history: sheet workshop events + manual workflow audit trail + follow-ups.
                 'timeline' => $timeline,
-                // Per-ticket stage meter: every workflow stage the car passed through + time in each.
-                'workflow_journeys' => $journeys,
                 'maintenance_analytics' => $analytics->vehicleServiceTrends($vehicle->id),
                 'stats' => [
                     'contracts_count'   => $contracts->count(),
