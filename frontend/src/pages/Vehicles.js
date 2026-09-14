@@ -280,21 +280,25 @@ export default function Vehicles() {
   const warrantyChip = (v) => {
     const w = v.warranty;
     const state = w?.state || 'none';
-    if (state === 'none') return <span className="ds-chip sm ds-none">{t('warrantyOps.stateShort.none')}</span>;
+    if (state === 'none') return <span className="ds-chip sm ds-none">{t('warranty.stateShort.none')}</span>;
 
     const cls = state === 'under_warranty' ? 'ds-ok' : state === 'expiring_soon' ? 'ds-paused' : 'ds-none';
     const left = [
-      w?.days_remaining != null ? t('warrantyOps.vehicle.remainingDays', { n: w.days_remaining }) : null,
-      w?.km_remaining != null ? t('warrantyOps.vehicle.remainingKm', { n: Number(w.km_remaining).toLocaleString(numLocale) }) : null,
+      w?.days_remaining != null ? t('warranty.remainingDays', { n: w.days_remaining }) : null,
+      w?.km_remaining != null ? t('warranty.remainingKm', { n: Number(w.km_remaining).toLocaleString(numLocale) }) : null,
+      // …and how far PAST the limit, once it is passed. The tooltip on an expired car used to say
+      // only "Warranty expired", which cannot distinguish last week from two years ago.
+      w?.km_over != null ? t('warranty.overKm', { n: Number(w.km_over).toLocaleString(numLocale) }) : null,
+      w?.days_over != null ? t('warranty.overDays', { n: Number(w.days_over).toLocaleString(numLocale) }) : null,
     ].filter(Boolean).join(' / ');
 
     return (
       <span
         className={`ds-chip sm ${cls}`}
-        title={[t(`warrantyOps.state.${state}`), left, w?.distance_unknown ? t('warrantyOps.vehicle.distanceUnknown') : null]
+        title={[t(`warranty.state.${state}`), left, w?.distance_unknown ? t('warranty.distanceUnknown') : null]
           .filter(Boolean).join(' — ')}
       >
-        <span className="ds-dot" />{t(`warrantyOps.stateShort.${state}`)}
+        <span className="ds-dot" />{t(`warranty.stateShort.${state}`)}
       </span>
     );
   };
@@ -363,13 +367,13 @@ export default function Vehicles() {
               className="opx-select"
               value={warrantyState}
               onChange={(e) => resetFilters(() => setWarrantyState(e.target.value))}
-              title={t('warrantyOps.list.filterLabel')}
+              title={t('warranty.list.filterLabel')}
             >
-              <option value="">{t('warrantyOps.list.filterAll')}</option>
-              <option value="under_warranty">{t('warrantyOps.list.filterUnder')}</option>
-              <option value="expiring_soon">{t('warrantyOps.list.filterSoon')}</option>
-              <option value="expired">{t('warrantyOps.list.filterExpired')}</option>
-              <option value="none">{t('warrantyOps.list.filterNone')}</option>
+              <option value="">{t('warranty.list.filterAll')}</option>
+              <option value="under_warranty">{t('warranty.list.filterUnder')}</option>
+              <option value="expiring_soon">{t('warranty.list.filterSoon')}</option>
+              <option value="expired">{t('warranty.list.filterExpired')}</option>
+              <option value="none">{t('warranty.list.filterNone')}</option>
             </select>
             {/* Shared-plate filter: show every car sitting on a reused plate (incl. sold holders). */}
             <label
@@ -429,7 +433,7 @@ export default function Vehicles() {
                   {/* WARRANTY — the column that answers "before we spend on this car, could the
                       manufacturer be paying?" at a glance, next to the condition it so often
                       determines the cost of. */}
-                  <th>{t('warrantyOps.list.column')}</th>
+                  <th>{t('warranty.list.column')}</th>
                   <th className="r">{t('vehicles.col.actions')}</th>
                 </tr>
               </thead>

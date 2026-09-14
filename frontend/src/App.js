@@ -40,7 +40,6 @@ import GarageProfile from './pages/intelligence/GarageProfile';
 import GarageCompare from './pages/intelligence/GarageCompare';
 import Executive from './pages/intelligence/Executive';
 import PartsHub from './pages/PartsHub';
-import WarrantyCases from './pages/WarrantyCases';
 import SuppliersHub from './pages/SuppliersHub';
 import GaragesHub from './pages/GaragesHub';
 import FieldReportsHub from './pages/FieldReportsHub';
@@ -373,19 +372,7 @@ export default function App() {
                       API with parts.purchase, so a viewer sees the ledger without the write buttons. */}
                   <Route path="/part-invoices" element={<RedirectToTab to="/parts" tab="invoices" />} />
                 </Route>
-                {/* Warranty CASES — "could somebody else be paying for this?".
-                    A separate route from the /parts warranty REGISTER on purpose: the register is a
-                    record of what we were promised, this is the WORK of deciding whether a promise
-                    applies and chasing the counterparty until it does or doesn't. Different people,
-                    different lifecycle, different permission — `warranty.view` rather than
-                    parts.view, so a finance or workshop role can work the desk without being given
-                    the whole parts board. The deep-link route carries the case id because every
-                    warranty notification lands on one. */}
-                <Route element={<RequirePermission permission="warranty.view" />}>
-                  <Route path="/warranty" element={<WarrantyCases />} />
-                  <Route path="/warranty/cases" element={<WarrantyCases />} />
-                  <Route path="/warranty/cases/:caseId" element={<WarrantyCases />} />
-                </Route>
+
                 {/* Accident cases — the crash file. A separate route from /damage-accidents on
                     purpose: that page is a READ of the historical maintenance log (damage records
                     as they were imported), while this is the live WORKFLOW — who had the car, the

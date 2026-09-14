@@ -179,8 +179,7 @@ class WarrantyController extends Controller
      * sense an operator means by the phrase — but that tyre's cover is still real, still claimable,
      * and belongs on the page. One answer for the badge, the full picture underneath it.
      *
-     * `open_cases` rides along so the page can show what is already in flight without a second
-     * request — the vehicle page is the surface where somebody notices a car is in a dealer's hands.
+     * This is what the car's page reads — the source of truth for "is this car under warranty?".
      */
     public function forVehicle(Vehicle $vehicle, \App\Services\Warranty\WarrantyStatusService $status)
     {
@@ -193,13 +192,6 @@ class WarrantyController extends Controller
                 ...(new WarrantyResource($r['warranty']))->toArray(request()),
                 'verdict' => $r['verdict'],
             ], $rows),
-            'open_cases' => \App\Http\Resources\WarrantyClaimResource::collection(
-                \App\Models\WarrantyClaim::forVehicle($vehicle->id)
-                    ->openCases()
-                    ->with(['warranty', 'catalog:id,name,name_ar'])
-                    ->orderByDesc('id')
-                    ->get()
-            ),
         ], 'Vehicle warranties retrieved');
     }
 

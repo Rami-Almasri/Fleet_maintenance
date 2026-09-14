@@ -35,6 +35,9 @@ class ServiceRecord extends Model
     public const SERVICE_TYPES = ServiceTypes::ALL;
 
     protected $fillable = [
+        // Was this service done under warranty, and by whom? Classification only — see the
+        // add_under_warranty_to_maintenance_work migration.
+        'under_warranty', 'warranty_provider',
         'vehicle_id', 'maintenance_id', 'maintenance_task_id',
         'service_type', 'description', 'specs', 'performed_at', 'odometer',
         'workshop_vendor_id', 'technician_name',
@@ -45,6 +48,7 @@ class ServiceRecord extends Model
     ];
 
     protected $casts = [
+        'under_warranty' => 'boolean',
         // WHAT went in — the viscosity and the litres on an oil change, the refrigerant on a
         // regas. The consumable's specs live here because a consumable never becomes a component,
         // so this record is the only place the fact could be kept. @see \App\Support\PartSpecs

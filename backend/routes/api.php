@@ -259,44 +259,22 @@ Route::middleware('auth:sanctum')->prefix('warranties')->controller(\App\Http\Co
 Route::middleware(['auth:sanctum', 'permission:parts.investigate|maintenance.manage'])
     ->post('warranty-claims/{claim}/resolve', [\App\Http\Controllers\WarrantyController::class, 'resolveClaim']);
 
-// ── Warranty CASES — "could somebody else be paying for this?" ──────────────────────────────────
+// ── SERVICE CONTRACTS — "5 Lube Service / 5 Yrs", the prepaid servicing bought with the car ─────
 //
-// A separate tree from /warranties because these are different things asked by different people. A
-// warranty is a RECORD (what we were promised); a case is WORK (deciding whether the promise applies,
-// then chasing the counterparty until it does or doesn't). They have different lifecycles, different
-// audiences and — importantly — different permission bars.
+// A SEPARATE CONCEPT FROM WARRANTY, not a variant of it. A warranty answers "if it breaks, who
+// pays?"; this answers "how many free services are left?" — a count that goes down. One car
+// routinely has one without the other (six ALI & SONS cars on the fleet's report carry a service
+// contract with the warranty columns blank), which is why it is its own table and its own tree.
 //
-// THE PERMISSIONS ARE THE FEATURE'S TEETH, so they are split four ways rather than the usual
-// view/manage pair (@see \App\Support\WarrantyResponsibility):
-//
-//   warranty.view      read the board, the case, the dashboard.
-//   warranty.review    DECIDE coverage. The money decision, and the permission that DEFINES the
-//                      warranty desk for every notification this feature sends.
-//   warranty.claim     open a case and walk it down the provider path.
-//   warranty.close     close it and record what was recovered or avoided — finance holds this.
-//
-// `warranty.override` appears on NO route here on purpose: it is not an endpoint, it is a field on
-// the purchase-request body, checked inside WarrantyProcurementGuard. Buying past a live warranty is
-// something you do to a PURCHASE, not to a case, and giving it its own endpoint would have created a
-// way to pre-authorise an override with no purchase attached to it.
-Route::middleware('auth:sanctum')->prefix('warranty')->controller(\App\Http\Controllers\WarrantyCaseController::class)->group(function () {
-    // Static segments BEFORE /cases/{case} so none of them is swallowed as a model binding.
-    Route::get('/dashboard', 'dashboard')->middleware('permission:warranty.view');
-    // Read-only "would this be covered?" — used by the purchase form to warn BEFORE submit, which is
-    // the difference between a gate people work with and one they resent.
-    Route::get('/coverage/preview', 'preview')->middleware('permission:warranty.view|parts.request');
-
-    Route::get('/cases', 'index')->middleware('permission:warranty.view');
-    Route::post('/cases', 'store')->middleware('permission:warranty.claim');
-    Route::get('/cases/{case}', 'show')->middleware('permission:warranty.view');
-
-    // The decision. Its own bar, above merely working the case: the person raising a purchase must
-    // not be the person who decides the purchase was allowed.
-    Route::post('/cases/{case}/decide', 'decide')->middleware('permission:warranty.review');
-
-    Route::post('/cases/{case}/advance', 'advance')->middleware('permission:warranty.claim');
-    Route::post('/cases/{case}/recovery', 'recovery')->middleware('permission:warranty.close');
-    Route::post('/cases/{case}/close', 'close')->middleware('permission:warranty.close');
+// Permissions ride with the warranty pair on purpose: it is the same KIND of fact, recorded on the
+// same page by the same person, and a third permission would be a distinction nobody here makes.
+Route::middleware('auth:sanctum')->controller(\App\Http\Controllers\ServiceContractController::class)->group(function () {
+    Route::get('/vehicles/{vehicle}/service-contracts', 'forVehicle')->middleware('permission:warranty.view');
+    Route::post('/vehicles/{vehicle}/service-contracts', 'store')->middleware('permission:warranty.manage');
+    Route::post('/service-contracts/{contract}', 'update')->middleware('permission:warranty.manage');
+    // Consuming one of the covered services — a deliberate act, never derived from service history.
+    Route::post('/service-contracts/{contract}/use', 'useService')->middleware('permission:warranty.manage');
+    Route::post('/service-contracts/{contract}/end', 'end')->middleware('permission:warranty.manage');
 });
 
 // ── ACCIDENT CASES — the file opened when a car is damaged in an incident ───────────────────────

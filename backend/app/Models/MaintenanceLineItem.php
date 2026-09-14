@@ -55,6 +55,11 @@ class MaintenanceLineItem extends Model
     public const PART_SOURCES = [self::PART_SOURCE_PURCHASE, self::PART_SOURCE_REQUEST, self::PART_SOURCE_REQUIRED];
 
     protected $fillable = [
+        // Was this line done under warranty, and who honoured it? CLASSIFICATION ONLY — it never
+        // touches the amount. A warranty line keeps whatever cost was recorded, because the moment
+        // this flag starts editing money it becomes a second, silent accounting path.
+        // @see the add_under_warranty_to_maintenance_work migration.
+        'under_warranty', 'warranty_provider',
         'maintenance_id',
         'maintenance_invoice_id',
         'maintenance_task_id',
@@ -98,6 +103,7 @@ class MaintenanceLineItem extends Model
     ];
 
     protected $casts = [
+        'under_warranty'     => 'boolean',
         'quantity'           => 'decimal:2',
         'tire_tread_mm'      => 'decimal:1',
         'unit_price'         => 'decimal:2',

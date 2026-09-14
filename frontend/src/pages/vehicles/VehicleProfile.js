@@ -27,6 +27,7 @@ import { usePermissions } from '../../hooks/usePermissions';
 import ComponentRepeatAlert from '../../components/vehicles/ComponentRepeatAlert';
 import MulkiyaCard from '../../components/vehicles/MulkiyaCard';
 import VehicleWarrantyCard from '../../components/warranties/VehicleWarrantyCard';
+import VehicleServiceContractCard from '../../components/warranties/VehicleServiceContractCard';
 import VehicleCostIntelligence from './VehicleCostIntelligence';
 import { aed2, fmtDate, fmtClock, fmtSeconds, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
@@ -892,6 +893,11 @@ export default function VehicleProfile() {
             somebody decides to spend on a car is the moment they are looking at it, and a warranty
             one navigation away is a warranty nobody checks. Self-fetching, like the Mulkiya. */}
         <VehicleWarrantyCard vehicleId={id} />
+
+        {/* The prepaid servicing bought with the car — a DIFFERENT promise from the warranty above:
+            an allowance of scheduled work that is consumed, not a commitment to fix what breaks.
+            Beside it, because a car routinely has one without the other. */}
+        <VehicleServiceContractCard vehicleId={id} />
 
         {/* Financial Performance deep-dive — lifetime revenue vs. every cost this car has
             incurred: ROI ring + interactive cost-composition donut (drill-through).

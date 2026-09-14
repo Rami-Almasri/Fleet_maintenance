@@ -129,6 +129,10 @@ class MaintenanceInvoiceController extends Controller
             'line_items.*.part_source_id' => ['nullable', 'integer', 'min:1'],
             'line_items.*.quantity'     => ['nullable', 'numeric', 'min:0'],
             'line_items.*.unit_price'   => ['nullable', 'numeric', 'min:0'],
+            // "Was this line done under warranty?" — per LINE, because one visit routinely mixes a
+            // covered repair with a charged one. Classification only: it never alters the amount.
+            'line_items.*.under_warranty'    => ['nullable', 'boolean'],
+            'line_items.*.warranty_provider' => ['nullable', 'string', 'max:160'],
             'line_items.*.installed_on' => ['nullable', 'date'],
             'line_items.*.warranty_months' => ['nullable', 'integer', 'min:0'],
             'line_items.*.tire_brand'   => ['nullable', 'string', 'max:80'],

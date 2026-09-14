@@ -147,6 +147,18 @@ function BilledWork({ invoice }) {
         <span className="text-[10.5px] text-slate-400" dir="auto">“{li.description}”</span>
       )}
       {li.part_number && <span className="font-mono text-[10px] text-slate-400">{li.part_number}</span>}
+      {/* DONE UNDER WARRANTY — the whole point of the flag, on the line it describes:
+          "Brake sensor replaced — Done under warranty — Provider: BMW".
+          Note that the amount to the right is UNCHANGED. The label classifies the work; it never
+          edits the money, so a warranty line that still carries a charge stays visible as exactly
+          that, rather than being silently zeroed into agreement. */}
+      {li.under_warranty && (
+        <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+          {li.warranty_provider
+            ? t('warranty.doneUnderWarrantyBy', { provider: li.warranty_provider })
+            : t('warranty.doneUnderWarranty')}
+        </span>
+      )}
       {/* A part with no catalog reference is money against a part nobody can identify — say so. */}
       {li.kind === 'part' && !li.component_catalog_id && (
         <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">{t('workflow.invoices.partUnidentified')}</span>

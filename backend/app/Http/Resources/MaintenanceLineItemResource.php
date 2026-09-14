@@ -20,6 +20,10 @@ class MaintenanceLineItemResource extends JsonResource
 
         return [
             'id'                 => $li->id,
+            // Was this line done under warranty, and by whom? Classification only — the amounts below
+            // are untouched by it. This is what the timeline renders as "Done under warranty".
+            'under_warranty'     => (bool) $li->under_warranty,
+            'warranty_provider'  => $li->warranty_provider,
             'kind'               => $li->kind,                 // 'part' | 'labor' | 'vat' | 'discount' | 'adjustment'
             'description'        => $li->description,
             'part_number'        => $li->part_number,

@@ -571,6 +571,9 @@ export default function LineItemsEditor({
                     <p className="mt-1.5 text-[11px] text-indigo-400">{t('workflow.lineItem.tireHint')}</p>
                   </div>
                 )}
+
+                {/* The one warranty question, on the work itself. */}
+                <UnderWarrantyToggle row={r} t={t} onChange={(patch) => update(r._k, patch)} />
               </li>
             ))}
           </ul>
@@ -619,6 +622,9 @@ export default function LineItemsEditor({
                   <button type="button" onClick={() => remove(r._k)} className="rounded-lg px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50">{t('common.remove')}</button>
                 </div>
                 </div>
+                {/* Labor can be a warranty job as readily as a part — a dealer's diagnostic hour on a
+                    covered fault is exactly the case people forget to record. */}
+                <UnderWarrantyToggle row={r} t={t} onChange={(patch) => update(r._k, patch)} />
               </li>
             ))}
           </ul>
@@ -743,6 +749,37 @@ export default function LineItemsEditor({
   );
 }
 
+/**
+ * "Was this work done under warranty?" — the one question the warranty feature asks.
+ *
+ * Asked PER LINE and not once per invoice, because a single dealer visit routinely mixes the two:
+ * the sensor replaced under warranty, the wiper blades charged. An invoice-level flag would force
+ * whoever keys it to misdescribe one of them.
+ *
+ * IT CHANGES NO NUMBER. The hint says so out loud, because a checkbox next to a price in this app
+ * usually means the price is about to change — and here it deliberately does not. A warranty line
+ * keeps whatever the garage billed, so that either the invoice is right or the discrepancy is
+ * findable. @see the add_under_warranty_to_maintenance_work migration.
+ */
+function UnderWarrantyToggle({ row, onChange, t }) {
+  return (
+    <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2">
+      <input
+        type="checkbox"
+        className="mt-0.5"
+        checked={!!row.under_warranty}
+        onChange={(e) => onChange({ under_warranty: e.target.checked })}
+      />
+      <span className="min-w-0">
+        <span className="block text-xs font-medium text-slate-700">{t('warranty.askUnderWarranty')}</span>
+        {row.under_warranty && (
+          <span className="mt-0.5 block text-[11px] text-slate-400">{t('warranty.noCostChange')}</span>
+        )}
+      </span>
+    </label>
+  );
+}
+
 // Strip client-only keys + empty rows down to the API contract. Exported so both the garage step
 // and the deferred-edit action serialise the editor identically.
 export function serializeLineItems(rows = []) {
@@ -756,6 +793,10 @@ export function serializeLineItems(rows = []) {
         description: r.description.trim(),
         quantity: r.quantity === '' || r.quantity == null ? 1 : Number(r.quantity),
         unit_price: r.unit_price === '' || r.unit_price == null ? 0 : Number(r.unit_price),
+        // "Was this work done under warranty?" — per LINE, because one visit routinely mixes a
+        // covered repair with a charged one. CLASSIFICATION ONLY: note that quantity and unit_price
+        // above are untouched by it, deliberately. A warranty line keeps whatever was billed.
+        under_warranty: !!r.under_warranty,
       };
       if (base.kind === 'part') {
         // The part's identity. Sent even though the server can re-resolve the wording, because a
