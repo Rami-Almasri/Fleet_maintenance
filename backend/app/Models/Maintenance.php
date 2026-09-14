@@ -176,6 +176,33 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
     // recommendTriageRoute() / approveTriageRoute() / rejectTriageRoute().
     public const WF_TRIAGE_APPROVAL_PENDING = 'triage_approval_pending';
 
+    // ── ACCIDENT CYCLE (pre-ticket) ─────────────────────────────────────────────────────────────────
+    // A crash is NOT a repair order. When an accident case is opened, a ticket is raised here so the car
+    // appears on the Maintenance Cycle board the moment it is hit — because the workshop needs to know a
+    // car is out of the running long before anybody has authorised any work on it, and a car that only
+    // shows up once the insurer finishes is a car the board lied about for a fortnight.
+    //
+    // FENCED, exactly like complaint_triage and the triage approval gate: NOT in WF_TICKET_STATES, so
+    // the car is never counted as an active maintenance job, never drives operational_status, links no
+    // contract and raises no garage alert. "Do not ground the vehicle just because an accident case was
+    // reported" is a rule about MAINTENANCE, not about rental — the car is separately unrentable while
+    // the case is unresolved, which is the accident file's own judgement and lives on the stage
+    // (`blocks_rental`), not here.
+    //
+    // WHAT GOVERNS IT. Nothing in this class. While a ticket sits in this state the ACCIDENT CASE is the
+    // single source of truth for where the car is up to: police report, liability, the insurer's visit,
+    // recovery or test drive. The ticket carries no second opinion about any of it — it holds the
+    // accident_case_id and shows the case's ladder. @see AccidentWorkflowService
+    //
+    // THE ONE WAY FORWARD is repair being AUTHORISED — the case reaching a stage whose requirement is
+    // `repair_linked`. At that moment the ticket leaves this state into inspection_pending and the
+    // ordinary maintenance lifecycle runs completely unchanged from there.
+    public const WF_ACCIDENT_CYCLE = 'accident_cycle';
+    // Terminal: the case finished without any repair being authorised — written off, repaired by the
+    // other party's insurer, or judged not worth fixing. Without this, closing such a case would leave an
+    // open ghost ticket sitting on the board forever with nobody able to action it.
+    public const WF_ACCIDENT_NO_REPAIR = 'accident_no_repair';
+
     // ── COORDINATOR APPROVAL GATE (pre-maintenance) ─────────────────────────────────────────────────
     // An inspection report is NOT a commitment to repair. When the Inspector files an in-shop "requires
     // maintenance" report, the ticket lands HERE — the maintenance coordinator's review — instead of
@@ -256,7 +283,7 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
     ];
 
     /** Terminal states — a finished lifecycle, excluded from the live pipeline. */
-    public const WF_TERMINAL = [self::WF_CLOSED, self::WF_DIAGNOSTIC_CLEARED, self::WF_COMPLAINT_RESOLVED, self::WF_RECOMMENDATION_DISMISSED, self::WF_REVIEW_REJECTED];
+    public const WF_TERMINAL = [self::WF_CLOSED, self::WF_DIAGNOSTIC_CLEARED, self::WF_COMPLAINT_RESOLVED, self::WF_RECOMMENDATION_DISMISSED, self::WF_REVIEW_REJECTED, self::WF_ACCIDENT_NO_REPAIR];
 
     /** The car is back on the road (repair done) — closed OR awaiting-invoice OR already in the park.
      *  Used where "is the car operationally free?" matters, distinct from WF_TERMINAL (which means the
@@ -295,6 +322,8 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
         // The coordinator's approval gate is pre-ticket too: an approved-to-repair decision hasn't been
         // made yet, so a car sitting in recommendation_pending is NOT an active maintenance job.
         self::WF_RECOMMENDATION_PENDING,
+        // A crash with nobody's authorisation to fix anything yet. @see WF_ACCIDENT_CYCLE
+        self::WF_ACCIDENT_CYCLE,
     ];
 
     /**
@@ -729,6 +758,10 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
     public const SOURCE_SYSTEM_SCHEDULE    = 'system_schedule';    // mileage scanner / due Service Reminder
     public const SOURCE_WORKSHOP           = 'workshop';           // breakdown intake, reported from the floor
     public const SOURCE_CUSTOMER           = 'customer';           // a Complaint sent in by the renter
+    // An accident case put the car here. Its OWN origin rather than being folded into `workshop` or
+    // `controller`, because "how much of our repair work comes from crashes" is one of the few questions
+    // this field exists to answer, and it is unanswerable if a crash is filed as a walk-in.
+    public const SOURCE_ACCIDENT           = 'accident';           // opened by an accident case
 
     public const REQUEST_ORIGINS = [
         self::SOURCE_DRIVER_OBSERVATION,
@@ -738,6 +771,7 @@ class Maintenance extends Model implements \App\Contracts\FinancialEventSource
         self::SOURCE_SYSTEM_SCHEDULE,
         self::SOURCE_WORKSHOP,
         self::SOURCE_CUSTOMER,
+        self::SOURCE_ACCIDENT,
     ];
 
     /**

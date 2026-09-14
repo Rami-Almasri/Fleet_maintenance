@@ -404,9 +404,42 @@ export function buildFacets(events) {
 }
 
 // Per-event counts by kind — powers the Event-type filter chip counts and the Quick-jump badges.
+/**
+ * How many of each kind, for the filter chips.
+ *
+ * ── ACCIDENTS ARE COUNTED AS CASES, NOT AS ROWS ────────────────────────────────────────────────
+ *
+ * Every other kind is roughly one row per thing, so counting rows reads correctly. An accident is
+ * not: one crash writes a dozen events — reported, context captured, damage recorded, police
+ * verified, liability set, charged — so a car that has been in ONE accident had its chip reading
+ * "Accident 9". That is a different fact from the one anybody is asking the chip for, and it is the
+ * kind of wrong that looks authoritative.
+ *
+ * So the accident chip counts DISTINCT CASES. Rows carrying no case id still count individually —
+ * damage findings recorded before accident cases existed are genuinely separate occurrences, and
+ * folding them into one would under-count in the other direction.
+ *
+ * This is the same events-vs-occasions distinction summarizeMatches already draws further down: the
+ * rows are all still there when the filter is clicked; the COUNT answers "how many times".
+ */
 export function countByKind(events) {
   const out = {};
-  for (const e of events) { const k = eventKind(e); out[k] = (out[k] || 0) + 1; }
+  const accidentCases = new Set();
+  let looseAccidentRows = 0;
+
+  for (const e of events) {
+    const k = eventKind(e);
+    if (k === 'accident') {
+      if (e.accident_case_id) accidentCases.add(e.accident_case_id);
+      else looseAccidentRows += 1;
+      continue;
+    }
+    out[k] = (out[k] || 0) + 1;
+  }
+
+  const accidents = accidentCases.size + looseAccidentRows;
+  if (accidents) out.accident = accidents;
+
   return out;
 }
 

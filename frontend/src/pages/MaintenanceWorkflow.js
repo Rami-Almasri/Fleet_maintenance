@@ -261,6 +261,32 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
               ⏸ {tp('workflow.card.findingHeldBadge', held.length)}
             </span>
           )}
+          {/* THE CRASH BEHIND THE CARD. Shown on every ticket that came out of one — not only the fenced
+              ones — because "why is this car here?" is the first question anybody asks of a card, and a
+              repair that started as an accident answers it differently from one that started as a fault.
+              The stage is the ACCIDENT CASE's answer, repeated here; the board never forms its own.
+              The link leaves for the case, where the actions live — there is one place to advance an
+              accident and it is not this card. */}
+          {tk.accident && (
+            <Link
+              to={tk.accident.url}
+              onClick={(e) => e.stopPropagation()}
+              className="mwf-pill crit"
+              title={t('workflow.accident.badgeTip', {
+                ref: tk.accident.reference,
+                stage: tk.accident.stage_label,
+              })}
+            >
+              🚨 {tk.accident.reference} · {tk.accident.stage_label}
+            </Link>
+          )}
+          {/* Nobody has authorised any work yet — said plainly, because an accident card in a maintenance
+              board otherwise reads as a job somebody is failing to dispatch. */}
+          {tk.is_accident_cycle && (
+            <span className="mwf-pill paused" title={t('workflow.accident.fencedTip')}>
+              ⏳ {t('workflow.accident.fenced')}
+            </span>
+          )}
           {isComplaint && (
             <span className="mwf-pill crit" title={tk.customer_complaint || t('workflow.complaint.badge')}>📣 {t('workflow.complaint.badge')}</span>
           )}

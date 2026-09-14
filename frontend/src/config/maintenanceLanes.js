@@ -27,6 +27,12 @@ export const PRIMARY_LANES = [
 ];
 
 export const EXCEPTION_LANES = [
+  // ACCIDENTS. An exception lane because it genuinely is one: no garage has been chosen, no work has
+  // been authorised, and what the car is waiting for is the police, an insurer or a liability verdict
+  // — none of which anybody on this board can hurry. It is here so the workshop can SEE that a car is
+  // out of the running, which is the one thing the board used to be silent about. The card's actions
+  // belong to the accident case; this lane only shows where the case has got to.
+  { key: 'accident',                name: 'Accident Case',         role: 'none',       tone: '#e11d48', hint: 'A crash is being worked — no repair has been authorised yet' },
   { key: 'triage',                  name: 'Complaint Triage',      role: 'inspector',  tone: '#f43f5e', hint: 'A driver complaint waiting to be judged into a ticket' },
   ...(SHOW_VIDEO_REVIEW ? [{ key: 'repair_review', name: 'Video Review', role: 'supervisor', tone: '#7c3aed', hint: 'Awaiting supervisor video sign-off' }] : []),
   { key: 'reinspection_failed',     name: 'Sent Back — QA Failed', role: 'supervisor', tone: '#dc2626', hint: 'Came back still broken — supervisor re-dispatches' },

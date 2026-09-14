@@ -217,7 +217,8 @@ class ContractEligibilityService
             ->where('damage_flagged', true)->whereNull('review_outcome')->count();
 
         // Accident cases whose stage still means the CAR is compromised — not merely that its money
-        // is unsettled. @see \App\Models\AccidentCase::RENTAL_BLOCKING_STAGES
+        // is unsettled. WHICH stages those are is now the office's answer, read from the published
+        // workflow rather than a constant. @see \App\Models\AccidentCase::rentalBlockingKeys()
         $accidents = \App\Models\AccidentCase::forVehicle($vehicle->id)->rentalBlocking()
             ->orderBy('id')->get(['id', 'reference', 'stage']);
 

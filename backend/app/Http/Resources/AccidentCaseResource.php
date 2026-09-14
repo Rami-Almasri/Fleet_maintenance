@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\AccidentCase;
+use App\Models\Maintenance;
 use App\Models\VehicleDocument;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -25,6 +26,24 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class AccidentCaseResource extends JsonResource
 {
+    /**
+     * Whether to compute and ship this case's full ladder.
+     *
+     * OFF by default because `progressFor()` costs a query and evaluates every rung's gate — fine on
+     * a detail page, ruinous on a board of eighty rows where nothing draws it. Turned on explicitly
+     * by the endpoints that need it rather than guessed from the request, so adding a route can
+     * never silently make the list page eighty times slower.
+     */
+    public bool $includeWorkflow = false;
+
+    /** `AccidentCaseResource::make($case)->withWorkflow()` — for the detail surfaces. */
+    public function withWorkflow(bool $include = true): static
+    {
+        $this->includeWorkflow = $include;
+
+        return $this;
+    }
+
     public function toArray(Request $request): array
     {
         $breakdown = $this->resource->financialBreakdown();
@@ -35,9 +54,20 @@ class AccidentCaseResource extends JsonResource
             'vehicle_id' => $this->vehicle_id,
 
             // ── where the case is ──────────────────────────────────────────────────────────────
+            //
+            // `workflow` is THIS case's own ladder with every rung's state — done, current, blocked,
+            // pending or skipped — computed against the version the case is pinned to. The page never
+            // re-derives it: two cases can legitimately be running different arrangements at once, so
+            // a client holding one global list would draw the wrong ladder for one of them.
+            //
+            // Loaded lazily because it costs a query and the board (eighty rows) does not need it;
+            // the detail page asks for it explicitly. @see AccidentWorkflowService::progressFor()
             'stage'             => $this->stage,
             'stage_index'       => $this->resource->stageIndex(),
-            'stages'            => AccidentCase::STAGES,
+            'workflow'          => $this->when(
+                $this->includeWorkflow,
+                fn () => app(\App\Services\Accident\AccidentWorkflowService::class)->progressFor($this->resource),
+            ),
             'is_open'           => $this->resource->isOpen(),
             'is_closed'         => $this->resource->isClosed(),
             'restricts_rental'  => $this->resource->restrictsRental(),
@@ -165,8 +195,22 @@ class AccidentCaseResource extends JsonResource
             'damage_items' => $this->whenLoaded('damageItems',
                 fn () => AccidentDamageItemResource::collection($this->damageItems)),
 
-            // The repairs this accident caused — ordinary tickets, linked back.
-            'repairs' => $this->whenLoaded('repairs', fn () => $this->repairs->map(fn ($m) => [
+            // THE CAR'S PLACE ON THE MAINTENANCE BOARD while the accident is being worked — the fenced
+            // ticket, which is not a repair and must not be listed as one. Its own key so the case page
+            // can link to the board without the Repairs tab claiming work that has not been authorised.
+            // @see \App\Models\Maintenance::WF_ACCIDENT_CYCLE
+            'cycle_ticket' => $this->whenLoaded('repairs', function () {
+                $t = $this->repairs->firstWhere('workflow_status', Maintenance::WF_ACCIDENT_CYCLE);
+
+                return $t ? ['id' => $t->id, 'url' => '/maintenance-workflow/' . $t->id] : null;
+            }),
+
+            // The repairs this accident caused — ordinary tickets, linked back. The fenced cycle ticket
+            // is filtered out: nobody has authorised any work on it, so calling it a repair would put a
+            // job on this list that no garage has been asked to do.
+            'repairs' => $this->whenLoaded('repairs', fn () => $this->repairs
+                ->where('workflow_status', '!=', Maintenance::WF_ACCIDENT_CYCLE)
+                ->map(fn ($m) => [
                 'id'              => $m->id,
                 'workflow_status' => $m->workflow_status,
                 'vendor_id'       => $m->vendor_id,

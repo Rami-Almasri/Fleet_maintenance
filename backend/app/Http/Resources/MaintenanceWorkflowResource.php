@@ -45,6 +45,10 @@ class MaintenanceWorkflowResource extends JsonResource
         Maintenance::WF_CLOSED             => 'Closed',
         Maintenance::WF_DIAGNOSTIC_CLEARED => 'No maintenance needed',
         Maintenance::WF_MAINTENANCE_DEFERRED => 'Deferred — follow up later',
+        // Named for what it IS, not for what is pending — because what is pending is the accident
+        // case's answer (police, insurer, liability) and changes as the case moves.
+        Maintenance::WF_ACCIDENT_CYCLE     => 'Accident case',
+        Maintenance::WF_ACCIDENT_NO_REPAIR => 'Accident closed — no repair',
         Maintenance::WF_COMPLAINT_TRIAGE   => 'Pending triage',
         Maintenance::WF_TRIAGE_APPROVAL_PENDING => 'Awaiting routing approval',
         Maintenance::WF_COMPLAINT_RESOLVED => 'Resolved on-site',
@@ -104,6 +108,41 @@ class MaintenanceWorkflowResource extends JsonResource
             // A committed ticket (has real repair state). A paused ticket IS a real ticket — it just isn't
             // counted as "in maintenance" operationally — so it reads true here for the UI's ticket surfaces.
             'is_ticket'       => in_array($status, Maintenance::WF_TICKET_STATES, true) || $status === Maintenance::WF_PAUSED_RETURNED_TO_SERVICE, // false while a pure diagnostic
+
+            // ── THE ACCIDENT BEHIND THE TICKET ─────────────────────────────────────────────────────
+            //
+            // Present on ANY ticket parented to a case, not only the fenced ones: a repair that came out
+            // of a crash keeps saying so all the way through the workshop, because "why is this car
+            // here?" is the first question anybody asks of a card.
+            //
+            // The STAGE comes from the accident case, which is the single source of truth for it. This
+            // resource repeats it; it does not decide it. What the card must never do is form its own
+            // opinion about where the accident has got to — that is how two screens start disagreeing
+            // about the same car. @see \App\Services\Accident\AccidentWorkflowService
+            'accident' => $t->accident_case_id ? (function () use ($t) {
+                $case = $t->relationLoaded('accidentCase') ? $t->accidentCase : $t->accidentCase()->first();
+                if (! $case) {
+                    return null;
+                }
+                $stage = app(\App\Services\Accident\AccidentWorkflowService::class)->currentStage($case);
+
+                return [
+                    'id'          => $case->id,
+                    'reference'   => $case->reference,
+                    'stage'       => $case->stage,
+                    'stage_label' => $stage?->label ?? $case->stage,
+                    'tone'        => $stage?->tone,
+                    'occurred_at' => optional($case->occurred_at)->toIso8601String(),
+                    'drivable'    => $case->drivable,
+                    'is_closed'   => $case->isClosed(),
+                    // Where the actions live. The board card links out rather than duplicating the
+                    // case's controls, so there is exactly one place to advance an accident.
+                    'url'         => '/accidents/' . $case->id,
+                ];
+            })() : null,
+            // True only while the ticket is still FENCED — nobody has authorised work. The card reads
+            // this to know it must not offer a dispatch button.
+            'is_accident_cycle' => $status === Maintenance::WF_ACCIDENT_CYCLE,
 
             // Pause Maintenance & Return to Service — while paused, the stage the ticket will resume at,
             // plus when/why it was paused. Null on any non-paused ticket.

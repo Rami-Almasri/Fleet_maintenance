@@ -63,6 +63,11 @@ class MaintenanceWorkflowController extends Controller
      * Logistics dispatch. Terminal rows (closed / diagnostic_cleared) are excluded by openWorkflow().
      */
     private const COLUMNS = [
+        // ACCIDENT CASES. First lane on the board on purpose: a crashed car is the thing the workshop
+        // most needs to know about and the thing it can do least about, and burying it behind the
+        // dispatch queues is how a car ends up invisible for the fortnight the insurer takes. The lane
+        // shows the car and its accident stage; the actions on the card belong to the accident case.
+        'accident'        => [Maintenance::WF_ACCIDENT_CYCLE],
         'triage'          => [Maintenance::WF_COMPLAINT_TRIAGE],     // customer complaint — Abu Maroof triages before any garage
         'requested'       => [Maintenance::WF_INSPECTION_REQUESTED],
         'diagnostic'      => [Maintenance::WF_INSPECTION_DIAGNOSTIC],
@@ -186,6 +191,9 @@ class MaintenanceWorkflowController extends Controller
         'recommendationReviewer:id,name', 'linkedContract:id,contract_no',
         // Deferred maintenance — the card names who postponed the repair, loaded once for the whole board.
         'deferredBy:id,name',
+        // The crash behind the card. Loaded for the whole board so the accident lane does not fire one
+        // query per crashed car — and so a repair that came out of a crash keeps saying so downstream.
+        'accidentCase',
         'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name',
         // Event Type layer — the card renders a type pill and filters by kind, so the catalog each task
         // was typed from is loaded once for the whole board rather than per card.

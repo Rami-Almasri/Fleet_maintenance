@@ -4,6 +4,7 @@ namespace App\Services\Accident;
 
 use App\Models\AccidentCase;
 use App\Models\AccidentFinancialEntry;
+use App\Models\AccidentWorkflowStage;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -54,7 +55,9 @@ class AccidentReportService
             'insurer_overdue'     => AccidentCase::awaitingInsurer()->get()
                 ->filter(fn ($c) => $c->insurerOverdue())->count(),
             'vehicles_restricted' => AccidentCase::rentalBlocking()->distinct('vehicle_id')->count('vehicle_id'),
-            'under_repair'        => (clone $open)->where('stage', AccidentCase::STAGE_REPAIR)->count(),
+            'under_repair'        => (clone $open)->whereIn('stage',
+                AccidentWorkflowStage::where('requirement_key', 'repair_linked')
+                    ->distinct()->pluck('key')->all() ?: ['__none__'])->count(),
 
             // The guardrail's own failure measure. @see the docblock.
             'police_waived'       => AccidentCase::where('police_status', AccidentCase::POLICE_BYPASSED)->count(),
@@ -87,6 +90,41 @@ class AccidentReportService
             // How many happened on hire. The single most commercially loaded number here: every one
             // of these is a contract that kept running while the car was off the road.
             'on_rental' => AccidentCase::where('responsible_party_type', AccidentCase::PARTY_RENTAL_CUSTOMER)->count(),
+
+            // ── WHAT ACTUALLY GETS BROKEN, and what it costs ──────────────────────────────────
+            //
+            // The reason damage is picked from a catalog rather than typed. Grouping by a free-text
+            // area is impossible the moment two people spell it differently; grouping by a catalog
+            // id is a JOIN. This is the query that makes "bumpers cost us more than everything else
+            // combined — put the parking sensors back on the spec" a sentence somebody can say.
+            'by_damage_type' => DB::table('accident_damage_items')
+                ->join('damage_catalog', 'damage_catalog.id', '=', 'accident_damage_items.damage_catalog_id')
+                ->join('accident_cases', 'accident_cases.id', '=', 'accident_damage_items.accident_case_id')
+                ->whereNull('accident_cases.deleted_at')
+                ->groupBy('damage_catalog.id', 'damage_catalog.name', 'damage_catalog.category_key')
+                ->selectRaw('damage_catalog.name, damage_catalog.category_key,
+                             COUNT(*) as items,
+                             COALESCE(SUM(accident_damage_items.estimated_cost), 0) as estimated')
+                ->orderByDesc('items')
+                ->limit(15)
+                ->get()
+                ->map(fn ($r) => [
+                    'name'      => $r->name,
+                    'category'  => $r->category_key,
+                    'items'     => (int) $r->items,
+                    'estimated' => round((float) $r->estimated, 2),
+                ])->all(),
+
+            // And WHERE on the car — the same question on the other axis.
+            'by_damage_area' => DB::table('accident_damage_items')
+                ->join('vehicle_locations', 'vehicle_locations.id', '=', 'accident_damage_items.vehicle_location_id')
+                ->join('accident_cases', 'accident_cases.id', '=', 'accident_damage_items.accident_case_id')
+                ->whereNull('accident_cases.deleted_at')
+                ->groupBy('vehicle_locations.id', 'vehicle_locations.name')
+                ->selectRaw('vehicle_locations.name, COUNT(*) as items')
+                ->orderByDesc('items')
+                ->limit(15)
+                ->pluck('items', 'name')->all(),
         ];
     }
 }

@@ -46,6 +46,9 @@ class CarStatusService
         Maintenance::WF_COMPLAINT_TRIAGE         => ['system',     'Awaiting complaint triage',               'In Triage'],
         Maintenance::WF_TRIAGE_APPROVAL_PENDING  => ['supervisor', 'Awaiting routing approval',               'Waiting Approval'],
         Maintenance::WF_INSPECTION_DIAGNOSTIC    => ['inspector',  'Test-drive diagnostic in progress',       'With Inspector'],
+        // The party is 'system' because on an accident nobody in this list is the one holding it up —
+        // the police, the insurer or the liability decision is. The accident case says which.
+        Maintenance::WF_ACCIDENT_CYCLE           => ['system',     'Accident case in progress',               'Accident Case'],
         Maintenance::WF_RECOMMENDATION_PENDING   => ['supervisor', 'Awaiting recommendation approval',        'Waiting Approval'],
         Maintenance::WF_INSPECTION_PENDING       => ['supervisor', 'Awaiting dispatch decision',              'Ready for Dispatch'],
         Maintenance::WF_ON_SITE_PENDING          => ['garage',     'Pending on-site service',                 'On-Site Service'],
@@ -67,6 +70,9 @@ class CarStatusService
         Maintenance::WF_INSPECTION_REQUESTED     => 8,
         Maintenance::WF_INSPECTION_DIAGNOSTIC    => 12,
         Maintenance::WF_TRIAGE_APPROVAL_PENDING  => 15,
+        // Deliberately low and FLAT: progress through an accident case is the case ladder’s answer, not
+        // this bar’s, and a crashed car has had no repair work done on it whatever stage it is at.
+        Maintenance::WF_ACCIDENT_CYCLE           => 10,
         Maintenance::WF_RECOMMENDATION_PENDING   => 22,
         Maintenance::WF_INSPECTION_PENDING       => 25,
         Maintenance::WF_ON_SITE_PENDING          => 28,
@@ -91,6 +97,7 @@ class CarStatusService
      */
     private const LIVE_PIPELINE = [
         ['Inspection',   [Maintenance::WF_INSPECTION_REQUESTED, Maintenance::WF_INSPECTION_DIAGNOSTIC]],
+        ['Accident',     [Maintenance::WF_ACCIDENT_CYCLE]],
         ['Decision',     [Maintenance::WF_PENDING_REVIEW, Maintenance::WF_COMPLAINT_TRIAGE, Maintenance::WF_TRIAGE_APPROVAL_PENDING, Maintenance::WF_RECOMMENDATION_PENDING, Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_ON_SITE_PENDING]],
         ['Dispatch',     [Maintenance::WF_AWAITING_DISPATCH]],
         ['In Transit',   [Maintenance::WF_IN_TRANSIT]],
@@ -115,6 +122,9 @@ class CarStatusService
         'waiting_test_drive'    => [Maintenance::WF_INSPECTION_REQUESTED, Maintenance::WF_INSPECTION_DIAGNOSTIC],
         'waiting_reinspection'  => [Maintenance::WF_READY_REINSPECTION, Maintenance::WF_REINSPECTION_FAILED],
         'ready_for_delivery'    => [Maintenance::WF_READY_FOR_PICKUP],
+        // Its own KPI rather than folded into 'waiting_approval': what an accident is waiting for is
+        // almost never an approval, and burying it there would make the approval queue unreadable.
+        'accident_cycle'        => [Maintenance::WF_ACCIDENT_CYCLE],
     ];
 
     // ── Dashboard ────────────────────────────────────────────────────────────────────────────────

@@ -20,6 +20,17 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        // SINGLETON so the accident ladder is read once per request rather than once per row.
+        //
+        // Every surface that lists cases — the accident register, the board's accident lane, and each
+        // maintenance ticket carrying an accident block — resolves this service out of the container
+        // while serialising. As a fresh instance per resolution its internal cache would hold nothing
+        // and the workflow + its stages would be re-queried for every single row.
+        //
+        // Singleton, not static state: the lifetime is one request (or one test), so nothing survives
+        // the transaction rollback between tests. @see AccidentWorkflowService::$memo
+        $this->app->singleton(\App\Services\Accident\AccidentWorkflowService::class);
+
         // The single seam for vehicle expense. Excel today, Odoo later — swap the class here (driven by
         // config('expenses.provider')); every consumer keeps depending only on the interface.
         $this->app->bind(VehicleExpenseProvider::class, function ($app) {

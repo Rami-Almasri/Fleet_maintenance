@@ -9,6 +9,7 @@ use App\Http\Resources\AccidentFinancialEntryResource;
 use App\Models\AccidentCase;
 use App\Models\AccidentDamageItem;
 use App\Models\AccidentFinancialEntry;
+use App\Models\AccidentWorkflowStage;
 use App\Models\DamageCatalog;
 use App\Models\Maintenance;
 use App\Models\Vehicle;
@@ -18,6 +19,7 @@ use App\Services\Accident\AccidentChargeService;
 use App\Services\Accident\AccidentContextResolver;
 use App\Services\Accident\AccidentReportService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 
@@ -39,6 +41,20 @@ use Illuminate\Validation\Rule;
  */
 class AccidentCaseController extends Controller
 {
+    /**
+     * Human names for the damage catalog's `category_key`. Kept here rather than in the table because
+     * they are presentation — the KEY is the stored fact, and rewording a heading must not rewrite a
+     * single damage item. Anything unlisted falls back to a headlined key, so a category added to the
+     * catalog tomorrow renders sensibly without a deploy.
+     */
+    private const DAMAGE_CATEGORY_LABELS = [
+        'bodywork' => 'Bodywork', 'interior' => 'Interior', 'tyres' => 'Wheels & tyres',
+    ];
+
+    private const DAMAGE_CATEGORY_LABELS_AR = [
+        'bodywork' => 'الهيكل', 'interior' => 'الداخلية', 'tyres' => 'العجلات والإطارات',
+    ];
+
     public function __construct(
         private AccidentCaseService $cases,
         private AccidentContextResolver $context,
@@ -66,7 +82,14 @@ class AccidentCaseController extends Controller
 
         $query = AccidentCase::query()
             ->with(['vehicle:id,plate_no,make,model,year,odometer,operational_status'])
-            ->withCount(['damageItems', 'repairs', 'documents'])
+            // `repairs` counts AUTHORISED work only. The fenced accident-cycle ticket is every case's
+            // constant companion, so counting it would put "1 repair" on every crash ever reported —
+            // including the ones where nobody has agreed to fix anything.
+            ->withCount([
+                'damageItems',
+                'repairs' => fn ($q) => $q->where('workflow_status', '!=', Maintenance::WF_ACCIDENT_CYCLE),
+                'documents',
+            ])
             ->when($request->filled('stage') && $request->string('stage') !== 'all',
                 fn ($q) => $q->whereIn('stage', explode(',', (string) $request->string('stage'))))
             ->when($request->filled('vehicle_id'), fn ($q) => $q->forVehicle($request->integer('vehicle_id')))
@@ -90,7 +113,9 @@ class AccidentCaseController extends Controller
                 'liability' => $q->awaitingLiability(),
                 'insurer'   => $q->awaitingInsurer(),
                 'rental'    => $q->where('responsible_party_type', AccidentCase::PARTY_RENTAL_CUSTOMER)->openCases(),
-                'repair'    => $q->where('stage', AccidentCase::STAGE_REPAIR),
+                // Stages whose gate is "a repair has been raised" — found by CONFIGURATION rather
+                // than by a stage called "repair", so an office that renames it keeps its queue.
+                'repair'    => $q->whereIn('stage', AccidentWorkflowStage::where('requirement_key', 'repair_linked')->distinct()->pluck('key')->all() ?: ['__none__']),
                 default     => $q,
             })
             ->when(! $request->has('open') || $request->boolean('open'),
@@ -111,7 +136,9 @@ class AccidentCaseController extends Controller
             ],
             // The ladder ships with the list so the board's columns are defined server-side and
             // cannot drift from what the service will actually accept.
-            'stages' => AccidentCase::STAGES,
+            // The ladder the board draws its columns from — the published arrangement, read live.
+            'stages' => AccidentWorkflowStage::whereHas('workflow', fn ($w) => $w->where('status', 'active'))
+                ->orderBy('position')->get(['key', 'label', 'label_ar', 'tone', 'is_terminal'])->all(),
         ], 'Accident cases retrieved');
     }
 
@@ -126,7 +153,7 @@ class AccidentCaseController extends Controller
             'insurerVendor:id,name',
         ]);
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case), 'Accident case retrieved');
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case))->withWorkflow(), 'Accident case retrieved');
     }
 
     /**
@@ -163,12 +190,15 @@ class AccidentCaseController extends Controller
             'drivable'        => ['nullable', 'boolean'],
             'towing_required' => ['nullable', 'boolean'],
             'safety_concerns' => ['nullable', 'string', 'max:2000'],
+            // Damage at INTAKE is optional entirely — somebody standing beside a crashed car may not
+            // know yet, and the assessment stage exists to fill it in. But anything they DO record is
+            // named from the catalog like everywhere else: an accident's damage has to be countable
+            // from the first minute or the intake quietly becomes the hole in the reporting.
             'damage_items'                        => ['nullable', 'array', 'max:30'],
-            'damage_items.*.area_label'           => ['required', 'string', 'max:255'],
+            'damage_items.*.damage_catalog_id'    => ['required', 'exists:damage_catalog,id'],
+            'damage_items.*.vehicle_location_id'  => ['nullable', 'exists:vehicle_locations,id'],
             'damage_items.*.severity'             => ['nullable', Rule::in(AccidentDamageItem::SEVERITIES)],
             'damage_items.*.description'          => ['nullable', 'string', 'max:2000'],
-            'damage_items.*.damage_catalog_id'    => ['nullable', 'exists:damage_catalog,id'],
-            'damage_items.*.vehicle_location_id'  => ['nullable', 'exists:vehicle_locations,id'],
             'damage_items.*.estimated_cost'       => ['nullable', 'numeric', 'min:0', 'max:99999999'],
             'damage_items.*.requires_replacement' => ['nullable', 'boolean'],
         ]);
@@ -176,7 +206,7 @@ class AccidentCaseController extends Controller
         $case = $this->cases->report($data, $request->user());
         $case->load(['vehicle:id,plate_no,make,model,year,odometer,operational_status', 'damageItems']);
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case), 'Accident case opened', 201);
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case))->withWorkflow(), 'Accident case opened', 201);
     }
 
     /** Correct or expand the narrative. Diffed and audited field by field. */
@@ -205,19 +235,30 @@ class AccidentCaseController extends Controller
 
         $case = $this->cases->updateDetails($case, $data, $request->user());
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case->load('vehicle')), 'Accident details updated');
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case->load('vehicle')))->withWorkflow(), 'Accident details updated');
     }
 
     // ── damage ─────────────────────────────────────────────────────────────────────────────────
 
+    /**
+     * Record one damaged area.
+     *
+     * `damage_catalog_id` is REQUIRED and `area_label` is not. That is the whole point of this
+     * endpoint: a typed area name cannot be grouped, so "how much did bumper damage cost us last
+     * year?" is unanswerable the moment anybody writes "front bumper", "Front Bumper " and "f.
+     * bumper". The label is derived from the vocabulary instead — @see AccidentCaseService.
+     *
+     * The catalog carries generic rows ("Body Damage", "Interior Damage") precisely so that
+     * something unusual still has a home without reopening the free-text door; the DESCRIPTION is
+     * where the specifics go, because a sentence is detail, not a category.
+     */
     public function addDamage(Request $request, AccidentCase $case)
     {
         $data = $request->validate([
-            'area_label'           => ['required', 'string', 'max:255'],
+            'damage_catalog_id'    => ['required', 'exists:damage_catalog,id'],
+            'vehicle_location_id'  => ['nullable', 'exists:vehicle_locations,id'],
             'severity'             => ['nullable', Rule::in(AccidentDamageItem::SEVERITIES)],
             'description'          => ['nullable', 'string', 'max:2000'],
-            'damage_catalog_id'    => ['nullable', 'exists:damage_catalog,id'],
-            'vehicle_location_id'  => ['nullable', 'exists:vehicle_locations,id'],
             'estimated_cost'       => ['nullable', 'numeric', 'min:0', 'max:99999999'],
             'requires_replacement' => ['nullable', 'boolean'],
         ]);
@@ -245,7 +286,7 @@ class AccidentCaseController extends Controller
 
         $case = $this->cases->completeAssessment($case, $data, $request->user());
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case->load(['vehicle', 'damageItems'])), 'Damage assessment completed');
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case->load(['vehicle', 'damageItems'])))->withWorkflow(), 'Damage assessment completed');
     }
 
     // ── police ─────────────────────────────────────────────────────────────────────────────────
@@ -261,7 +302,7 @@ class AccidentCaseController extends Controller
 
         $case = $this->cases->recordPoliceReport($case, $data, $request->user());
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case->load('vehicle')), 'Police report recorded');
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case->load('vehicle')))->withWorkflow(), 'Police report recorded');
     }
 
     /**
@@ -274,7 +315,7 @@ class AccidentCaseController extends Controller
 
         $case = $this->cases->verifyPoliceReport($case, $request->user(), $data['note'] ?? null);
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case->load('vehicle')), 'Police report verified');
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case->load('vehicle')))->withWorkflow(), 'Police report verified');
     }
 
     /** Waive it. Reason mandatory — the service refuses an empty one and says why. */
@@ -284,7 +325,7 @@ class AccidentCaseController extends Controller
 
         $case = $this->cases->bypassPoliceReport($case, $data['reason'], $request->user());
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case->load('vehicle')), 'Police report requirement waived');
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case->load('vehicle')))->withWorkflow(), 'Police report requirement waived');
     }
 
     // ── liability ──────────────────────────────────────────────────────────────────────────────
@@ -306,7 +347,7 @@ class AccidentCaseController extends Controller
 
         $case = $this->cases->setLiability($case, $data, $request->user());
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case->load('vehicle')), 'Liability recorded');
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case->load('vehicle')))->withWorkflow(), 'Liability recorded');
     }
 
     // ── insurance ──────────────────────────────────────────────────────────────────────────────
@@ -328,7 +369,7 @@ class AccidentCaseController extends Controller
 
         $case = $this->cases->updateInsurance($case, $data, $request->user());
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case->load('vehicle')), 'Insurance updated');
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case->load('vehicle')))->withWorkflow(), 'Insurance updated');
     }
 
     // ── money ──────────────────────────────────────────────────────────────────────────────────
@@ -443,16 +484,62 @@ class AccidentCaseController extends Controller
 
     // ── the ladder ─────────────────────────────────────────────────────────────────────────────
 
+    /**
+     * MOVE THE CASE ON — to whatever the configured workflow says comes next.
+     *
+     * No target stage is accepted for the ordinary path: a caller naming its own destination is how a
+     * reorder gets quietly ignored. `stage` is optional and means "skip forward to this OPTIONAL
+     * rung"; the gate on the stage being left still applies, and any mandatory rung in between
+     * refuses the jump.
+     */
     public function advance(Request $request, AccidentCase $case)
     {
         $data = $request->validate([
-            'stage' => ['required', Rule::in(AccidentCase::STAGES)],
+            'stage' => ['nullable', 'string', 'max:64'],
             'note'  => ['nullable', 'string', 'max:2000'],
         ]);
 
-        $case = $this->cases->advance($case, $data['stage'], $request->user(), $data['note'] ?? null);
+        $case = ! empty($data['stage'])
+            ? $this->cases->jumpTo($case, $data['stage'], $request->user(), $data['note'] ?? null)
+            : $this->cases->advance($case, $request->user(), $data['note'] ?? null);
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case->load('vehicle')), 'Accident case updated');
+        return ResponseHelper::SuccessResponse(
+            (new AccidentCaseResource($case->load('vehicle')))->withWorkflow(), 'Accident case updated');
+    }
+
+    /**
+     * GO BACK — permissioned at the route (`accidents.workflow.rewind`) and reasoned here. Recorded
+     * as its own kind of movement, because a case going backwards is nearly always somebody finding
+     * that an earlier answer was wrong.
+     */
+    public function rewind(Request $request, AccidentCase $case)
+    {
+        $data = $request->validate([
+            'stage'  => ['required', 'string', 'max:64'],
+            'reason' => ['required', 'string', 'min:5', 'max:2000'],
+        ]);
+
+        $case = $this->cases->rewind($case, $data['stage'], $data['reason'], $request->user());
+
+        return ResponseHelper::SuccessResponse(
+            (new AccidentCaseResource($case->load('vehicle')))->withWorkflow(), 'Accident case moved back');
+    }
+
+    /**
+     * Mark a `manual_confirmation` stage done — the generic gate that lets a stage the office
+     * invented last week work with no migration behind it.
+     */
+    public function confirmStage(Request $request, AccidentCase $case)
+    {
+        $data = $request->validate([
+            'stage' => ['required', 'string', 'max:64'],
+            'note'  => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $this->cases->confirmStage($case, $data['stage'], $request->user(), $data['note'] ?? null);
+
+        return ResponseHelper::SuccessResponse(
+            (new AccidentCaseResource($case->fresh()->load('vehicle')))->withWorkflow(), 'Stage confirmed');
     }
 
     public function close(Request $request, AccidentCase $case)
@@ -461,7 +548,7 @@ class AccidentCaseController extends Controller
 
         $case = $this->cases->close($case, $request->user(), $data['note'] ?? null);
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case->load('vehicle')), 'Accident case closed');
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case->load('vehicle')))->withWorkflow(), 'Accident case closed');
     }
 
     public function reopen(Request $request, AccidentCase $case)
@@ -470,7 +557,7 @@ class AccidentCaseController extends Controller
 
         $case = $this->cases->reopen($case, $data['reason'], $request->user());
 
-        return ResponseHelper::SuccessResponse(new AccidentCaseResource($case->load('vehicle')), 'Accident case reopened');
+        return ResponseHelper::SuccessResponse((new AccidentCaseResource($case->load('vehicle')))->withWorkflow(), 'Accident case reopened');
     }
 
     // ── reads ──────────────────────────────────────────────────────────────────────────────────
@@ -516,7 +603,11 @@ class AccidentCaseController extends Controller
     public function forVehicle(Vehicle $vehicle)
     {
         $cases = AccidentCase::forVehicle($vehicle->id)
-            ->withCount(['damageItems', 'repairs'])
+            // Authorised work only — same reason as the board. @see index()
+            ->withCount([
+                'damageItems',
+                'repairs' => fn ($q) => $q->where('workflow_status', '!=', Maintenance::WF_ACCIDENT_CYCLE),
+            ])
             ->orderByDesc('occurred_at')->orderByDesc('id')->get();
 
         return ResponseHelper::SuccessResponse([
@@ -571,11 +662,39 @@ class AccidentCaseController extends Controller
             'parties'         => AccidentFinancialEntry::PARTIES,
             'document_kinds'  => collect(\App\Models\VehicleDocument::ACCIDENT_KINDS)
                 ->mapWithKeys(fn ($k) => [$k => \App\Models\VehicleDocument::KINDS[$k] ?? $k])->all(),
-            // The damage vocabulary the rest of the app already uses — reused, never re-invented.
-            'damage_catalog'  => DamageCatalog::where('is_active', true)
-                ->orderBy('sort_order')->orderBy('name')
-                ->get(['id', 'name', 'name_ar', 'category_key', 'area_key'])->all(),
-            'locations'       => VehicleLocation::query()->orderBy('name')->get(['id', 'name'])->all(),
+            // ── THE DAMAGE VOCABULARY, GROUPED FOR A PICKER ───────────────────────────────────
+            //
+            // Two axes, exactly as the fault side already models them ([[fault-location-axis]]):
+            // WHAT was damaged (`damage_catalog`) and WHERE on the car (`vehicle_locations`).
+            // Served grouped and bilingual because a flat list of 27 damage types and 50 locations
+            // is a scroll, not a choice — and a picker somebody scrolls past is a picker they type
+            // around, which is how a countable field turns back into free text.
+            'damage_groups'   => DamageCatalog::where('is_active', true)
+                ->orderBy('sort_order')->orderBy('name')->get()
+                ->groupBy('category_key')
+                ->map(fn ($rows, $key) => [
+                    'key'      => $key,
+                    'label'    => self::DAMAGE_CATEGORY_LABELS[$key] ?? Str::headline((string) $key),
+                    'label_ar' => self::DAMAGE_CATEGORY_LABELS_AR[$key] ?? null,
+                    'items'    => $rows->map(fn ($r) => [
+                        'id' => $r->id, 'name' => $r->name, 'name_ar' => $r->name_ar,
+                        // The coarse hint the catalog itself carries; lets the picker pre-filter the
+                        // WHERE list to the places a mirror crack could plausibly be.
+                        'area_key' => $r->area_key,
+                    ])->values()->all(),
+                ])->values()->all(),
+
+            'location_groups' => VehicleLocation::where('is_active', true)
+                ->orderBy('sort_order')->orderBy('name')->get()
+                ->groupBy('group_key')
+                ->map(fn ($rows, $key) => [
+                    'key'      => $key,
+                    'label'    => Str::headline((string) $key),
+                    'locations' => $rows->map(fn ($r) => [
+                        'id' => $r->id, 'name' => $r->name, 'name_ar' => $r->name_ar, 'area_key' => $r->area_key,
+                    ])->values()->all(),
+                ])->values()->all(),
+
             'context_preview' => $preview,
         ], 'Accident intake options retrieved');
     }

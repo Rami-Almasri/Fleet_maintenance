@@ -45,60 +45,60 @@ class AccidentCase extends Model
     use SoftDeletes;
 
     // ── STAGE: where WE are ────────────────────────────────────────────────────────────────────
-    /** Reported. Somebody has told us; almost nothing is known yet. */
-    public const STAGE_REPORTED        = 'reported';
-    /** The paperwork is outstanding. The first real gate, and the most commonly stuck one. */
-    public const STAGE_AWAITING_POLICE = 'awaiting_police';
-    /** Somebody is looking at the car and writing down what is broken. */
-    public const STAGE_ASSESSMENT      = 'assessment';
-    /** Whose fault was it? Open until a named person answers. */
-    public const STAGE_LIABILITY       = 'liability';
-    /** With the insurer. */
-    public const STAGE_INSURANCE       = 'insurance';
-    /** The car is being (or has been) repaired — the maintenance workflow owns this part. */
-    public const STAGE_REPAIR          = 'repair';
-    /** The money. Who owed what, and whether it arrived. */
-    public const STAGE_SETTLEMENT      = 'settlement';
-    /** Finished. */
-    public const STAGE_CLOSED          = 'closed';
+    //
+    // THE LADDER IS DATA NOW. It lives in `accident_workflow_stages`, one row per rung, versioned —
+    // so the office reorders the process from the configuration screen and this model learns about it
+    // without a deploy. `stage` on this row stores a stage KEY, which is why it stays a plain string.
+    //
+    // What used to be three PHP constants (STAGES / OPEN_STAGES / RENTAL_BLOCKING_STAGES) are now
+    // three questions answered against that table — see terminalKeys() and rentalBlockingKeys()
+    // below. The constants are gone deliberately rather than deprecated: leaving them would give the
+    // next reader two lists that disagree the first time somebody edits the workflow.
+    //
+    // @see \App\Services\Accident\AccidentWorkflowService  for movement and gates
+    // @see \App\Models\AccidentWorkflowStage               for what a rung carries
 
     /**
-     * The ladder, in the order a case travels it — which is also the order the progress bar renders.
-     *
-     * A case does NOT have to climb every rung: a car scraped in our own yard bypasses the police
-     * report and may never see an insurer. The ladder is the shape of the journey, not a checklist
-     * every case must complete, and advance() enforces only that it moves FORWARD.
+     * The stage key a case falls back to when no workflow is configured at all. Never used on a
+     * healthy install — startCase() reads the published workflow's own initial rung — but a case must
+     * have somewhere to stand even on a database that has not been seeded.
      */
-    public const STAGES = [
-        self::STAGE_REPORTED,
-        self::STAGE_AWAITING_POLICE,
-        self::STAGE_ASSESSMENT,
-        self::STAGE_LIABILITY,
-        self::STAGE_INSURANCE,
-        self::STAGE_REPAIR,
-        self::STAGE_SETTLEMENT,
-        self::STAGE_CLOSED,
-    ];
-
-    /** Somebody still owes somebody something. Everything except the end of the ladder. */
-    public const OPEN_STAGES = [
-        self::STAGE_REPORTED, self::STAGE_AWAITING_POLICE, self::STAGE_ASSESSMENT,
-        self::STAGE_LIABILITY, self::STAGE_INSURANCE, self::STAGE_REPAIR, self::STAGE_SETTLEMENT,
-    ];
+    public const STAGE_FALLBACK = 'reported';
 
     /**
-     * The stages where the CAR is still compromised, so it must not be offered to a renter.
+     * Per-request memo of the stage-table reads. These lists change about as often as the office
+     * changes its process — roughly never within one HTTP request — and the alternative is a query
+     * every time `isClosed()` is asked on a list of eighty cases.
      *
-     * Deliberately NOT the whole open set. A case sitting at `settlement` is an argument about money
-     * with a repaired car standing in the yard; grounding it would cost real rental days over an
-     * insurer's paperwork. Repair is where the car itself is out, and the maintenance workflow
-     * already grounds it there — this list is what stops it being let while nobody has yet looked at
-     * the damage. @see \App\Services\ContractEligibilityService
+     * @var array<string, array<int,string>>
      */
-    public const RENTAL_BLOCKING_STAGES = [
-        self::STAGE_REPORTED, self::STAGE_AWAITING_POLICE, self::STAGE_ASSESSMENT,
-        self::STAGE_LIABILITY, self::STAGE_INSURANCE, self::STAGE_REPAIR,
-    ];
+    protected static array $stageKeyMemo = [];
+
+    /** Forget the memo. Called by the configuration service after every publish. */
+    public static function flushStageCache(): void
+    {
+        static::$stageKeyMemo = [];
+    }
+
+    /** Every stage key, across every version, that means "this case is finished". */
+    public static function terminalKeys(): array
+    {
+        return static::$stageKeyMemo['terminal'] ??= AccidentWorkflowStage::query()
+            ->where('is_terminal', true)->distinct()->pluck('key')->all() ?: ['closed'];
+    }
+
+    /**
+     * Every stage key that holds the car out of the rental pool.
+     *
+     * Used to be a hard-coded list ending before `settlement`, on the reasoning that arguing with an
+     * insurer about money should not cost rental days. That reasoning still stands — but it is now
+     * the office's call, expressed as a checkbox on each rung, rather than a constant in a model.
+     */
+    public static function rentalBlockingKeys(): array
+    {
+        return static::$stageKeyMemo['blocking'] ??= AccidentWorkflowStage::query()
+            ->where('blocks_rental', true)->distinct()->pluck('key')->all();
+    }
 
     // ── WHO HAD THE CAR ────────────────────────────────────────────────────────────────────────
     public const PARTY_RENTAL_CUSTOMER   = 'rental_customer';
@@ -301,9 +301,10 @@ class AccidentCase extends Model
 
     // ── scopes ─────────────────────────────────────────────────────────────────────────────────
 
+    /** Somebody still owes somebody something — anything not standing on a terminal rung. */
     public function scopeOpenCases(Builder $q): Builder
     {
-        return $q->whereIn('stage', self::OPEN_STAGES);
+        return $q->whereNotIn('stage', self::terminalKeys());
     }
 
     public function scopeForVehicle(Builder $q, int $vehicleId): Builder
@@ -314,18 +315,18 @@ class AccidentCase extends Model
     /** Cases whose car must not be let. The query behind the rental-eligibility block. */
     public function scopeRentalBlocking(Builder $q): Builder
     {
-        return $q->whereIn('stage', self::RENTAL_BLOCKING_STAGES);
+        return $q->whereIn('stage', self::rentalBlockingKeys() ?: ['__none__']);
     }
 
     public function scopeAwaitingPolice(Builder $q): Builder
     {
         return $q->whereIn('police_status', [self::POLICE_MISSING, self::POLICE_RECORDED])
-            ->whereIn('stage', self::OPEN_STAGES);
+            ->whereNotIn('stage', self::terminalKeys());
     }
 
     public function scopeAwaitingLiability(Builder $q): Builder
     {
-        return $q->where('liability_status', self::LIABILITY_PENDING)->whereIn('stage', self::OPEN_STAGES);
+        return $q->where('liability_status', self::LIABILITY_PENDING)->whereNotIn('stage', self::terminalKeys());
     }
 
     public function scopeAwaitingInsurer(Builder $q): Builder
@@ -337,18 +338,24 @@ class AccidentCase extends Model
 
     public function isOpen(): bool
     {
-        return in_array($this->stage, self::OPEN_STAGES, true);
+        return ! $this->isClosed();
     }
 
+    /** Finished — standing on a rung the workflow declares terminal, whatever the office named it. */
     public function isClosed(): bool
     {
-        return $this->stage === self::STAGE_CLOSED;
+        return in_array($this->stage, self::terminalKeys(), true);
     }
 
-    /** Must this car stay out of the rental pool? @see RENTAL_BLOCKING_STAGES for why not all of them. */
+    /**
+     * Must this car stay out of the rental pool?
+     *
+     * Answered by the rung the case is standing on, so "does settlement ground the car?" is a
+     * checkbox on the configuration screen rather than a constant somebody has to be paid to change.
+     */
     public function restrictsRental(): bool
     {
-        return in_array($this->stage, self::RENTAL_BLOCKING_STAGES, true);
+        return in_array($this->stage, self::rentalBlockingKeys(), true);
     }
 
     /** Was the car on hire when it happened? The banner the whole detail page leads with. */
@@ -382,12 +389,19 @@ class AccidentCase extends Model
         );
     }
 
-    /** Where this stage sits on the ladder — what the progress bar counts. */
+    /**
+     * Where this stage sits on THIS case's own ladder — 0-based, for the progress bar.
+     *
+     * Read off the case's pinned workflow rather than a global list, because two cases can legitimately
+     * be running different arrangements at the same time and "step 4 of 8" must mean step 4 of THEIR
+     * eight.
+     */
     public function stageIndex(): int
     {
-        $i = array_search($this->stage, self::STAGES, true);
+        $position = AccidentWorkflowStage::where('workflow_id', $this->workflow_id)
+            ->where('key', $this->stage)->value('position');
 
-        return $i === false ? 0 : $i;
+        return $position ? (int) $position - 1 : 0;
     }
 
     /**

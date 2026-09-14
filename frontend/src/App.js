@@ -56,6 +56,7 @@ import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
+import AccidentWorkflowSettings from './pages/settings/AccidentWorkflowSettings';
 import OdooMappings from './pages/OdooMappings';
 import SimulationPanel from './pages/SimulationPanel';
 import Users from './pages/Users';
@@ -132,6 +133,14 @@ export default function App() {
                 {/* Always available to any authenticated user */}
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/settings" element={<Settings />} />
+                {/* Configuring the accident PROCESS — a different job from working a case, and a
+                    different permission. Reading it rides with accidents.view so the page can render
+                    for somebody who may look but not change; every write route is separately gated on
+                    accidents.workflow.configure in routes/api.php, and the screen hides its buttons to
+                    match. @see AccidentWorkflowSettings */}
+                <Route element={<RequirePermission permission="accidents.view" />}>
+                  <Route path="/settings/accident-workflow" element={<AccidentWorkflowSettings />} />
+                </Route>
                 {/* Module Overview (Odoo-style mini-app home). Self-guards: redirects
                     to the launcher if the user can't reach the module. */}
                 <Route path="/apps/:moduleId" element={<ModuleOverview />} />

@@ -1,4 +1,4 @@
-import { eventKind, QUICK_JUMPS, TYPE_META } from './vehicleTimeline';
+import { countByKind, eventKind, QUICK_JUMPS, TYPE_META } from './vehicleTimeline';
 
 // The Vehicle Timeline's "Accidents" quick-jump has existed since long before accident CASES did, and
 // eventKind() falls through to 'workflow' for anything it does not recognise. That combination is
@@ -55,5 +55,68 @@ describe('accident events on the vehicle timeline', () => {
   // Kept green so the new mapping does not disturb the old one.
   it('still files externally-caused damage findings with accidents', () => {
     expect(eventKind({ event_type: 'task_identified', task_kind: 'damage' })).toBe('accident');
+  });
+});
+
+/**
+ * THE CHIP COUNTS CRASHES, NOT ROWS.
+ *
+ * One accident writes a dozen events, so counting rows told a driver with a single crash that the
+ * car had had nine accidents. Wrong in a way that looks authoritative — exactly the kind of number
+ * somebody repeats in a meeting.
+ */
+describe('the accident chip counts cases, not events', () => {
+  const ev = (event_type, accident_case_id) => ({ event_type, accident_case_id, category: 'accident', source: 'log' });
+
+  it('reports ONE accident for the dozen events a single crash writes', () => {
+    const counts = countByKind([
+      ev('accident_reported', 7),
+      ev('accident_context_captured', 7),
+      ev('accident_damage_recorded', 7),
+      ev('police_report_recorded', 7),
+      ev('police_report_verified', 7),
+      ev('accident_assessed', 7),
+      ev('accident_liability_set', 7),
+      ev('accident_claim_updated', 7),
+      ev('accident_customer_charged', 7),
+    ]);
+    expect(counts.accident).toBe(1);
+  });
+
+  it('counts two crashes as two', () => {
+    const counts = countByKind([
+      ev('accident_reported', 7), ev('accident_assessed', 7),
+      ev('accident_reported', 9), ev('accident_closed', 9),
+    ]);
+    expect(counts.accident).toBe(2);
+  });
+
+  /**
+   * Legacy damage findings predate accident cases and carry no case id. They are genuinely separate
+   * occurrences, so they still count individually — folding them into one would under-count in the
+   * other direction, which is no better than over-counting.
+   */
+  it('still counts case-less damage findings individually', () => {
+    const counts = countByKind([
+      ev('accident_reported', 7), ev('accident_assessed', 7),
+      { event_type: 'task_identified', task_kind: 'damage' },
+      { event_type: 'task_identified', task_kind: 'damage' },
+    ]);
+    expect(counts.accident).toBe(3, '1 case + 2 loose findings');
+  });
+
+  /** Every other kind still counts rows — this change is scoped to accidents alone. */
+  it('leaves the other kinds counting rows', () => {
+    const counts = countByKind([
+      { event_type: 'task_identified', task_kind: 'fault' },
+      { event_type: 'task_identified', task_kind: 'fault' },
+      { event_type: 'dispatched', category: 'movement' },
+    ]);
+    expect(counts.fault).toBe(2);
+    expect(counts.dispatch).toBe(1);
+  });
+
+  it('omits the accident key entirely when there are none', () => {
+    expect(countByKind([{ event_type: 'dispatched', category: 'movement' }]).accident).toBeUndefined();
   });
 });

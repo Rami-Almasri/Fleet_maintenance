@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\WorkflowTransitionException;
+use App\Models\AccidentCase;
 use App\Models\Contract;
 use App\Models\FaultCause;
 use App\Models\InspectorPadFlag;
@@ -90,6 +91,18 @@ class MaintenanceWorkflowService
         // in submitReport() exists to prevent. A fault that turns out not to be real is closed through
         // the ordinary mark-incorrect path, which leaves a reason behind.
         Maintenance::WF_MAINTENANCE_DEFERRED => [Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_ON_SITE_PENDING],
+        // ACCIDENT CYCLE. A crashed car sits here while its accident case is worked — and the case, not
+        // this map, decides how long that takes. Two ways out, and both are decisions somebody made:
+        // repair is AUTHORISED (→ the ordinary dispatch queue, from which nothing about the maintenance
+        // lifecycle is different) or the case ends with nothing to fix (→ terminal). There is no route
+        // to a garage that does not pass through an authorisation, which is the whole point of fencing
+        // it: a crash must not be able to dispatch a car by itself. @see Maintenance::WF_ACCIDENT_CYCLE
+        Maintenance::WF_ACCIDENT_CYCLE => [
+            Maintenance::WF_INSPECTION_PENDING,
+            Maintenance::WF_ON_SITE_PENDING,
+            Maintenance::WF_ACCIDENT_NO_REPAIR,
+        ],
+        Maintenance::WF_ACCIDENT_NO_REPAIR => [],
         // RETIRED approval gate. Nothing enters recommendation_pending any more; the entry is kept only so
         // legacy rows still transition out of it (a one-off migration moves them to inspection_pending).
         Maintenance::WF_RECOMMENDATION_PENDING => [Maintenance::WF_INSPECTION_PENDING],
@@ -3941,6 +3954,205 @@ class MaintenanceWorkflowService
 
             return $ticket->load($this->eager());
         });
+    }
+
+    // ── ACCIDENT CYCLE ──────────────────────────────────────────────────────────
+    //
+    // A crashed car belongs on the maintenance board from the moment it is hit, and belongs to NOBODY
+    // in this service until somebody authorises a repair. These three methods are the whole of that:
+    // open the fenced ticket, promote it when repair is authorised, or end it when there was nothing to
+    // fix. Everything in between — police, liability, the insurer's visit, recovery or a test drive —
+    // is the accident case's business and is not mirrored here. @see Maintenance::WF_ACCIDENT_CYCLE
+
+    /**
+     * Open the fenced ticket that puts a crashed car on the Maintenance Cycle board.
+     *
+     * IDEMPOTENT, and that matters more than it looks: an accident case can be reported, rewound,
+     * reopened and re-advanced, and every one of those paths reaches for this. It returns the case's
+     * existing ticket whenever there is one — including a ticket that has already been promoted into
+     * the real lifecycle, which must never be dragged back into the fence behind the garage's back.
+     *
+     * Raises NO dispatch alert and touches NO operational status. The car is not in maintenance; it is
+     * in an accident, and the desk that needs to know has already been told by the accident case.
+     */
+    public function openAccidentCycle(AccidentCase $case, User $actor): Maintenance
+    {
+        $existing = Maintenance::where('accident_case_id', $case->id)
+            ->orderBy('id')->first();
+        if ($existing) {
+            return $existing->load($this->eager());
+        }
+
+        $vehicle = $case->vehicle ?: Vehicle::find($case->vehicle_id);
+        if (! $vehicle) {
+            throw new WorkflowTransitionException('That accident has no vehicle on it.', ['field' => 'vehicle_id']);
+        }
+        // Deliberately NOT assertActiveFleet(). A car can be written off, sold or retired while its
+        // accident file is still open — and refusing to put the crash on the board because the crash
+        // took the car out of the active fleet is precisely backwards.
+
+        return DB::transaction(function () use ($case, $vehicle, $actor) {
+            $ticket = new Maintenance();
+            $ticket->origin           = Maintenance::ORIGIN_MANUAL;
+            $ticket->vehicle_id       = $vehicle->id;
+            $ticket->accident_case_id = $case->id;
+            $ticket->workflow_status  = Maintenance::WF_ACCIDENT_CYCLE;
+            $ticket->trigger_reason   = Maintenance::TRIGGER_BREAKDOWN;
+            $ticket->request_origin   = Maintenance::SOURCE_ACCIDENT;
+            // 'accident_rental' is the existing tag for a crash that happened on hire — the one context the
+            // Rental-First signals already understand. A crash off-hire is an ordinary standard visit.
+            $ticket->visit_context    = $case->wasWithCustomer() ? 'accident_rental' : 'standard';
+            $ticket->customer_complaint = $this->accidentComplaint($case);
+            // Graded from the CAR's condition, not from the crash's drama: a car that still drives is a
+            // moderate job whatever the bodywork looks like, and one that cannot move is critical
+            // because it is stranded. Anything finer is the inspector's call after he has seen it.
+            $severity = $case->drivable === false ? 'critical' : 'moderate';
+            $ticket->fault_severity   = $severity;
+            $ticket->severity         = $severity;
+            $ticket->maintenance_type = Maintenance::TYPE_BREAKDOWN;
+            $ticket->event_status     = 'IN'; // parked — the car is not at a garage
+            $ticket->requested_by     = $actor->id;
+            $ticket->requested_at     = Carbon::now();
+            $ticket->responsible      = $actor->name;
+            $ticket->save();
+
+            // Reconcile rather than set: opening an accident file must not steal the car's status from a
+            // running rental. Whether the car may go out again is the accident case's answer, given
+            // through ContractEligibilityService — not this ticket's.
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_REPORT_FILED, $actor, [
+                'description' => 'Accident case ' . $case->reference . ' opened on the maintenance board (by ' . $actor->name . ')',
+                'meta'        => [
+                    'source'           => 'accident_cycle',
+                    'accident_case_id' => $case->id,
+                    'reference'        => $case->reference,
+                    'drivable'         => $case->drivable,
+                ],
+            ]);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * REPAIR IS AUTHORISED — the fenced ticket enters the ordinary maintenance lifecycle.
+     *
+     * The one door out of the fence, and it is the same door every other pre-ticket state uses:
+     * inspection_pending, the Supervisor's dispatch queue. Nothing downstream of here knows or cares
+     * that the ticket came from a crash; the whole lifecycle runs unchanged.
+     *
+     * `$onSite` routes a job small enough to be done where the car stands into the mobile lane instead,
+     * mirroring routeComplaint — a scraped mirror does not need a recovery truck.
+     */
+    public function authoriseAccidentRepair(Maintenance $ticket, User $actor, bool $onSite = false, ?string $note = null): Maintenance
+    {
+        if ($ticket->workflow_status !== Maintenance::WF_ACCIDENT_CYCLE) {
+            // Not an error worth throwing over: the case's ladder calls this whenever it passes the
+            // authorisation rung, and passing it twice is normal. Already promoted = already done.
+            return $ticket->load($this->eager());
+        }
+
+        $target = $onSite ? Maintenance::WF_ON_SITE_PENDING : Maintenance::WF_INSPECTION_PENDING;
+        $this->assertTransition($ticket, $target);
+
+        return DB::transaction(function () use ($ticket, $actor, $target, $note) {
+            $ticket->workflow_status = $target;
+            $ticket->save();
+
+            $this->cascade($ticket->vehicle_id);
+
+            $text = $this->clean($note);
+            $this->log->record($ticket, VehicleLogEvent::EVENT_STATUS_UPDATE, $actor, [
+                'description' => 'Accident repair authorised — the car enters the maintenance pipeline'
+                                . ($text ? ': “' . $text . '”' : '')
+                                . ' (by ' . $actor->name . ')',
+                'meta' => [
+                    'source'           => 'accident_cycle',
+                    'action'           => 'authorise_repair',
+                    'accident_case_id' => $ticket->accident_case_id,
+                    'workflow_status'  => $target,
+                ],
+            ]);
+
+            // NOW the Supervisors are told — not when the crash was reported. Everything before this
+            // point was an accident file; this is the first moment there is a garage decision to make.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByPermission(
+                $target === Maintenance::WF_ON_SITE_PENDING ? self::NOTIFY_INSPECTOR : self::NOTIFY_DISPATCHER,
+                [
+                    'type'     => 'maint_accident_authorised',
+                    'category' => 'maintenance',
+                    'severity' => 'warning',
+                    'title'    => '🚨 Accident repair authorised · ' . $this->label($vehicle),
+                    'body'     => trim('The accident case on ' . $this->label($vehicle) . ' has reached repair'
+                                    . ($target === Maintenance::WF_ON_SITE_PENDING
+                                        ? ' — it can be done where the car stands.'
+                                        : ' — pick a garage and assign a driver.')),
+                    'url'      => $this->link($ticket),
+                    'key'      => 'maint_wf:' . $ticket->id . ':accident_authorised',
+                    'icon'     => 'bell',
+                    'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'accident_case_id' => $ticket->accident_case_id],
+                ],
+                $actor->id
+            );
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * The case ended and nothing is being repaired — written off, fixed by the other party's insurer, or
+     * judged not worth doing. The fenced ticket closes out so the board does not carry a ghost row that
+     * nobody can act on and nobody can clear.
+     *
+     * Silently does nothing to a ticket that has already left the fence: once a repair was authorised,
+     * that repair is a real job with its own ending, and closing an accident file must not reach into
+     * the workshop and cancel work that may already be under way.
+     */
+    public function closeAccidentCycle(Maintenance $ticket, User $actor, ?string $reason = null): Maintenance
+    {
+        if ($ticket->workflow_status !== Maintenance::WF_ACCIDENT_CYCLE) {
+            return $ticket->load($this->eager());
+        }
+
+        $this->assertTransition($ticket, Maintenance::WF_ACCIDENT_NO_REPAIR);
+
+        return DB::transaction(function () use ($ticket, $actor, $reason) {
+            $ticket->workflow_status = Maintenance::WF_ACCIDENT_NO_REPAIR;
+            $ticket->event_status    = 'OUT';
+            $ticket->save();
+
+            $this->cascade($ticket->vehicle_id);
+
+            $text = $this->clean($reason);
+            $this->log->record($ticket, VehicleLogEvent::EVENT_STATUS_UPDATE, $actor, [
+                'description' => 'Accident case closed with no repair authorised'
+                                . ($text ? ': “' . $text . '”' : '')
+                                . ' (by ' . $actor->name . ')',
+                'meta' => [
+                    'source'           => 'accident_cycle',
+                    'action'           => 'close_no_repair',
+                    'accident_case_id' => $ticket->accident_case_id,
+                ],
+            ]);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * The complaint line the board card reads. Written as a sentence about the CAR rather than about the
+     * paperwork, because the person scanning the board wants to know what state the vehicle is in.
+     */
+    private function accidentComplaint(AccidentCase $case): string
+    {
+        $where = $case->location ? ' at ' . $case->location : '';
+        $move  = $case->drivable === false ? ' The car cannot be driven.'
+               : ($case->drivable === true ? ' The car still drives.' : '');
+
+        return trim('Accident ' . $case->reference . $where . '.' . $move
+            . ($case->description ? ' ' . $case->description : ''));
     }
 
     // ── CUSTOMER-COMPLAINT TRIAGE (Abu Maroof) ──────────────────────────────────
@@ -10195,6 +10407,8 @@ class MaintenanceWorkflowService
     /** Relations every transition returns hydrated for the API. */
     private function eager(): array
     {
-        return ['vendor', 'reason', 'vehicle:id,plate_no,make,model,year,code,operational_status,odometer,last_service_odometer,service_synced_at,service_due_date,purchase_date,created_at', 'inspector:id,name', 'requester:id,name', 'linkedContract:id,contract_no', 'assignedDriver:id,name', 'delegatedBy:id,name', 'pickedUpFromGarageBy:id,name', 'watchers:id,name', 'lineItems', 'activeTemporaryRelease', 'temporaryReleases', 'driverObservation:id,inspection_request_id'];
+        return ['vendor', 'reason', 'vehicle:id,plate_no,make,model,year,code,operational_status,odometer,last_service_odometer,service_synced_at,service_due_date,purchase_date,created_at', 'inspector:id,name', 'requester:id,name', 'linkedContract:id,contract_no', 'assignedDriver:id,name', 'delegatedBy:id,name', 'pickedUpFromGarageBy:id,name', 'watchers:id,name', 'lineItems', 'activeTemporaryRelease', 'temporaryReleases', 'driverObservation:id,inspection_request_id',
+            // Eager-loaded so the board does not fire one accident query per crashed card.
+            'accidentCase'];
     }
 }
