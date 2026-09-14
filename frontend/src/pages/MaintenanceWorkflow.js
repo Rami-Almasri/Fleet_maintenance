@@ -7,7 +7,11 @@ import { useAuth } from '../auth/AuthContext';
 import { useI18n } from '../i18n/I18nContext';
 import { useToast } from '../components/ui/Toast';
 import Icon from '../components/ui/Icon';
+import ActionMenu from '../components/ui/ActionMenu';
 import { Tooltip } from '../components/ui/Tooltip';
+// The car's own photograph — the same registry the Fleet hub and My Queue read. A miss is silent and
+// falls back to the marque logo, then to a neutral silhouette; it NEVER guesses a different car.
+import { carPhoto, brandLogo, vehicleName } from '../lib/carAssets';
 import TicketActionModal from '../components/workflow/TicketActionModal';
 import SendCarInModal from '../components/workflow/SendCarInModal';
 import TicketDetailDrawer from '../components/workflow/TicketDetailDrawer';
@@ -20,13 +24,11 @@ import TestIntakeModal from '../components/workflow/TestIntakeModal';
 import CreateMoveModal from './logistics/CreateMoveModal';
 import CycleGuide from '../components/workflow/CycleGuide';
 import {
-  resolveAction, allows, ctaLabel, TASK_STATUS, stageAge,
+  resolveAction, allows, ctaLabel, TASK_STATUS, stageAge, stageSeconds,
   isAtGarage, custodyBlocked, custodyHolderName, heldFindings, findingHoldBlocks,
 } from '../components/workflow/meta';
 import { useLanes, PIPELINE_KEYS } from '../config/maintenanceLanes';
-import {
-  CommandPanel, OpsClock,
-} from '../components/ops';
+import { CommandPanel } from '../components/ops';
 import '../components/ops/ops.css';
 import './maintenance-workflow.css';
 
@@ -36,6 +38,78 @@ import './maintenance-workflow.css';
 // Cards shown per lane before the "+N more" toggle. Keeps every collapsed column short and roughly
 // even (no scroll); expanding a lane reveals all its cards on demand.
 const LANE_PAGE_SIZE = 3;
+
+/**
+ * The car's photograph, or the honest fallbacks behind it. A picture is a claim about which vehicle
+ * this ticket is — we hold no photo for roughly a third of the fleet, and those cards show the marque
+ * logo or a silhouette rather than a car we do not own. Same rule as the My Queue board.
+ */
+function CarShot({ car }) {
+  const photo = carPhoto(car, '');
+  const logo = photo ? null : brandLogo(car, '');
+  if (photo) return <img className="mwf-shot-img" src={photo} alt="" loading="lazy" />;
+  if (logo) return <img className="mwf-shot-logo" src={logo} alt="" loading="lazy" />;
+  return <Icon.Car className="mwf-shot-silhouette" />;
+}
+
+// The masthead's date + running clock. Arabic stays Gregorian with Latin digits, or the calendar
+// switches under the reader and the tabular alignment breaks.
+function BoardClock() {
+  const { lang } = useI18n();
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const timeLoc = lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined;
+  const dateLoc = lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined;
+  return (
+    <>
+      <span className="d">{now.toLocaleDateString(dateLoc, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</span>
+      <strong className="tm tnum">{now.toLocaleTimeString(timeLoc, { hour: '2-digit', minute: '2-digit' })}</strong>
+    </>
+  );
+}
+
+// A glyph per stage, for the lane header. Purely presentational — it says what KIND of waiting a lane
+// is (a drive, a look, a trip, a workshop), nothing the data doesn't already.
+const LANE_ICON = {
+  requested: Icon.Car,
+  diagnostic: Icon.Search,
+  pending: Icon.Truck,
+  awaiting_pickup: Icon.Wrench,
+  in_transit: Icon.Route,
+  under_repair: Icon.Wrench,
+  ready_for_pickup: Icon.Check,
+  qa_reinspection: Icon.Shield,
+  accident: Icon.Alert,
+  triage: Icon.Flag,
+  repair_review: Icon.Video,
+  reinspection_failed: Icon.XCircle,
+  paused: Icon.Clock,
+  returned_waiting_resume: Icon.Refresh,
+  on_site: Icon.Box,
+  deferred: Icon.Calendar,
+};
+// NO HEADLINE STRIP. A row of stage totals above the board restated the lane headers directly beneath
+// it — the same four numbers, twice, in the same glance. The lanes are the count.
+
+// The marque word this ticket's car is filed under — the first word of the fleet's own "make model"
+// string, read as typed and never repaired. Drives the Brands filter; an unnamed car is excluded.
+function brandOf(tk) {
+  const first = String(tk.car || '').trim().split(/[\s/]+/)[0] || '';
+  return first.length > 1 ? first.toUpperCase() : '';
+}
+
+// How the cards inside every lane are ordered. All four read fields the board already carries, so no
+// sort invents a ranking the data cannot support.
+const SEV_RANK = { critical: 3, moderate: 2, routine: 1 };
+const SORTS = {
+  recent:   (a, b) => (stageSeconds(a) ?? Infinity) - (stageSeconds(b) ?? Infinity),
+  longest:  (a, b) => (stageSeconds(b) ?? -1) - (stageSeconds(a) ?? -1),
+  severity: (a, b) => (SEV_RANK[b.fault_severity] || 0) - (SEV_RANK[a.fault_severity] || 0),
+  plate:    (a, b) => String(a.plate || '').localeCompare(String(b.plate || '')),
+};
 
 // The pipeline "journey" spine — a segmented bar showing how far a ticket has moved through the 8
 // canonical stages. Filled segments glow in the stage tone; the current one pulses. Off-pipeline
@@ -152,11 +226,13 @@ function PartRow({ part }) {
   );
 }
 
+// The severity narrowing. The words themselves come from the catalog (workflow.faultSeverity.*), so
+// the filter reads in the same language as the chip it filters on.
 const SEV_FILTERS = [
-  { value: '', label: 'All' },
-  { value: 'critical', label: '🔴 Critical' },
-  { value: 'moderate', label: '🟡 Moderate' },
-  { value: 'routine', label: '🟢 Routine' },
+  { value: '' },
+  { value: 'critical', emoji: '🔴' },
+  { value: 'moderate', emoji: '🟡' },
+  { value: 'routine', emoji: '🟢' },
 ];
 
 // One dark board card — the Cockpit restyle of the classic ticket card. It keeps EVERY operator
@@ -225,11 +301,14 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
     >
       <span className="mwf-rail" style={{ background: tone }} />
       <div className="mwf-card-bd">
-        {/* Plate + vehicle + time-in-stage + jump-to-command-view */}
+        {/* The car itself — photograph, plate, model — then time-in-stage + jump-to-command-view.
+            A card on this board is a CAR before it is a ticket: the picture is what a dispatcher
+            recognises from across the room, so it leads. */}
         <div className="mwf-card-top">
+          <div className="mwf-shot"><CarShot car={tk.car} /></div>
           <div className="mwf-id">
             <span className="mwf-plate"><Icon.Car className="h-3.5 w-3.5" strokeWidth={2} />{tk.plate || `#${tk.id}`}</span>
-            {tk.car && <span className="mwf-car" title={tk.car}>{tk.car}</span>}
+            {tk.car && <span className="mwf-car" title={tk.car}>{vehicleName(tk.car, '')}</span>}
           </div>
           <div className="mwf-id-right">
             {age && (
@@ -487,13 +566,14 @@ function Lane({ lane, loading, expanded, onToggle, cardProps }) {
   const tickets = lane.tickets;
   const shown = expanded ? tickets : tickets.slice(0, LANE_PAGE_SIZE);
   const hidden = tickets.length - shown.length;
+  const Ic = LANE_ICON[lane.key] || Icon.Car;
   return (
-    <div className="mwf-lane">
+    <div className="mwf-lane" style={{ '--tone': lane.tone }}>
       <span className="mwf-lane-accent" style={{ background: lane.tone }} />
       <div className="mwf-lane-hd">
-        <span className="dot" style={{ background: lane.tone, boxShadow: `0 0 8px ${lane.tone}` }} />
-        <span className="nm">{lane.name}</span>
-        <span className="ct" style={{ color: lane.tone, background: `${lane.tone}22` }}>{tickets.length}</span>
+        <span className="ic" aria-hidden="true"><Ic /></span>
+        <span className="nm" title={lane.hint}>{lane.name}</span>
+        <span className="ct">{tickets.length}</span>
       </div>
       <div className="mwf-lane-bd">
         {loading ? (
@@ -542,6 +622,12 @@ export default function MaintenanceWorkflow() {
   const [locationCatalog, setLocationCatalog] = useState({ groups: [], policy: {}, maxQuantity: 40 });
   const [drivers, setDrivers] = useState([]);
   const [sevFilter, setSevFilter] = useState('');
+  // Two more narrowings on the same board: the marque the car is filed under, and the garage the
+  // ticket is routed to. Both are read off the tickets themselves, so the dropdowns only ever offer
+  // values that are actually on the board right now.
+  const [brandFilter, setBrandFilter] = useState('');
+  const [garageFilter, setGarageFilter] = useState('');
+  const [sortKey, setSortKey] = useState('recent');
   const [query, setQuery] = useState('');
   const [view, setView] = useState('board');        // board | list
   // Focused stage — 'all' or a lane key. Seeded from the URL (?stage=…) so the "Maintenance Cycle"
@@ -611,6 +697,8 @@ export default function MaintenanceWorkflow() {
   // Client-side filters shared by the board + list.
   const matchesFilters = useCallback((tk) => {
     if (sevFilter && tk.fault_severity !== sevFilter) return false;
+    if (brandFilter && brandOf(tk) !== brandFilter) return false;
+    if (garageFilter && (tk.garage || '') !== garageFilter) return false;
     if (query) {
       const q = query.toLowerCase();
       const hay = [tk.plate, tk.car, tk.garage, tk.customer_complaint, ...(tk.tasks || []).map((x) => x.symptom)]
@@ -618,12 +706,24 @@ export default function MaintenanceWorkflow() {
       if (!hay.includes(q)) return false;
     }
     return true;
-  }, [sevFilter, query]);
+  }, [sevFilter, brandFilter, garageFilter, query]);
 
   const buildLanes = useCallback((defs) => defs.map((l) => ({
     ...l,
-    tickets: (columns[l.key] || []).filter(matchesFilters),
-  })), [columns, matchesFilters]);
+    tickets: (columns[l.key] || []).filter(matchesFilters).sort(SORTS[sortKey] || SORTS.recent),
+  })), [columns, matchesFilters, sortKey]);
+
+  // The dropdown options — built from every ticket the board holds, NOT from the filtered view, so
+  // picking one brand never empties the list you would use to pick a different one.
+  const allBoardTickets = useMemo(() => Object.values(columns).flat(), [columns]);
+  const brandOptions = useMemo(
+    () => [...new Set(allBoardTickets.map(brandOf).filter(Boolean))].sort(),
+    [allBoardTickets],
+  );
+  const garageOptions = useMemo(
+    () => [...new Set(allBoardTickets.map((tk) => tk.garage).filter(Boolean))].sort(),
+    [allBoardTickets],
+  );
 
   const primaryLanes = useMemo(() => buildLanes(laneDefs.primary), [buildLanes, laneDefs]);
   // Always show every stage lane (empty ones render their "No tickets" state) so the board keeps a
@@ -700,19 +800,46 @@ export default function MaintenanceWorkflow() {
   return (
     <div className="opx mwf">
       <div className="opx-body">
-        {/* ---- Command header — live pipeline title + running clock ---- */}
-        <header className="mwf-hero">
-          <div className="mwf-hero-id">
-            <span className="mwf-hero-ic"><Icon.Wrench className="h-6 w-6" strokeWidth={2} /></span>
-            <div className="mwf-hero-copy">
-              <h1>
-                Maintenance Command
-                <span className="mwf-live"><span className="d" />LIVE</span>
-              </h1>
-              <p>{openTotal} {openTotal === 1 ? 'ticket' : 'tickets'} in the pipeline · auto-refreshing every 6s</p>
-            </div>
+        {/* ---- Masthead — what this page is, what time it is, and the one button that adds work ---- */}
+        <header className="mwf-hdr">
+          <div className="mwf-hdr-main">
+            <nav className="mwf-crumbs" aria-label={t('workflow.board.breadcrumb')}>
+              <span>{t('workflow.board.breadcrumb')}</span>
+              <Icon.ArrowRight className="sep" aria-hidden="true" />
+              <b>{t('workflow.board.title')}</b>
+            </nav>
+            <h1>{t('workflow.board.title')}</h1>
+            <p>{t('workflow.board.tagline')}</p>
           </div>
-          <div className="mwf-hero-clock"><OpsClock /></div>
+
+          <div className="mwf-hdr-when">
+            <span className="ic"><Icon.Calendar /></span>
+            <span className="txt"><BoardClock /></span>
+            <span className="mwf-live" title={t('workflow.board.live')}><span className="d" />{t('workflow.board.liveNow')}</span>
+          </div>
+
+          {/* Either door qualifies: a driver asks for a look, an inspector or supervisor can also send
+              a car straight to a garage. SendCarInModal shows only the doors the caller may use. The
+              caret carries the intake that isn't a car being sent in — a customer's complaint. */}
+          {(canLogistics || canInitiate || canManage) && (
+            <div className="mwf-hdr-acts">
+              <button type="button" className="mwf-newbtn" onClick={() => setModal({ action: 'request' })}>
+                <Icon.Plus className="h-4 w-4" /> {t('workflow.board.newTicket')}
+              </button>
+              {canManage && (
+                <span className="mwf-newbtn-more">
+                  <ActionMenu
+                    glyph="⌄"
+                    label={t('workflow.board.newTicket')}
+                    items={[
+                      { key: 'request', label: t('workflow.board.requestInspection'), onSelect: () => setModal({ action: 'request' }) },
+                      { key: 'complaint', label: t('workflow.board.newComplaint'), onSelect: () => setModal({ action: 'complaint' }) },
+                    ]}
+                  />
+                </span>
+              )}
+            </div>
+          )}
         </header>
 
         {error && <div className="mwf-error">{error}</div>}
@@ -724,14 +851,28 @@ export default function MaintenanceWorkflow() {
             <input className="opx-input" placeholder={t('workflow.board.searchPlaceholder')} value={query} onChange={(e) => setQuery(e.target.value)} style={{ paddingLeft: 34 }} />
           </div>
           <select className="opx-select" value={sevFilter} onChange={(e) => setSevFilter(e.target.value)}>
-            {SEV_FILTERS.map((f) => <option key={f.value || 'all'} value={f.value}>{f.label}</option>)}
+            {SEV_FILTERS.map((f) => (
+              <option key={f.value || 'all'} value={f.value}>
+                {f.value ? `${f.emoji} ${t(`workflow.faultSeverity.${f.value}`)}` : t('workflow.board.allStatus')}
+              </option>
+            ))}
           </select>
-          {(query || sevFilter) && (
-            <button className="opx-btn" onClick={() => { setQuery(''); setSevFilter(''); }}>{t('workflow.board.clear')}</button>
+          <select className="opx-select" value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)}>
+            <option value="">{t('workflow.board.allBrands')}</option>
+            {brandOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <select className="opx-select" value={garageFilter} onChange={(e) => setGarageFilter(e.target.value)}>
+            <option value="">{t('workflow.board.allGarages')}</option>
+            {garageOptions.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+          {(query || sevFilter || brandFilter || garageFilter) && (
+            <button className="opx-btn" onClick={() => { setQuery(''); setSevFilter(''); setBrandFilter(''); setGarageFilter(''); }}>{t('workflow.board.clear')}</button>
           )}
 
           <div className="mwf-toolbar-right">
-            <span className="mwf-toolbar-meta">{visibleTickets.length} shown</span>
+            {/* The filters narrow what is DRAWN and never what is counted above — so whenever they hide
+                a card, the strip says how many are left rather than letting the headline numbers lie. */}
+            <span className="mwf-toolbar-meta">{t('workflow.board.shown', { n: visibleTickets.length })}</span>
             <button
               type="button"
               className={`opx-btn ${showCycleGuide ? 'primary' : ''}`}
@@ -741,13 +882,19 @@ export default function MaintenanceWorkflow() {
               <Icon.Activity className="h-4 w-4" /> {t('workflow.cycle.toggle')}
             </button>
             <div className="seg">
-              <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>{t('workflow.board.viewBoard')}</button>
-              <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>{t('workflow.board.viewList')}</button>
+              <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>
+                <Icon.Chart className="h-3.5 w-3.5" /> {t('workflow.board.viewBoard')}
+              </button>
+              <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>
+                <Icon.Filter className="h-3.5 w-3.5" /> {t('workflow.board.viewList')}
+              </button>
             </div>
-            {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>📣 {t('workflow.board.newComplaint')}</button>}
-            {/* Either door qualifies: a driver asks for a look, an inspector or supervisor can also send
-                a car straight to a garage. SendCarInModal shows only the doors the caller may use. */}
-            {(canLogistics || can('maintenance.initiate') || can('maintenance.manage')) && <button className="opx-btn primary" onClick={() => setModal({ action: 'request' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}</button>}
+            <select className="opx-select mwf-sort" value={sortKey} onChange={(e) => setSortKey(e.target.value)} aria-label={t('workflow.board.sortBy')}>
+              <option value="recent">{t('workflow.board.sort.recent')}</option>
+              <option value="longest">{t('workflow.board.sort.longest')}</option>
+              <option value="severity">{t('workflow.board.sort.severity')}</option>
+              <option value="plate">{t('workflow.board.sort.plate')}</option>
+            </select>
           </div>
         </div>
 

@@ -8,28 +8,47 @@
 .mwf .mwf-error{margin-bottom:14px;padding:11px 14px;border-radius:11px;font-size:13px;
   color:var(--crit);background:rgba(251,113,133,.08);border:1px solid rgba(251,113,133,.3)}
 
-/* ---- command header — live pipeline title + running clock ---- */
-.mwf-hero{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:16px;
-  padding:16px 18px;border-radius:16px;border:1px solid var(--line);
-  background:linear-gradient(135deg,var(--panel),var(--deep));position:relative;overflow:hidden}
-.mwf-hero::before{content:"";position:absolute;inset:0;pointer-events:none;
-  background:radial-gradient(60% 140% at 0% 0%,rgba(34,211,238,.10),transparent 60%),
-            radial-gradient(50% 130% at 100% 100%,rgba(139,123,251,.08),transparent 60%)}
-.mwf-hero-id{display:flex;align-items:center;gap:14px;min-width:0;position:relative}
-.mwf-hero-ic{flex:none;display:grid;place-items:center;width:46px;height:46px;border-radius:13px;
-  color:#fff;background:linear-gradient(135deg,var(--brand),var(--cyan));
-  box-shadow:0 12px 26px -12px var(--cyan)}
-.mwf-hero-copy{min-width:0}
-.mwf-hero-copy h1{margin:0;font-size:21px;font-weight:800;letter-spacing:-.02em;color:var(--ink);
-  display:flex;align-items:center;gap:11px;line-height:1.15}
-.mwf-hero-copy p{margin:3px 0 0;font-size:12.5px;color:var(--ink-3);letter-spacing:.01em}
-.mwf-hero-clock{margin-inline-start:auto;font-family:var(--mono);font-size:13px;color:var(--ink-2);position:relative}
-.mwf-hero-clock .clock b{color:var(--ink);font-weight:600}
-@media(max-width:640px){.mwf-hero-clock{margin-inline-start:0;width:100%}}
+/* =======================================================================
+   MASTHEAD — where you are, what this board is, what time it is, and the one
+   button that adds work to it. Everything else on the page is work that has
+   already arrived.
+   ======================================================================= */
+.mwf-hdr{display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-bottom:20px}
+.mwf-hdr-main{flex:1 1 320px;min-width:0}
+.mwf-crumbs{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--ink-3);margin-bottom:7px}
+.mwf-crumbs b{font-weight:700;color:var(--ink-2)}
+.mwf-crumbs .sep{width:13px;height:13px;flex:none;opacity:.55}
+[dir=rtl] .mwf-crumbs .sep{transform:scaleX(-1)}
+.mwf-hdr-main h1{margin:0;font-size:27px;font-weight:800;letter-spacing:-.035em;color:var(--ink);line-height:1.15}
+.mwf-hdr-main p{margin:5px 0 0;font-size:13px;color:var(--ink-3);line-height:1.45}
+
+/* the clock card — date over time, with the board's own liveness beside it */
+.mwf-hdr-when{display:flex;align-items:center;gap:11px;flex:none;padding:9px 14px;border-radius:14px;
+  border:1px solid var(--line);background:var(--panel)}
+.mwf-hdr-when .ic{flex:none;display:grid;place-items:center;width:34px;height:34px;border-radius:10px;
+  color:var(--ink-3);background:var(--ov2)}
+.mwf-hdr-when .ic svg{width:17px;height:17px}
+.mwf-hdr-when .txt{display:flex;flex-direction:column;line-height:1.2}
+.mwf-hdr-when .d{font-size:11.5px;font-weight:600;color:var(--ink-3);letter-spacing:-.01em}
+.mwf-hdr-when .tm{font-size:17px;font-weight:800;letter-spacing:-.025em;color:var(--ink)}
+
+.mwf-hdr-acts{display:flex;align-items:stretch;flex:none;border-radius:13px;overflow:hidden;
+  background:var(--brand);box-shadow:0 14px 28px -18px var(--brand)}
+.mwf-newbtn{display:inline-flex;align-items:center;gap:9px;height:44px;padding:0 18px;border:none;
+  cursor:pointer;background:none;color:#fff;font-family:inherit;font-size:13.5px;font-weight:700;
+  letter-spacing:-.01em;white-space:nowrap;transition:filter .15s}
+.mwf-newbtn:hover{filter:brightness(1.1)}
+.mwf-newbtn svg{flex:none}
+.mwf-newbtn-more{display:flex;align-items:center;padding-inline-end:5px;
+  border-inline-start:1px solid rgba(255,255,255,.28)}
+.mwf-newbtn-more button{color:#fff}
+.mwf-newbtn-more button:hover{background:rgba(255,255,255,.16)}
+@media(max-width:760px){.mwf-hdr-when,.mwf-hdr-acts{flex:1 1 100%}}
 
 .mwf-live{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;
   letter-spacing:.14em;font-weight:700;color:var(--avail);text-transform:uppercase;
   padding:2px 9px;border-radius:999px;background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3)}
+
 .mwf-live .d{width:7px;height:7px;border-radius:50%;background:var(--avail);position:relative;flex:none}
 .mwf-live .d::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--avail);
   opacity:.5;animation:mwf-ping 1.8s ease-out infinite}
@@ -47,10 +66,13 @@
 
 /* view toggle — moved out of the (removed) command header into the toolbar */
 .mwf .seg{display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:3px}
-.mwf .seg button{font-family:var(--mono);font-size:11px;color:var(--ink-3);background:none;border:none;
-  padding:6px 12px;border-radius:7px;cursor:pointer;transition:.15s;letter-spacing:.02em}
+.mwf .seg button{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-3);
+  background:none;border:none;padding:6px 12px;border-radius:8px;cursor:pointer;transition:.15s;letter-spacing:-.01em}
+.mwf .seg button svg{flex:none}
 .mwf .seg button:hover{color:var(--ink-2)}
-.mwf .seg button.on{color:var(--void);background:var(--cyan);font-weight:600}
+.mwf .seg button.on{color:#fff;background:var(--brand);font-weight:700}
+/* the sort control sits at the end of the strip and never grows past its own words */
+.mwf .mwf-sort{max-width:190px}
 
 /* ---- stage tabs — click a stage to focus its tickets, "All" for the full board ---- */
 .mwf-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
@@ -85,10 +107,17 @@
 .mwf-lane{position:relative;display:flex;flex-direction:column;background:linear-gradient(180deg,var(--panel),var(--deep));
   border:1px solid var(--line);border-radius:15px;overflow:hidden;min-height:240px}
 .mwf-lane-accent{position:absolute;top:0;left:0;right:0;height:3px}
-.mwf-lane-hd{display:flex;align-items:center;gap:8px;padding:12px 12px 10px;border-bottom:1px solid var(--line)}
-.mwf-lane-hd .dot{width:8px;height:8px;border-radius:50%;flex:none}
-.mwf-lane-hd .nm{font-size:11.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-2);line-height:1.2}
-.mwf-lane-hd .ct{margin-inline-start:auto;font-family:var(--mono);font-size:12px;font-weight:800;border-radius:8px;padding:1px 9px;flex:none}
+/* The lane header wears its own stage colour — a wash of the tone, its glyph and its count — so a
+   column is recognisable before you have read its name. */
+.mwf-lane-hd{display:flex;align-items:center;gap:10px;padding:12px 12px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--tone) 13%,transparent),transparent)}
+.mwf-lane-hd .ic{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:10px;
+  color:var(--tone);background:color-mix(in srgb,var(--tone) 15%,var(--panel))}
+.mwf-lane-hd .ic svg{width:16px;height:16px}
+.mwf-lane-hd .nm{font-size:12.5px;font-weight:700;letter-spacing:-.01em;color:var(--ink);line-height:1.25;
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mwf-lane-hd .ct{margin-inline-start:auto;font-size:12px;font-weight:800;border-radius:8px;padding:2px 9px;flex:none;
+  color:var(--tone);background:color-mix(in srgb,var(--tone) 15%,var(--panel))}
 .mwf-lane-bd{display:flex;flex-direction:column;gap:9px;padding:10px;flex:1}
 
 .mwf-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
@@ -126,15 +155,24 @@
 .mwf-pipe-seg.exc{height:6px;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.16) 0 4px,transparent 4px 8px)}
 @keyframes mwf-seg-pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.4)}}
 
-.mwf-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
-.mwf-id{display:flex;flex-direction:column;min-width:0;gap:2px}
+/* ---- the car itself ----
+   The photograph leads the card. We hold no picture for roughly a third of the fleet; those cards
+   fall back to the marque logo and then to a silhouette, never to a different car. */
+.mwf-shot{height:52px;width:74px;flex:none;display:grid;place-items:center;overflow:hidden}
+.mwf-shot-img{max-width:100%;max-height:52px;object-fit:contain}
+.mwf-shot-logo{max-width:38px;max-height:34px;object-fit:contain;opacity:.8}
+.mwf-shot-silhouette{width:30px;height:30px;color:var(--ink-3);opacity:.35}
+
+.mwf-card-top{display:flex;align-items:center;gap:10px}
+.mwf-id{display:flex;flex-direction:column;min-width:0;gap:2px;flex:1}
 .mwf-plate{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:13px;font-weight:800;
   letter-spacing:.06em;color:var(--ink);background:var(--ov2);border:1px solid var(--line-2);
   padding:3px 9px;border-radius:8px;line-height:1}
 .mwf-plate svg{color:var(--cyan);flex:none}
-.mwf-car{font-size:11.5px;font-weight:600;color:var(--ink-2);padding-inline-start:2px;margin-top:6px;line-height:1.35;
-  overflow-wrap:anywhere;word-break:break-word}
-.mwf-id-right{display:flex;align-items:center;gap:5px;flex:none}
+.mwf-car{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:-.01em;color:var(--ink);
+  padding-inline-start:2px;margin-top:4px;line-height:1.3;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.mwf-id-right{display:flex;align-items:center;gap:5px;flex:none;align-self:flex-start}
 .mwf-age{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3)}
 .mwf-age.over{color:var(--crit)}
 .mwf-jump{display:grid;place-items:center;padding:2px;border-radius:7px;color:var(--ink-3);transition:.15s}
