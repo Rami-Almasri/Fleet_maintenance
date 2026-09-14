@@ -1,20 +1,19 @@
-// Warranty vocabulary, shared by every surface that renders it.
+// Warranty vocabulary, shared by the three surfaces that show it: the vehicle list chip, the car's
+// warranty card, and the recommendation banner in the maintenance cycle.
 //
-// THE POINT OF THIS FILE is that the vehicle list, the vehicle page, the procurement gate and the
-// case board must never disagree about what "expiring soon" looks like or which verdict is bad news.
-// The tones and the sentence-builders live here once; nothing below re-derives a state.
-//
-// NOTHING HERE DECIDES ANYTHING. Every state and verdict is computed server-side against the car's
-// current odometer (see WarrantyStatusService / WarrantyCoverageEngine) — a warranty bounded by
-// distance ends when the car reaches a number, and the browser has no business guessing at that.
-// These helpers only choose how to SAY what the server already decided.
+// NOTHING HERE DECIDES ANYTHING. Whether a car is under warranty is computed server-side against its
+// current odometer (cover ends on months OR kilometres, whichever comes first — see
+// WarrantyStatusService). A browser comparing an expiry date to today would report cover on exactly
+// the hard-driven cars whose warranties lapse first. These helpers only choose how to SAY what the
+// server already decided.
 
 export const WARRANTY_STATES = ['under_warranty', 'expiring_soon', 'expired', 'none'];
 
-// Green = protected · amber = protected but the window is closing · slate = ended · gray = nothing
-// recorded. `none` is deliberately NOT red: a car whose warranty booklet is still in the glovebox
-// has not failed at anything, and colouring it like a problem would train people to ignore the
-// colour on the cars that genuinely have none.
+// Green = covered · amber = covered but running out · slate = ended · gray = nothing recorded.
+//
+// `none` is deliberately NOT red: a car whose warranty booklet is still in the glovebox has not
+// failed at anything. Colouring it like a problem would train people to ignore the colour on the
+// cars that genuinely have none.
 export const WARRANTY_STATE_TONE = {
   under_warranty: 'green',
   expiring_soon: 'amber',
@@ -22,61 +21,76 @@ export const WARRANTY_STATE_TONE = {
   none: 'gray',
 };
 
-// The gate's three answers. `unknown` is amber, not gray: it stops a purchase exactly as hard as
-// `covered` does, and a neutral colour would read as "no news".
-export const VERDICT_TONE = {
-  covered: 'green',
-  not_covered: 'slate',
-  unknown: 'amber',
-};
-
-// Case stages. Amber wherever somebody owes an action, blue while the provider has it, emerald at
-// the end, slate for the terminal "ours to pay" — which is a success, not a failure.
-export const STAGE_TONE = {
-  identified: 'gray',
-  coverage_review: 'amber',
-  covered: 'green',
-  not_covered: 'slate',
-  authorization_requested: 'blue',
-  authorized: 'green',
-  sent_to_provider: 'blue',
-  repair_in_progress: 'blue',
-  repair_completed: 'cyan',
-  claim_submitted: 'indigo',
-  recovery_recorded: 'emerald',
-  closed: 'slate',
-};
-
-/** Does this verdict stop a normal purchase? Mirrors WarrantyCoverage::BLOCKING on the server. */
-export const blocksProcurement = (verdict) => verdict === 'covered' || verdict === 'unknown';
+const has = (n) => n !== null && n !== undefined;
+const num = (n) => Number(n).toLocaleString();
 
 /**
- * "4 months / 21,500 km" — what is LEFT, which is the only number anyone can plan around.
+ * "930 days / 99,997 km" — what is LEFT, which is the only figure anyone can plan around.
  *
- * Either leg may be null and null means UNKNOWABLE, never zero. A car whose remaining cover reads
+ * Either leg may be null, and null means UNKNOWABLE, never zero. A car whose remaining cover reads
  * "0 km" because nobody submitted an odometer reading is exactly the car that gets written off as
- * expired while it is still under warranty, so an absent leg is simply omitted from the sentence.
+ * expired while it is still covered — so an absent leg is omitted from the sentence rather than
+ * rendered as a number.
  */
 export const remainingText = (verdict, t) => {
   if (!verdict) return null;
   const bits = [];
-  if (verdict.days_remaining !== null && verdict.days_remaining !== undefined) {
-    bits.push(t('warrantyOps.vehicle.remainingDays', { n: verdict.days_remaining }));
-  }
-  if (verdict.km_remaining !== null && verdict.km_remaining !== undefined) {
-    bits.push(t('warrantyOps.vehicle.remainingKm', { n: Number(verdict.km_remaining).toLocaleString() }));
-  }
+  if (has(verdict.days_remaining)) bits.push(t('warranty.remainingDays', { n: verdict.days_remaining }));
+  if (has(verdict.km_remaining)) bits.push(t('warranty.remainingKm', { n: num(verdict.km_remaining) }));
   return bits.length ? bits.join(' / ') : null;
 };
 
 /**
- * The engine's reason, as a sentence, composed from its CODE and params.
+ * "25,167 km over limit" — how far PAST the limit a car already is.
  *
- * The server never sends an English sentence about coverage ([[reason-code-contract]]) — it sends
- * `cover_not_itemised` plus `{part}`. That is what makes the Arabic a translation rather than a
- * second implementation, and it is why this function exists instead of a `reason_text` field.
+ * The fleet's own warranty report prints this as a negative (`-25,167`), and it is the number
+ * somebody standing next to the car actually needs: "expired" alone cannot distinguish a car that
+ * went over last week — still worth a phone call — from one that went over two years ago.
+ *
+ * Rendered from a POSITIVE magnitude the server sends under its own key, so nothing here can
+ * accidentally print "-25,167 km remaining".
  */
-export const reasonText = (assessment, t) => {
-  if (!assessment?.reason_code) return null;
-  return t(`warrantyOps.reason.${assessment.reason_code}`, assessment.reason_params || {});
+export const overText = (verdict, t) => {
+  if (!verdict) return null;
+  const bits = [];
+  if (has(verdict.km_over)) bits.push(t('warranty.overKm', { n: num(verdict.km_over) }));
+  if (has(verdict.days_over)) bits.push(t('warranty.overDays', { n: num(verdict.days_over) }));
+  return bits.length ? bits.join(' / ') : null;
+};
+
+/**
+ * The one line the card shows: what is left, or how far over. Never both — a warranty is on one
+ * side of its limit or the other, and showing two numbers would invite somebody to subtract them.
+ */
+export const coverText = (verdict, t) => overText(verdict, t) || remainingText(verdict, t);
+
+// ── Service contracts ────────────────────────────────────────────────────────────────────────────
+// A different promise from a warranty: an allowance of scheduled servicing that is CONSUMED. It runs
+// out three ways — date, odometer, and the count of services used — and the count is the one people
+// actually hit, so it leads the sentence.
+
+export const SERVICE_STATE_TONE = { active: 'green', expired: 'slate', ended: 'gray' };
+
+/**
+ * "3 of 5 services left · 26,312 km · 18 Feb 2028" — or, once it has run out, what finished it.
+ *
+ * Services first because it is the most concrete and the least arguable figure on the contract, and
+ * because a contract with two years left on paper is finished the moment its fifth service is used.
+ */
+export const serviceCoverText = (verdict, contract, t) => {
+  if (!verdict) return null;
+
+  if (verdict.state !== 'active') {
+    if (has(verdict.km_over)) return t('serviceContract.overKm', { n: num(verdict.km_over) });
+    if (verdict.ended_by === 'services') return t('serviceContract.allUsed');
+    return null;
+  }
+
+  const bits = [];
+  if (has(verdict.services_remaining) && has(contract?.services_total)) {
+    bits.push(t('serviceContract.servicesLeft', { n: verdict.services_remaining, total: contract.services_total }));
+  }
+  if (has(verdict.km_remaining)) bits.push(t('warranty.remainingKm', { n: num(verdict.km_remaining) }));
+  if (has(verdict.days_remaining)) bits.push(t('warranty.remainingDays', { n: verdict.days_remaining }));
+  return bits.length ? bits.join(' · ') : null;
 };

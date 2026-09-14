@@ -100,7 +100,7 @@ class VehicleDocument extends Model
     ];
 
     protected $fillable = [
-        'vehicle_id', 'kind', 'warranty_id', 'warranty_claim_id', 'accident_case_id',
+        'vehicle_id', 'kind', 'accident_case_id',
         'disk', 'file_path', 'original_name', 'mime_type',
         'file_size', 'width', 'height', 'note', 'uploaded_by', 'uploaded_by_name',
         'uploaded_at', 'superseded_at',
@@ -124,17 +124,6 @@ class VehicleDocument extends Model
         return $this->belongsTo(User::class, 'uploaded_by');
     }
 
-    /** The promise this scan is evidence of. Null on everything that is not warranty paperwork. */
-    public function warranty(): BelongsTo
-    {
-        return $this->belongsTo(Warranty::class, 'warranty_id');
-    }
-
-    /** The case this scan is evidence in. */
-    public function warrantyCase(): BelongsTo
-    {
-        return $this->belongsTo(WarrantyClaim::class, 'warranty_claim_id');
-    }
 
     /** The accident this scan is evidence in. */
     public function accidentCase(): BelongsTo

@@ -158,6 +158,10 @@ class MaintenanceTask extends Model
     }
 
     protected $fillable = [
+        // Was this fault fixed under warranty, and by whom? Classification only — see the
+        // add_under_warranty_to_maintenance_work migration. A fault can be a warranty job with no
+        // line item behind it at all, which is exactly why the flag lives here too.
+        'under_warranty', 'warranty_provider',
         'maintenance_id', 'vehicle_id',
         // Domain classification — the primary type + its catalog source-of-truth + provenance.
         'kind', 'fault_catalog_id', 'service_catalog_id', 'inspection_type_id', 'damage_catalog_id',
@@ -195,6 +199,7 @@ class MaintenanceTask extends Model
     ];
 
     protected $casts = [
+        'under_warranty'        => 'boolean',
         'quantity'              => 'integer',
         'identified_at'         => 'datetime',
         'started_at'            => 'datetime',

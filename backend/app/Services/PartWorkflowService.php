@@ -44,14 +44,6 @@ class PartWorkflowService
          * It is the projection, not the service, precisely so this stays a one-way dependency.
          */
         private SpareKeyProjection $spareKeys,
-        /**
-         * The warranty gate — "could the manufacturer, dealer or supplier be paying for this?".
-         *
-         * Injected rather than resolved inline so it is visible in this class's dependency list:
-         * procurement now has an opinion about who ought to be paying, and that is a fact about this
-         * service, not an implementation detail hidden inside one method.
-         */
-        private \App\Services\Warranty\WarrantyProcurementGuard $warrantyGuard,
     ) {}
 
     // ───────────────────────────── request lifecycle ─────────────────────────────
@@ -65,32 +57,6 @@ class PartWorkflowService
         $this->incorrect->assertNotIncorrect(
             ! empty($data['maintenance_task_id']) ? MaintenanceTask::find($data['maintenance_task_id']) : null,
             'the reason for a part request',
-        );
-
-        /**
-         * ── THE WARRANTY GATE ───────────────────────────────────────────────────────────────────
-         *
-         * Before we commit to spending our own money: could the manufacturer, the dealer or a
-         * supplier be responsible for this instead?
-         *
-         * HERE, and not in the controller, because this method is the ONE door every purchase
-         * request comes through — the form, the inspector's required parts, the garage's diagnosis
-         * and the spare-key flow all arrive at this line. Guarding the door guards all four without
-         * any of them knowing the gate exists.
-         *
-         * For the overwhelming majority of requests (a car with no live warranty) this is one
-         * indexed query that returns NOT_COVERED and changes nothing: the request is created exactly
-         * as it was before this feature existed, merely stamped with the answer so that six months
-         * from now "did anybody check?" is answerable. When cover IS live and the answer is COVERED
-         * or UNKNOWN the guard throws, having first opened a coverage review and notified the
-         * warranty desk — so the refusal always leaves a work item behind rather than a dead end.
-         *
-         * @see \App\Services\Warranty\WarrantyProcurementGuard
-         */
-        $warrantyStamp = $this->warrantyGuard->check(
-            Vehicle::findOrFail($data['vehicle_id']),
-            $data,
-            $actor,
         );
 
         $req = new PartRequest();
@@ -125,10 +91,6 @@ class PartWorkflowService
             'requested_at'        => Carbon::now(),
         ]);
         $req->save();
-
-        // Freeze the gate's answer onto the row. Written AFTER save because the request does not
-        // exist while the gate is running — and must not, since the gate may refuse it outright.
-        $this->warrantyGuard->stamp($req, $warrantyStamp, $actor);
 
         $this->logVehicle($req->vehicle_id, VehicleLogEvent::EVENT_PART_REQUESTED, $actor, $req->maintenance_id, [
             'description' => "Part requested: {$req->part_name} ({$req->source})"

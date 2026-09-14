@@ -81,12 +81,6 @@ class PartRequest extends Model
         // WHICH part this is, as opposed to what it was called. See PartIdentityService.
         'component_catalog_id', 'catalog_matched_by', 'part_name_key',
         'quantity', 'reason', 'estimated_price', 'currency', 'notes',
-        // The warranty gate's receipt: which case this buy was checked against, and what the engine
-        // said AT THE MOMENT OF ASKING. Frozen, never recomputed — the point is what was known when
-        // the decision to spend was taken. The override quartet is NOT fillable: it is written by
-        // WarrantyProcurementGuard alone, because a request body that could stamp its own override
-        // would be a gate with a hole in it. @see \App\Support\WarrantyCoverage
-        'warranty_case_id', 'warranty_verdict', 'warranty_reason_code',
         'requested_by', 'requested_by_name', 'requested_at',
         'reviewed_by', 'reviewed_by_name', 'reviewed_at', 'review_notes',
         'approved_by', 'approved_by_name', 'approved_at',
@@ -101,7 +95,6 @@ class PartRequest extends Model
         'reviewed_at'     => 'datetime',
         'approved_at'     => 'datetime',
         'rejected_at'     => 'datetime',
-        'warranty_override_at' => 'datetime',
     ];
 
     public function isTerminal(): bool
@@ -181,23 +174,6 @@ class PartRequest extends Model
     public function task(): BelongsTo
     {
         return $this->belongsTo(MaintenanceTask::class, 'maintenance_task_id');
-    }
-
-    /** The warranty case this buy was checked against — the review that cleared it, or the one it defied. */
-    public function warrantyCase(): BelongsTo
-    {
-        return $this->belongsTo(WarrantyClaim::class, 'warranty_case_id');
-    }
-
-    /**
-     * Was this bought in the face of a warranty that might have covered it?
-     *
-     * The question the warranty report is built on. True only when somebody actually overrode the
-     * gate — a request whose verdict came back `not_covered` is an ordinary purchase and reads as one.
-     */
-    public function boughtOverWarranty(): bool
-    {
-        return $this->warranty_override_at !== null;
     }
 
     public function purchases(): HasMany

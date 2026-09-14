@@ -55,9 +55,6 @@ class NotificationScanner
         'part_delivery_overdue:', 'test_interrupted:',
         'oil_projection:', // carries the projection ANCHOR, so a new mileage reading rotates it and re-arms the chase
         'oil_decision:',   // same anchor discipline: asked once per reading, re-armed by the next one
-        // Warranty conditions. Each keyed on the WARRANTY or the CASE, never on the car: a vehicle
-        // with two warranties has two separate things expiring, and one key would silence the second.
-        'warranty_expiring:', 'warranty_review:', 'warranty_provider_overdue:', 'warranty_case_stale:',
     ];
 
     /**
@@ -125,16 +122,6 @@ class NotificationScanner
         'maint_finding_approval'         => 'maintenance.manage',
         'maint_finding_approval_decided' => 'maintenance.view',
 
-        // ── Warranty ────────────────────────────────────────────────────────────────────────────
-        // All gated on `warranty.review` — the permission that DEFINES the warranty desk. Nobody
-        // else needs to hear that a dealer is three days late answering a claim, and a manager holds
-        // it anyway. The event-driven warranty alerts (a case opening, an authorisation landing) are
-        // fanned out by WarrantyCaseService to a wider audience and never pass through this map.
-        // @see \App\Support\WarrantyResponsibility
-        'warranty_expiring'         => \App\Support\WarrantyResponsibility::REVIEW,
-        'warranty_review_overdue'   => \App\Support\WarrantyResponsibility::REVIEW,
-        'warranty_provider_overdue' => \App\Support\WarrantyResponsibility::REVIEW,
-        'warranty_case_stale'       => \App\Support\WarrantyResponsibility::REVIEW,
     ];
 
     /**
@@ -162,8 +149,6 @@ class NotificationScanner
         private MaintenanceDelayResolver $delayResolver,
         private LeftGarageInvoiceService $leftGarageQueue,
         private OilChangeProjectionService $oilProjection,
-        /** Warranty conditions — see the note on the detect() concat below. */
-        private \App\Services\Warranty\WarrantyAlertService $warranty,
     ) {}
 
     /**
@@ -382,12 +367,6 @@ class NotificationScanner
             ->concat($this->testRecommendationsInterrupted())
             ->concat($this->leftGarageInvoiceMissing())
             ->concat($this->oilProjectionChases())
-            // Warranty conditions — cover about to run out, reviews nobody has answered, dealers who
-            // have gone quiet. Produced elsewhere and merged here so they inherit this scanner's
-            // dedup key discipline, its per-user permission gate and its auto-resolve sweep rather
-            // than reimplementing all three in a second scheduled command.
-            // @see \App\Services\Warranty\WarrantyAlertService
-            ->concat($this->warranty->detect())
             ->all();
     }
 

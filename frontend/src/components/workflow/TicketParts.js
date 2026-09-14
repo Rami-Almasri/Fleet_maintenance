@@ -15,7 +15,6 @@ import { usePermissions } from '../../hooks/usePermissions';
 import PartPurchaseHistory from '../parts/PartPurchaseHistory';
 import PartRecordModal from '../parts/PartRecordModal';
 import CatalogPartPicker from '../parts/CatalogPartPicker';
-import WarrantyGateNotice from '../warranties/WarrantyGateNotice';
 import { useI18n } from '../../i18n/I18nContext';
 
 // Envelope-aware unwrap: the API wraps most payloads in { data: … }.
@@ -85,9 +84,6 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   const [form, setForm] = useState(null);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
-  // The warranty gate's refusal, when the server declines to create the request because somebody
-  // else might be paying for it. Null on the ordinary car. @see WarrantyGateNotice
-  const [warrantyGate, setWarrantyGate] = useState(null);
   const [dup, setDup] = useState(null);       // live duplicate verdict for the current part name
   const [checking, setChecking] = useState(false);
   // What the STOREHOUSE holds of the chosen part, and which door the technician picked. The whole
@@ -238,23 +234,11 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
     if (fulfilment === 'store' && !storeCanCover) setFulfilment('buy');
   }, [fulfilment, storeCanCover]);
 
-  /**
-   * Raise the request — unless somebody else might be paying for it.
-   *
-   * `override` is the ONLY way this function differs from what it did before the warranty layer
-   * existed: on the ordinary car (no live cover) the server answers exactly as it always did and
-   * nothing below runs. When the gate refuses, the 422 carries the whole assessment — which
-   * warranties are live, who to ring, whether THIS user may proceed — and the card renders it. The
-   * retry is the same submit with the typed reason attached, so there is one request builder and no
-   * chance of the override path drifting from the normal one.
-   */
-  const submit = async (override = null) => {
+  const submit = async () => {
     setSaving(true);
     setErrors({});
-    if (!override) setWarrantyGate(null);
     try {
       const body = {
-        ...(override || {}),
         vehicle_id: ticket?.vehicle_id || null,
         maintenance_id: ticket?.id ? Number(ticket.id) : null,
         maintenance_task_id: form.maintenance_task_id ? Number(form.maintenance_task_id) : null,
@@ -288,15 +272,6 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
       onClose();
     } catch (err) {
       const res = err.response?.data;
-
-      // THE WARRANTY GATE. Recognised by the shape of its payload rather than by a status code:
-      // a 422 whose `data` carries a coverage verdict is a business decision the user can act on,
-      // not a field they typed wrong. Rendered as a card (who to ring, may I override?) instead of
-      // a toast — a refusal nobody can act on is a refusal people learn to route around.
-      if (err.response?.status === 422 && res?.data?.verdict && res.data.blocks_procurement) {
-        setWarrantyGate({ ...res.data, message: res.message });
-        return;
-      }
 
       if (res?.errors) { setErrors(res.errors); toast.error(t('Please fix the highlighted fields')); }
       else toast.error(res?.message || res?.msg || t('Could not submit the request'));
@@ -334,8 +309,6 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
           <Button variant="secondary" onClick={onClose} disabled={saving}>{t('Cancel')}</Button>
           {/* The button says which door was chosen, because the two do very different things: one
               asks someone to buy a part, the other takes one off the shelf here and now. */}
-          {/* Wrapped, not passed by reference: submit() now takes an optional override payload, and
-              handing it straight to onClick would spread the click EVENT into the request body. */}
           <Button onClick={() => submit()} loading={saving}>
             {fulfilment === 'store' ? t('Take from the storehouse') : t('Create request')}
           </Button>
@@ -343,16 +316,6 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
       }
     >
       <div className="space-y-4">
-        {/* THE WARRANTY GATE'S ANSWER, at the top of the form because it is the only thing on screen
-            that matters once it appears: the request was not created, and the next action is a phone
-            call to a dealer rather than another field. The form stays underneath, filled in, so
-            proceeding after a decision (or an override) is one click and not a re-type. */}
-        {warrantyGate && (
-          <WarrantyGateNotice
-            gate={warrantyGate}
-            busy={saving}
-            onCancel={() => setWarrantyGate(null)}
-            onRetry={(override) => submit(override)}
           />
         )}
 

@@ -18,6 +18,7 @@ import SuggestedChecks from './SuggestedChecks';
 import NoteLines from './NoteLines';
 import SystemChecksStatus from './SystemChecksStatus';
 import CheckpointModal from '../maintenance/CheckpointModal';
+import WarrantyRecommendation from '../warranties/WarrantyRecommendation';
 import CheckpointTimeline from '../maintenance/CheckpointTimeline';
 import { getTicketCheckpoints, isCheckpointStage } from '../../lib/maintenanceCheckpoints';
 import { copyText } from '../../lib/clipboard';
@@ -524,6 +525,12 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
             {t('workflow.board.live')}
           </span>
         </div>
+
+        {/* IS THIS CAR STILL UNDER WARRANTY? Above the command deck, because the decision it
+            informs — which garage this car goes to — is taken at the top of this page. A
+            recommendation only: it never blocks the dispatch. Renders nothing on the ~99% of the
+            fleet with no live cover. */}
+        <WarrantyRecommendation cover={tk.vehicle_warranty} vehicleId={tk.vehicle_id} />
 
         {/* ── COMMAND DECK ─────────────────────────────────────────────────── */}
         <div className="relative overflow-hidden rounded-2xl bg-navy-950 px-6 py-7 ring-1 ring-white/10 sm:px-8">

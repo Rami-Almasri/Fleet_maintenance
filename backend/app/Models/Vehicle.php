@@ -498,6 +498,17 @@ class Vehicle extends Model
         return $this->hasMany(Warranty::class)->where('kind', Warranty::KIND_VEHICLE);
     }
 
+    /**
+     * The prepaid servicing bought with this car — "5 Lube Service / 5 Yrs".
+     *
+     * Separate from warranties because it is a different promise: an allowance of scheduled work
+     * that is consumed, not a commitment to fix what breaks. A car can have either, both or neither.
+     */
+    public function serviceContracts(): HasMany
+    {
+        return $this->hasMany(ServiceContract::class)->orderByDesc('id');
+    }
+
     /** Every warranty case ever opened on this car, newest first. */
     public function warrantyCases(): HasMany
     {

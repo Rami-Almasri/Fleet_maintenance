@@ -4,7 +4,6 @@ namespace App\Services\Warranty;
 
 use App\Models\Vehicle;
 use App\Models\Warranty;
-use App\Support\WarrantyCoverage;
 use Illuminate\Support\Collection;
 
 /**
@@ -49,13 +48,26 @@ use Illuminate\Support\Collection;
 class WarrantyStatusService
 {
     /**
+     * The four words the car's badge can say. Constants here, not in a support class: this service
+     * is the only thing that decides them, and a vocabulary with one reader belongs beside it.
+     *
+     * NONE is not EXPIRED. "We know the cover ended" and "nobody has recorded any cover" are
+     * different operational facts — collapsing them would hide every car whose booklet is still in
+     * the glovebox behind a badge that says the cover is gone.
+     */
+    public const STATE_UNDER_WARRANTY = 'under_warranty';
+    public const STATE_EXPIRING_SOON  = 'expiring_soon';
+    public const STATE_EXPIRED        = 'expired';
+    public const STATE_NONE           = 'none';
+
+    /**
      * The car's headline warranty state, from the WHOLE-CAR promises only.
      *
      * kind=vehicle only, on purpose. A car whose only live warranty is the 12-month cover on a tyre
      * fitted last week is not "under warranty" in any sense an operator means by the phrase, and a
      * badge that said so would be worse than no badge — it would route people to a dealer who has
-     * never heard of the car. Part and repair cover is real and is answered by the coverage engine,
-     * where it belongs: at the level of a specific part, not of the whole vehicle.
+     * never heard of the car. Part and repair warranties are still real and still listed on the car's
+     * page; they simply are not what "this vehicle is under warranty" means.
      *
      * @return array{state:string, live_count:int, total_count:int, headline:?array, expiring_soon:bool,
      *               days_remaining:?int, km_remaining:?int, distance_unknown:bool}
@@ -76,6 +88,55 @@ class WarrantyStatusService
     }
 
     /**
+     * "Is this car covered right now, and by whom?" — the flat answer the maintenance cycle needs.
+     *
+     * Returns null when the car has no live whole-car cover, which is the ordinary case for most of
+     * the fleet. A null is what makes the banner simply not render; the caller never has to reason
+     * about an empty state.
+     *
+     * Judged against the car's CURRENT odometer, because cover ends on months or kilometres,
+     * whichever comes first — a car doing 6,000 km a month can be out of cover while its date still
+     * looks healthy, and sending that one to the dealer wastes everybody's week.
+     *
+     * @return array{warranty_id:int, provider:?string, provider_kind:?string, contact_phone:?string,
+     *               expires_on:?string, days_remaining:?int, km_remaining:?int, expiring_soon:bool}|null
+     */
+    public function activeCoverFor(Vehicle $vehicle): ?array
+    {
+        $odometer = $vehicle->odometer !== null ? (int) $vehicle->odometer : null;
+
+        $rows = $vehicle->relationLoaded('warranties')
+            ? $vehicle->warranties->where('kind', Warranty::KIND_VEHICLE)
+            : $vehicle->vehicleWarranties()->get();
+
+        $live = collect($rows)
+            ->map(fn (Warranty $w) => ['w' => $w, 'v' => $w->evaluate(null, $odometer)])
+            ->filter(fn ($j) => $j['v']['state'] === Warranty::STATE_ACTIVE)
+            // The longest-lasting one, for the same reason the badge quotes it: "until when?" is the
+            // question being answered, and the answer is the furthest date we are protected to.
+            ->sortByDesc(fn ($j) => $j['v']['days_remaining'] ?? -1)
+            ->first();
+
+        if (! $live) {
+            return null;
+        }
+
+        /** @var Warranty $w */
+        $w = $live['w'];
+
+        return [
+            'warranty_id'    => $w->id,
+            'provider'       => $w->provider_name,
+            'provider_kind'  => $w->provider_kind,
+            'contact_phone'  => $w->contact_phone,
+            'expires_on'     => $w->expires_on?->toDateString(),
+            'days_remaining' => $live['v']['days_remaining'],
+            'km_remaining'   => $live['v']['km_remaining'],
+            'expiring_soon'  => (bool) $live['v']['expiring_soon'],
+        ];
+    }
+
+    /**
      * Reduce a set of promises to one state, plus the best remaining figures across it.
      *
      * PURE — takes rows and a reading, touches no database, so the rule can be tested against every
@@ -89,10 +150,13 @@ class WarrantyStatusService
     {
         if ($warranties->isEmpty()) {
             return [
-                'state' => WarrantyCoverage::STATE_NONE,
+                'state' => self::STATE_NONE,
                 'live_count' => 0, 'total_count' => 0,
                 'headline' => null, 'expiring_soon' => false,
                 'days_remaining' => null, 'km_remaining' => null,
+                // Present as nulls so every caller gets one shape and never has to tell "no cover"
+                // apart from "the backend forgot the key".
+                'km_over' => null, 'days_over' => null,
                 'distance_unknown' => false,
             ];
         }
@@ -106,13 +170,23 @@ class WarrantyStatusService
 
         if ($live->isEmpty()) {
             // Everything ran out (or was voided). A real, knowable answer — distinct from NONE.
+            // The most recently ended one is what somebody asking "when did we lose cover?" wants.
+            $last = $judged->sortByDesc(fn ($j) => $j['warranty']->expires_on)->first();
+
             return [
-                'state' => WarrantyCoverage::STATE_EXPIRED,
+                'state' => self::STATE_EXPIRED,
                 'live_count' => 0, 'total_count' => $judged->count(),
-                // The most recently ended one is what somebody asking "when did we lose cover?" wants.
-                'headline' => $this->present($judged->sortByDesc(fn ($j) => $j['warranty']->expires_on)->first()),
+                'headline' => $this->present($last),
                 'expiring_soon' => false,
                 'days_remaining' => null, 'km_remaining' => null,
+                /**
+                 * HOW FAR PAST the limit the car already is, carried up to the roll-up so the vehicle
+                 * LIST can say it without loading each warranty. "Expired" on its own cannot tell a
+                 * car that went over last week — still worth a call to the dealer — from one that
+                 * went over two years ago, and the fleet's own report prints exactly this number.
+                 */
+                'km_over'   => $last['verdict']['km_over'] ?? null,
+                'days_over' => $last['verdict']['days_over'] ?? null,
                 'distance_unknown' => $judged->contains(fn ($j) => $j['verdict']['distance_unknown']),
             ];
         }
@@ -133,13 +207,17 @@ class WarrantyStatusService
         $allExpiringSoon = $live->every(fn ($j) => $j['verdict']['expiring_soon'] === true);
 
         return [
-            'state' => $allExpiringSoon ? WarrantyCoverage::STATE_EXPIRING_SOON : WarrantyCoverage::STATE_UNDER_WARRANTY,
+            'state' => $allExpiringSoon ? self::STATE_EXPIRING_SOON : self::STATE_UNDER_WARRANTY,
             'live_count'  => $live->count(),
             'total_count' => $judged->count(),
             'headline'    => $this->present($best),
             'expiring_soon' => $live->contains(fn ($j) => $j['verdict']['expiring_soon'] === true),
             'days_remaining' => $best['verdict']['days_remaining'],
             'km_remaining'   => $best['verdict']['km_remaining'],
+            // Null while cover is live — a warranty is on one side of its limit or the other, and
+            // shipping both would invite a caller to subtract them.
+            'km_over'        => null,
+            'days_over'      => null,
             // True when ANY live warranty has an unjudgeable distance leg. Surfaced, never smoothed
             // over: "active" on such a row means "not out of time" and nothing more.
             'distance_unknown' => $live->contains(fn ($j) => $j['verdict']['distance_unknown']),
@@ -147,29 +225,8 @@ class WarrantyStatusService
     }
 
     /**
-     * Everything covering one car, whatever the kind, each judged against the car's current reading.
-     *
-     * This is the vehicle page's payload: the whole-car cover AND the part/repair promises, because
-     * on the page a battery under its own 12-month supplier warranty is exactly as relevant as the
-     * manufacturer's cover — arguably more so, since it is the one people forget.
-     *
-     * @return array{state:array, warranties:array<int,array>}
+     * The headline, flattened to what a badge needs — never the whole model.
      */
-    public function fullPicture(Vehicle $vehicle): array
-    {
-        $all      = $vehicle->warranties()->with(['catalog:id,name,name_ar', 'provider:id,name'])->get();
-        $odometer = $vehicle->odometer !== null ? (int) $vehicle->odometer : null;
-
-        return [
-            'state' => $this->summarise($all->where('kind', Warranty::KIND_VEHICLE), $odometer),
-            'warranties' => $all->map(fn (Warranty $w) => [
-                'warranty' => $w,
-                'verdict'  => $w->evaluate(null, $odometer),
-            ])->values()->all(),
-        ];
-    }
-
-    /** The headline, flattened to what a badge needs — never the whole model. */
     private function present(?array $judged): ?array
     {
         if (! $judged) {

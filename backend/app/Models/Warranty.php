@@ -84,7 +84,6 @@ class Warranty extends Model
         'starts_on', 'start_odometer', 'duration_months', 'duration_km',
         'expires_on', 'expires_at_km',
         'status', 'void_reason', 'notes',
-        'covered_catalog_ids', 'excluded_catalog_ids', 'coverage_notes',
         'created_by', 'created_by_name', 'updated_by', 'updated_by_name',
     ];
 
@@ -95,29 +94,18 @@ class Warranty extends Model
         'duration_months' => 'integer',
         'duration_km'     => 'integer',
         'expires_at_km'   => 'integer',
-        // The itemised cover, as component_catalog ids. NULL ⇒ "not itemised", which is NOT the same
-        // as [] ("itemised, and this list is empty") — see coversCatalog().
-        'covered_catalog_ids'  => 'array',
-        'excluded_catalog_ids' => 'array',
     ];
 
     /**
      * How close to the end counts as "expiring soon", on each leg independently.
      *
-     * Configurable because the right answer is operational, not technical: a fleet that can get a car
-     * to a dealer in a week wants a shorter horizon than one that needs a month's notice. Both legs
-     * are checked because either can be the binding one — a car with 8 months left and 900 km of
-     * cover is expiring soon, and a date-only threshold would call it healthy.
+     * Constants rather than config: this feeds one badge colour, not a workflow, and a dial nobody
+     * turns is a dial that should not exist. Both legs are checked because either can be the binding
+     * one — a car with 8 months left and 900 km of cover is running out, and a date-only threshold
+     * would call it healthy.
      */
-    public static function expiringSoonDays(): int
-    {
-        return (int) config('warranty.expiring_soon_days', 60);
-    }
-
-    public static function expiringSoonKm(): int
-    {
-        return (int) config('warranty.expiring_soon_km', 5000);
-    }
+    public const EXPIRING_SOON_DAYS = 60;
+    public const EXPIRING_SOON_KM   = 5000;
 
     protected static function booted(): void
     {
@@ -278,49 +266,6 @@ class Warranty extends Model
         return $this->evaluate(null, $odometer)['state'] === self::STATE_ACTIVE;
     }
 
-    /**
-     * Does this promise say anything, either way, about a given part type?
-     *
-     * Returns exactly one of three answers and never guesses the third:
-     *
-     *   true   the part type is named in `covered_catalog_ids`.
-     *   false  it is named in `excluded_catalog_ids` — their document, their exclusion.
-     *   null   NEITHER LIST NAMES IT. Not "probably covered", not "probably not". Null is what a
-     *          warranty booklet nobody has itemised actually tells you about a wheel bearing, and
-     *          it is the answer that sends the question to a human instead of to a default.
-     *
-     * EXCLUSION WINS over inclusion when a part type somehow appears in both, because a document that
-     * contradicts itself is a document we lose the argument on, and the cheap failure is to check
-     * with the dealer rather than to buy on an assumption.
-     *
-     * A NULL list means "not itemised"; an EMPTY list means "itemised, and nothing is on it". The
-     * cast keeps them distinct and this method honours the distinction — an empty covered list with a
-     * populated exclusion list is a perfectly ordinary "everything except these" warranty.
-     */
-    public function coversCatalog(?int $catalogId): ?bool
-    {
-        if ($catalogId === null) {
-            return null;   // nobody said which part this is — nothing can be decided about it
-        }
-
-        $excluded = $this->excluded_catalog_ids;
-        if (is_array($excluded) && in_array((int) $catalogId, array_map('intval', $excluded), true)) {
-            return false;
-        }
-
-        $covered = $this->covered_catalog_ids;
-        if (is_array($covered) && in_array((int) $catalogId, array_map('intval', $covered), true)) {
-            return true;
-        }
-
-        return null;
-    }
-
-    /** Has anybody written down what this warranty does and does not cover? */
-    public function isItemised(): bool
-    {
-        return is_array($this->covered_catalog_ids) || is_array($this->excluded_catalog_ids);
-    }
 
     /**
      * The human sentence a claim freezes: "8 of 12 months, 14,200 of 20,000 km".
@@ -371,11 +316,38 @@ class Warranty extends Model
             ? max(0, (int) $this->expires_at_km - $odometer)
             : null;
 
+        /**
+         * HOW FAR PAST THE LIMIT the car already is — the other half of the same subtraction.
+         *
+         * The fleet's own warranty report shows this as a negative: a Patrol reading 75,167 km
+         * against a 50,000 km limit prints `-25,167`, and that number is what somebody standing next
+         * to the car in the workshop actually needs. "Expired" alone does not distinguish a car that
+         * went over last week from one that went over two years ago, and the first is still worth a
+         * phone call to the dealer.
+         *
+         * Reported as a POSITIVE magnitude with its own key rather than as a negative `km_remaining`,
+         * so no caller can accidentally render "-25,167 km remaining" or sum the two into nonsense.
+         * Null whenever it cannot be known: no limit, no odometer, or the cover is still live.
+         */
+        $kmOver = ($state === self::STATE_EXPIRED && $this->expires_at_km !== null && $odometer !== null
+                   && $odometer > (int) $this->expires_at_km)
+            ? $odometer - (int) $this->expires_at_km
+            : null;
+
+        /**
+         * And the same for time: how many days ago the date leg ran out. Same reasoning — a warranty
+         * that ended three days ago is a different conversation from one that ended in 2023.
+         */
+        $daysOver = ($state === self::STATE_EXPIRED && $this->expires_on
+                     && $at->gt(Carbon::parse($this->expires_on)->endOfDay()))
+            ? max(0, (int) Carbon::parse($this->expires_on)->endOfDay()->diffInDays($at, false))
+            : null;
+
         // Close enough to the end, on EITHER leg, that "we'll look at it later" means "we won't".
         // Only ever true while the warranty is still live — an expired warranty is not expiring.
         $expiringSoon = $state === self::STATE_ACTIVE && (
-            ($daysRemaining !== null && $daysRemaining <= self::expiringSoonDays())
-            || ($kmRemaining !== null && $kmRemaining <= self::expiringSoonKm())
+            ($daysRemaining !== null && $daysRemaining <= self::EXPIRING_SOON_DAYS)
+            || ($kmRemaining !== null && $kmRemaining <= self::EXPIRING_SOON_KM)
         );
 
         $left = [];
@@ -400,6 +372,11 @@ class Warranty extends Model
             'km_remaining'       => $kmRemaining,
             'expiring_soon'      => $expiringSoon,
             'remaining_evidence' => $left ? implode(' / ', $left) : null,
+
+            // …and the backward-looking half, for cover that has already run out. Positive
+            // magnitudes: "25,167 km over limit", never "-25,167 remaining". See above.
+            'km_over'   => $kmOver,
+            'days_over' => $daysOver,
         ];
     }
 }

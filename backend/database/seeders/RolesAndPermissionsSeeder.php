@@ -57,22 +57,14 @@ class RolesAndPermissionsSeeder extends Seeder
         'parts.request',                     // create a part request (customer walk-in or garage diagnosis)
         'parts.purchase',                    // record a purchase (garage or supplier) + install the part
         'parts.investigate',                 // admin: review duplicate/recurrence alerts + approve exceptions
-        // ── Warranty-aware operations ──────────────────────────────────────────────────────────────
-        // Six permissions rather than the usual view/manage pair, because this area contains four
-        // genuinely different levels of trust and collapsing them would have made the guardrail
-        // decorative. Recording what a warranty says, DECIDING whether it applies, running a claim
-        // and OVERRULING the whole thing to buy anyway are not the same authority.
-        // @see \App\Support\WarrantyResponsibility — the audiences these define.
-        'warranty.view',                     // see warranties, cases and the warranty dashboard
-        'warranty.manage',                   // record/edit the cover, the window, the provider, the paperwork
-        'warranty.review',                   // DECIDE a coverage review — covered or not. THE money decision,
-                                             // and the permission that defines "the warranty desk" for every
-                                             // notification in this feature.
-        'warranty.claim',                    // open + advance a case: authorization, dealer, repair, claim
-        'warranty.override',                 // buy anyway despite live cover — reason required, audited by name
-        'warranty.close',                    // close a case and record what was recovered / avoided
+        // ── Warranty ───────────────────────────────────────────────────────────────────────────────
+        // The ordinary view/manage pair, because warranty is an ATTRIBUTE OF THE CAR — a fact like its
+        // registration, not a workflow. Seeing it and recording it are the only two things anybody
+        // does with it; there is no decision to gate, because nothing is blocked.
+        'warranty.view',                     // see a car's warranty and whether it is still live
+        'warranty.manage',                   // record / edit / end a car's warranty, from the car's page
         // ── Accident cases ─────────────────────────────────────────────────────────────────────
-        // Nine rather than the usual pair, for the same reason the warranty block above has six:
+        // Nine rather than the usual pair, because unlike warranty above this IS a workflow:
         // reporting a crash, verifying a police report, deciding fault and settling money are four
         // different levels of trust, and one `accidents.manage` would make three of the guardrails
         // decorative. @see \App\Support\AccidentResponsibility
@@ -138,10 +130,9 @@ class RolesAndPermissionsSeeder extends Seeder
             // answers for a booked hour the clock cannot account for.
             'maintenance.labor.record', 'maintenance.labor.correct', 'maintenance.labor.override',
             'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
-            // The full warranty set INCLUDING the override. The manager is the role that answers for a
-            // purchase made in the face of live cover — the same reasoning that keeps
-            // maintenance.labor.override here and nowhere else.
-            'warranty.view', 'warranty.manage', 'warranty.review', 'warranty.claim', 'warranty.override', 'warranty.close',
+            // Recording a car's warranty, like recording its registration. There is no override to
+            // grant and no claim to work: nothing is blocked, so there is nothing to overrule.
+            'warranty.view', 'warranty.manage',
             // The full accident set INCLUDING the override, for exactly the reason the labor and
             // warranty overrides sit here and nowhere else: the manager is the role that answers for
             // a waived police report and for a settlement somebody reopened.
@@ -198,11 +189,9 @@ class RolesAndPermissionsSeeder extends Seeder
             // to. NOT the override: overruling the measured clock is a step above running the workshop.
             'maintenance.labor.record', 'maintenance.labor.correct',
             'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
-            // RUNS THE WARRANTY DESK: records the cover, decides coverage, works the claim, closes it.
-            // `warranty.review` is what makes this role the audience for every coverage-review
-            // notification. NOT the override — buying past live cover is a step above running the
-            // workshop, exactly as overruling the measured labor clock is.
-            'warranty.view', 'warranty.manage', 'warranty.review', 'warranty.claim', 'warranty.close',
+            // Records a car's warranty and its service contract — the workshop manager is who hears
+            // from the dealer what is still covered, and the car's page is where that gets written down.
+            'warranty.view', 'warranty.manage',
             // Assesses the damage and fixes the car; VERIFIES the police report precisely because the
             // workshop side is not the side that uploaded it. Not liability and not the money — a
             // repair estimate is not a verdict on who pays for it.
@@ -231,11 +220,9 @@ class RolesAndPermissionsSeeder extends Seeder
             // decision at the top of the lane: approving (or rejecting) a request is the money gate and
             // stays with admin / maintenance manager (parts.investigate|maintenance.manage on the route).
             'parts.view', 'parts.request', 'parts.purchase',
-            // Works a case that has ALREADY been judged covered — rings the dealer, chases the
-            // authorization, sends the car. Deliberately NOT warranty.review: the person raising the
-            // purchase must not also be the person who decides whether the purchase was allowed.
-            // Same separation as parts approval, one step up the same lane.
-            'warranty.view', 'warranty.claim',
+            // Sees and records a car's warranty — a supervisor deciding where to send a car needs
+            // to know whether the dealer still covers it.
+            'warranty.view', 'warranty.manage',
             // Sees the case behind a car in his dispatch queue, and can open one when a driver brings
             // a damaged car back. Working the case is the desk's job, not the dispatcher's.
             'accidents.view', 'accidents.report',
@@ -281,7 +268,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'reminders.view', 'reminders.manage',
             'parts.view',
             // Records what a claim actually recovered — the money half of a case.
-            'warranty.view', 'warranty.close',
+            'warranty.view',
             // The money half of an accident, and the closure that states the final position. NOT the
             // liability verdict: who was at fault is an operational finding, and finance records its
             // financial consequence rather than deciding it.

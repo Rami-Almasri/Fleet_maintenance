@@ -77,6 +77,25 @@ class MaintenanceWorkflowResource extends JsonResource
             // column). Used to pre-fill the "Odometer out" field on a Temporary Vehicle Release.
             'vehicle_odometer'   => $t->vehicle?->odometer,
 
+            /**
+             * IS THIS CAR UNDER WARRANTY? — the recommendation the maintenance cycle shows.
+             *
+             * A car that is still covered should probably go to the authorized dealer rather than to
+             * whichever garage is convenient, and the one moment that is worth saying is when somebody
+             * is looking at the ticket. So it rides along with the ticket rather than costing the page
+             * a second request.
+             *
+             * A RECOMMENDATION, NEVER A BLOCK. Nothing downstream reads this to refuse anything: the
+             * supervisor picks any garage they like, and the repair proceeds exactly as it always has.
+             * It exists so the choice is INFORMED, not so the system makes it.
+             *
+             * Null unless the vehicle relation is loaded, and null when the car has no live cover —
+             * the banner simply does not render, which is the correct answer for most of the fleet.
+             */
+            'vehicle_warranty' => $t->relationLoaded('vehicle') && $t->vehicle
+                ? app(\App\Services\Warranty\WarrantyStatusService::class)->activeCoverFor($t->vehicle)
+                : null,
+
             // Lifecycle
             'workflow_status' => $status,
             'status_label'    => self::LABELS[$status] ?? $status,

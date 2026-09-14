@@ -388,7 +388,28 @@ class MaintenanceInvoiceService
                 ? $this->resolveCatalogPart($row, $description)
                 : [null, null, null];
 
+            /**
+             * "Was this work done under warranty?" — the one question the warranty feature asks.
+             *
+             * Answered per LINE, not per invoice, because a single visit routinely mixes the two: the
+             * dealer replaces a sensor under warranty and charges for the wiper blades in the same
+             * breath. An invoice-level flag would force whoever keys it to lie about one of them.
+             *
+             * The provider is taken from what the user submitted, and falls back to the car's live
+             * warranty so nobody has to retype "BMW" on every line. It is stored as TEXT: the warranty
+             * row can be corrected or deleted later, and the timeline must still say who honoured
+             * the job on the day.
+             *
+             * NOTE WHAT IS NOT HERE: no change to quantity, unit_price or line_total. A warranty line
+             * keeps whatever was billed. @see the add_under_warranty_to_maintenance_work migration.
+             */
+            $underWarranty = filter_var($row['under_warranty'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
             $invoice->lineItems()->create([
+                'under_warranty'     => $underWarranty,
+                'warranty_provider'  => $underWarranty
+                    ? ($this->clean($row['warranty_provider'] ?? null) ?: $this->liveWarrantyProvider($ticket))
+                    : null,
                 'maintenance_id'     => $ticket->id,
                 'maintenance_task_id'=> optional($taskBySymptom->get(mb_strtolower((string) $finding)))->id,
                 'vehicle_id'         => $ticket->vehicle_id,
@@ -792,6 +813,36 @@ class MaintenanceInvoiceService
         }
 
         return [$hit['catalog_id'], PartIdentityService::VIA_NAME, \App\Models\ComponentCatalog::find($hit['catalog_id'])];
+    }
+
+    /**
+     * The name of whoever currently covers this car, for pre-filling a warranty line.
+     *
+     * A convenience, never a decision: it only fills in a blank the user left, and a line is only
+     * ever marked under warranty because a person ticked the box. If the car has no live cover this
+     * returns null and the line simply records "under warranty" with no provider named — which is
+     * still a useful answer, and better than inventing one.
+     *
+     * Judged against the car's CURRENT odometer, because cover ends on months or kilometres,
+     * whichever comes first. @see \App\Models\Warranty::evaluate()
+     */
+    private function liveWarrantyProvider(Maintenance $ticket): ?string
+    {
+        $vehicle = $ticket->vehicle;
+
+        if (! $vehicle) {
+            return null;
+        }
+
+        $odometer = $vehicle->odometer !== null ? (int) $vehicle->odometer : null;
+
+        return \App\Models\Warranty::query()
+            ->forVehicle($vehicle->id)
+            ->where('kind', \App\Models\Warranty::KIND_VEHICLE)
+            ->where('status', \App\Models\Warranty::STATUS_ACTIVE)
+            ->get()
+            ->first(fn (\App\Models\Warranty $w) => $w->isLive($odometer))
+            ?->provider_name;
     }
 
     private function clean($value): ?string

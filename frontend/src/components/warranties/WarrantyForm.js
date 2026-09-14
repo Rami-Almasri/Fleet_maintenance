@@ -19,36 +19,6 @@ import { useI18n } from '../../i18n/I18nContext';
  * part is not a correction: it silently rewrites the history of whatever it used to cover, and
  * leaves that thing uncovered. The backend strips them too; the form simply does not offer them.
  */
-/**
- * Pick the part types a promise names, from the shared parts vocabulary.
- *
- * A native multi-select rather than a fancier picker on purpose: coverage is decided by SET
- * MEMBERSHIP against component_catalog ids, so the control has to make it obvious which exact rows
- * are selected — and a native list does that with no ambiguity and no extra dependency. It is also
- * the same vocabulary the request form, the purchase and the fitted component already speak, which
- * is what lets "is the transmission covered?" be answered without matching any text.
- *
- * Selection is kept as an array of STRING ids (what the DOM gives us) and converted to numbers once,
- * at submit — mixing the two is how a `===` comparison silently stops matching later.
- */
-function CatalogMultiSelect({ label, catalog, labelOf, value, onChange, error }) {
-  return (
-    <div>
-      <label className="mb-1 block text-sm font-medium text-slate-700">{label}</label>
-      <select
-        multiple
-        size={6}
-        className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
-        value={value.map(String)}
-        onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}
-      >
-        {catalog.map((p) => <option key={p.id} value={p.id}>{labelOf(p)}</option>)}
-      </select>
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
-    </div>
-  );
-}
-
 export default function WarrantyForm({ warranty, onClose, onSaved }) {
   const { t, lang } = useI18n();
   const toast = useToast();
@@ -71,10 +41,6 @@ export default function WarrantyForm({ warranty, onClose, onSaved }) {
     contact_name: warranty?.contact_name || '',
     contact_phone: warranty?.contact_phone || '',
     contact_email: warranty?.contact_email || '',
-    // WHAT IS AND IS NOT COVERED, as component_catalog ids. Empty here means "not itemised", which
-    // the engine reads as UNKNOWN for every part — never as "covers nothing". See the note in save().
-    covered_catalog_ids: warranty?.covered_catalog_ids || [],
-    excluded_catalog_ids: warranty?.excluded_catalog_ids || [],
     starts_on: warranty?.starts_on || new Date().toISOString().slice(0, 10),
     start_odometer: warranty?.start_odometer ?? '',
     duration_months: warranty?.duration_months ?? '',
@@ -176,20 +142,6 @@ export default function WarrantyForm({ warranty, onClose, onSaved }) {
         contact_phone: form.contact_phone?.trim() || null,
         contact_email: form.contact_email?.trim() || null,
 
-        /**
-         * EMPTY SENDS NULL, NOT [].
-         *
-         * The two mean different things to the engine: null is "nobody has itemised this booklet"
-         * (⇒ UNKNOWN for every part, which routes the question to a human), while [] would assert
-         * "itemised, and nothing is on it". A form that has simply not been filled in must say the
-         * first, or every new warranty would silently claim to cover nothing.
-         *
-         * The one case this collapses — covered:[] AND excluded:[] — is meaningless anyway. A
-         * warranty with exclusions but no inclusions still works: excluded is a real array, so
-         * isItemised() is true and "everything except these" is expressible.
-         */
-        covered_catalog_ids: form.covered_catalog_ids.length ? form.covered_catalog_ids.map(Number) : null,
-        excluded_catalog_ids: form.excluded_catalog_ids.length ? form.excluded_catalog_ids.map(Number) : null,
       };
 
       if (editing) {
@@ -374,36 +326,6 @@ export default function WarrantyForm({ warranty, onClose, onSaved }) {
             <Input label={t('warranties.fieldContactPhone')} value={form.contact_phone} onChange={(e) => set('contact_phone', e.target.value)} />
             <Input type="email" label={t('warranties.fieldContactEmail')} value={form.contact_email} error={errors.contact_email?.[0]} onChange={(e) => set('contact_email', e.target.value)} />
           </div>
-        </div>
-
-        {/* ── WHAT IS AND IS NOT COVERED ─────────────────────────────────────────────────────────
-            The load-bearing section. Leaving BOTH lists empty is a legitimate, honest answer — it
-            says "nobody has read the booklet line by line", and the engine then returns UNKNOWN for
-            every part, which sends the question to a person instead of to a default. Filling them in
-            is how the system gets more certain over time, without a single guess anywhere in it. */}
-        <div className="rounded-lg border border-slate-200 p-3">
-          <p className="mb-1 text-sm font-medium text-slate-700">{t('warranties.coverageSection')}</p>
-          <p className="mb-3 text-xs text-slate-500">{t('warranties.coverageHint')}</p>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <CatalogMultiSelect
-              label={t('warranties.fieldCovered')}
-              catalog={catalog}
-              labelOf={catalogLabel}
-              value={form.covered_catalog_ids}
-              onChange={(v) => set('covered_catalog_ids', v)}
-            />
-            <CatalogMultiSelect
-              label={t('warranties.fieldExcluded')}
-              catalog={catalog}
-              labelOf={catalogLabel}
-              value={form.excluded_catalog_ids}
-              onChange={(v) => set('excluded_catalog_ids', v)}
-              error={errors.excluded_catalog_ids?.[0]}
-            />
-          </div>
-          {form.covered_catalog_ids.length === 0 && form.excluded_catalog_ids.length === 0 && (
-            <p className="mt-2 text-xs text-amber-600">{t('warranties.notItemisedHint')}</p>
-          )}
         </div>
 
         <Textarea label={t('warranties.fieldNotes')} rows={2} value={form.notes} onChange={(e) => set('notes', e.target.value)} />
