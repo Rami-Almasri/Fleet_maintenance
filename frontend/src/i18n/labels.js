@@ -3828,6 +3828,31 @@ const en = {
   },
   queue: {
     title: 'My Maintenance Queue',
+    // The board's own masthead. `title` stays the nav/route name; this is what the page says.
+    pageTitle: 'Maintenance Queue',
+    pageSub: 'Manage inspections, repairs and workshop flow in one place.',
+    addToQueue: 'Add to Queue',
+    viewAll: 'View all',
+    viewDetails: 'View Details',
+    // The card's urgency word. The full graded label stays on the chip underneath.
+    priority: { high: 'High', medium: 'Medium', low: 'Low' },
+    filter: {
+      all: 'All',
+      allMakes: 'All Makes',
+      priority: 'Priority',
+      allGarages: 'All Garages',
+    },
+    view: { label: 'Layout', grid: 'Card view', list: 'List view' },
+    attention: {
+      title: 'Waiting Longest',
+      none: 'Nothing is being held up.',
+      waiting: 'Waiting since {age}',
+    },
+    assist: {
+      title: 'Need Assistance?',
+      body: 'Contact the control desk for support.',
+      cta: 'Contact Desk',
+    },
     subtitle: {
       both: 'Your maintenance work across every role in one place.',
       inspector: 'Abu Maroof — your pending inspections and final re-inspections.',
@@ -3876,6 +3901,7 @@ const en = {
       driver: 'Driver',
     },
     kpi: {
+      vehiclesInQueue: 'Vehicles in Queue',
       inQueue: 'In My Queue',
       inQueueFoot: '{vehicles} vehicles',
       awaitingQa: 'Awaiting Re-inspection',
@@ -9910,6 +9936,29 @@ const ar = {
   },
   queue: {
     title: 'قائمة الصيانة الخاصة بي',
+    pageTitle: 'قائمة الصيانة',
+    pageSub: 'أدِر الفحوصات والإصلاحات وسير عمل الورشة في مكان واحد.',
+    addToQueue: 'إضافة إلى القائمة',
+    viewAll: 'عرض الكل',
+    viewDetails: 'عرض التفاصيل',
+    priority: { high: 'عالية', medium: 'متوسطة', low: 'منخفضة' },
+    filter: {
+      all: 'الكل',
+      allMakes: 'كل الماركات',
+      priority: 'الأولوية',
+      allGarages: 'كل الكراجات',
+    },
+    view: { label: 'طريقة العرض', grid: 'عرض البطاقات', list: 'عرض القائمة' },
+    attention: {
+      title: 'الأطول انتظارًا',
+      none: 'لا شيء متوقّف.',
+      waiting: 'ينتظر منذ {age}',
+    },
+    assist: {
+      title: 'تحتاج مساعدة؟',
+      body: 'تواصل مع مكتب التحكم للدعم.',
+      cta: 'مكتب التحكم',
+    },
     subtitle: {
       both: 'أعمال الصيانة الخاصة بك بكل أدوارك في مكان واحد.',
       inspector: 'أبو معروف — فحوصاتك المعلّقة والفحوصات النهائية.',
@@ -9957,6 +10006,7 @@ const ar = {
       driver: 'السائق',
     },
     kpi: {
+      vehiclesInQueue: 'مركبات في القائمة',
       inQueue: 'في قائمتي',
       inQueueFoot: '{vehicles} مركبة',
       awaitingQa: 'بانتظار إعادة الفحص',

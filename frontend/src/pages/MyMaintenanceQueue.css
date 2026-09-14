@@ -1,67 +1,81 @@
 /* =======================================================================
-   My Maintenance Queue — page-scoped layer on top of the Cockpit+ (.opx)
-   design system. Uses the same theme variables (--ink, --line, --crit …) so
-   it renders correctly in both Platinum (light) and Cockpit (dark) themes.
+   Maintenance Queue — the seat's own board.
+   A calm, light workshop surface: white cards on a soft canvas, the car's
+   own photograph on every ticket, and one flat grid under a row of lane
+   pills. Built on the Cockpit+ (.opx) theme variables, so the same page
+   renders correctly in Platinum (light) and Cockpit (dark).
    ======================================================================= */
 
-/* =========================================================================
-   1. THE SEAT — who you are, what this page is for you, and which role you
-   are currently reading. One band, because "which seat" is the single choice
-   everything below the fold obeys.
-   ========================================================================= */
-.opx .qhero {
-  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
-  padding: 16px 18px; margin-bottom: 16px; border-radius: 18px;
-  border: 1px solid var(--line);
-  background:
-    radial-gradient(60rem 22rem at 6% -60%, rgba(37, 99, 235, .10), transparent 62%),
-    linear-gradient(180deg, var(--panel), var(--deep));
-  box-shadow: 0 22px 48px -38px rgba(15, 27, 48, .55);
-}
-.opx .qhero-id { display: flex; align-items: center; gap: 13px; min-width: 0; flex: 1 1 320px; }
-.opx .qhero-av {
-  width: 42px; height: 42px; border-radius: 13px; flex: none; display: grid; place-items: center;
-  font-family: var(--mono); font-size: 17px; font-weight: 700; color: #fff;
-  background: linear-gradient(140deg, var(--brand), var(--violet));
-  box-shadow: 0 12px 26px -14px var(--brand);
-}
-.opx .qhero-txt { min-width: 0; }
-.opx .qhero-name {
-  font-size: 15px; font-weight: 700; letter-spacing: -.015em; color: var(--ink);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.opx .qhero-sub { margin: 3px 0 0; font-size: 12px; color: var(--ink-3); line-height: 1.45; max-width: 60ch; }
+.opx.qpage { background: var(--void); background-image: none; }
+.opx .qbody { padding: 24px 26px 44px; max-width: 1560px; margin: 0 auto; }
 
-/* ---- role selector: icon + task counter per role ---- */
-.opx .qroles { display: flex; gap: 10px; flex-wrap: wrap; }
-.opx .qhero .qroles { margin-inline-start: auto; }
+/* =========================================================================
+   1. MASTHEAD — what this page is, what time it is, and the one button that
+   adds work to it. Everything else here is work that already arrived.
+   ========================================================================= */
+.opx .qhdr {
+  display: flex; align-items: center; gap: 22px; flex-wrap: wrap; margin-bottom: 20px;
+}
+.opx .qhdr-main { flex: 1 1 340px; min-width: 0; }
+.opx .qhdr-main h1 {
+  margin: 0; font-size: 27px; font-weight: 800; letter-spacing: -.035em; color: var(--ink); line-height: 1.15;
+}
+.opx .qhdr-main p { margin: 5px 0 0; font-size: 13px; color: var(--ink-3); line-height: 1.45; }
+
+.opx .qhdr-when { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; text-align: end; }
+[dir=rtl] .opx .qhdr-when { align-items: flex-start; text-align: start; }
+.opx .qhdr-date { font-size: 12.5px; font-weight: 600; color: var(--ink-3); letter-spacing: -.01em; }
+.opx .qhdr-time { font-size: 19px; font-weight: 800; letter-spacing: -.02em; color: var(--ink); }
+
+.opx .qhdr-acts { display: flex; align-items: center; gap: 9px; }
+.opx .qicon {
+  width: 40px; height: 40px; border-radius: 12px; flex: none; display: grid; place-items: center;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.opx .qicon:hover { color: var(--ink); border-color: var(--line-2); background: var(--panel-2); }
+.opx .qicon svg { width: 17px; height: 17px; }
+.opx .qghost {
+  display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 15px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-2);
+  font-size: 12.5px; font-weight: 600; text-decoration: none; white-space: nowrap;
+  transition: color .15s, border-color .15s;
+}
+.opx .qghost:hover { color: var(--ink); border-color: var(--line-2); }
+.opx .qghost svg { width: 15px; height: 15px; }
+.opx .qcta {
+  display: inline-flex; align-items: center; gap: 9px; height: 44px; padding: 0 20px; border-radius: 13px;
+  border: none; cursor: pointer; background: var(--ink); color: var(--panel);
+  font-family: inherit; font-size: 13.5px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap;
+  box-shadow: 0 14px 28px -18px rgba(15, 27, 48, .9);
+  transition: transform .15s, filter .15s;
+}
+.opx .qcta:hover { transform: translateY(-1px); filter: brightness(1.12); }
+.opx .qcta svg { width: 16px; height: 16px; }
+
+/* ---- seat selector — only for the people who genuinely hold more than one role ---- */
+.opx .qroles { display: flex; gap: 9px; flex-wrap: wrap; margin-bottom: 18px; }
 .opx .qrole {
   --rail: var(--brand);
-  display: inline-flex; align-items: center; gap: 11px;
-  padding: 10px 14px 10px 12px; border-radius: 13px; cursor: pointer;
-  border: 1px solid var(--line); background: linear-gradient(180deg, var(--panel-2), var(--deep));
-  color: var(--ink-2); transition: transform .16s, border-color .16s, color .16s;
-  font-family: inherit;
+  display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-family: inherit;
+  padding: 8px 13px 8px 9px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-2);
+  transition: border-color .16s, color .16s, box-shadow .16s;
 }
-.opx .qrole:hover { color: var(--ink); border-color: var(--line-2); transform: translateY(-2px); }
+.opx .qrole:hover { color: var(--ink); border-color: var(--line-2); }
 .opx .qrole-ic {
-  width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
-  background: var(--ov2); color: var(--ink-3); flex: none;
+  position: relative; width: 30px; height: 30px; border-radius: 9px; flex: none;
+  display: grid; place-items: center; background: var(--ov2); color: var(--ink-3);
 }
-.opx .qrole-txt { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.opx .qrole-ic svg { width: 16px; height: 16px; }
+.opx .qrole-txt { font-size: 12.5px; font-weight: 600; letter-spacing: -.01em; }
 .opx .qrole-ct {
-  font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink-2);
-  min-width: 24px; height: 22px; padding: 0 7px; border-radius: 7px;
+  font-family: var(--mono); font-size: 11.5px; font-weight: 700; color: var(--ink-2);
+  min-width: 22px; height: 21px; padding: 0 7px; border-radius: 7px;
   display: grid; place-items: center; background: var(--ov2);
 }
-.opx .qrole.on {
-  border-color: var(--rail); color: var(--ink);
-  box-shadow: 0 0 0 1px var(--rail), 0 14px 30px -18px var(--rail);
-}
-.opx .qrole.on .qrole-ic { background: var(--rail); color: #fff; }
-.opx .qrole.on .qrole-ct { background: var(--rail); color: #fff; }
-/* Red-graded work waiting on a seat you are NOT looking at. */
-.opx .qrole-ic { position: relative; }
+.opx .qrole.on { border-color: var(--rail); color: var(--ink); box-shadow: 0 0 0 1px var(--rail); }
+.opx .qrole.on .qrole-ic, .opx .qrole.on .qrole-ct { background: var(--rail); color: #fff; }
 .opx .qrole-dot {
   position: absolute; top: -3px; inset-inline-end: -3px; width: 9px; height: 9px; border-radius: 50%;
   background: var(--crit); border: 2px solid var(--panel);
@@ -73,212 +87,401 @@
 @keyframes q-ping { 0% { transform: scale(.7); opacity: .7; } 100% { transform: scale(1.7); opacity: 0; } }
 
 /* =========================================================================
-   2. HEADLINE NUMBERS — always the WHOLE seat, never the filtered view. The
-   first three, and the wait clock, double as the board's filter and sort.
+   2. THE SPLIT — board on the left, live rail on the right.
    ========================================================================= */
-.opx .qmetrics {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(184px, 1fr));
-  gap: 12px; margin-bottom: 16px;
-}
-.opx .qm {
-  --qm-c: var(--brand);
-  position: relative; overflow: hidden; padding: 14px 15px 13px; border-radius: 15px;
-  border: 1px solid var(--line); background: linear-gradient(180deg, var(--panel), var(--deep));
-  transition: transform .16s, border-color .16s, box-shadow .16s;
-}
-.opx .qm::after {
-  content: ''; position: absolute; inset-inline-end: -30px; top: -34px; width: 96px; height: 96px;
-  border-radius: 50%; background: var(--qm-c); opacity: .07; pointer-events: none;
-}
-.opx .qm.click { cursor: pointer; }
-.opx .qm.click:hover { transform: translateY(-2px); border-color: var(--line-2); }
-.opx .qm.on {
-  border-color: var(--qm-c);
-  box-shadow: 0 0 0 1px var(--qm-c), 0 20px 40px -26px var(--qm-c);
-}
-.opx .qm.warm { --qm-c: var(--paused); }
-.opx .qm.hot  { --qm-c: var(--crit); }
-.opx .qm.good { --qm-c: var(--avail); }
-
-.opx .qm-hd { display: flex; align-items: center; gap: 8px; }
-.opx .qm-ic {
-  width: 24px; height: 24px; border-radius: 8px; flex: none; display: grid; place-items: center;
-  color: var(--qm-c); background: color-mix(in srgb, var(--qm-c) 12%, transparent);
-}
-.opx .qm-ic svg { width: 14px; height: 14px; }
-.opx .qm-lbl {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
-  color: var(--ink-3); font-weight: 600; line-height: 1.3;
-}
-.opx .qm-v {
-  font-size: 30px; font-weight: 800; letter-spacing: -.035em; line-height: 1.05; margin-top: 9px;
-  color: var(--ink);
-}
-.opx .qm.warm .qm-v, .opx .qm.hot .qm-v, .opx .qm.good .qm-v { color: var(--qm-c); }
-.opx .qm-bar { height: 4px; border-radius: 3px; background: var(--ov2); overflow: hidden; margin-top: 9px; }
-.opx .qm-bar i {
-  display: block; height: 100%; border-radius: 3px; background: var(--qm-c);
-  transition: width .55s cubic-bezier(.2, .7, .3, 1);
-}
-.opx .qm-foot {
-  margin-top: 7px; font-family: var(--mono); font-size: 10px; color: var(--ink-3);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
+.opx .qmain { display: grid; grid-template-columns: minmax(0, 1fr) 306px; gap: 18px; align-items: start; }
+.opx .qcol { min-width: 0; }
+.opx .qside { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 18px; }
 
 /* =========================================================================
-   3. THE VIEW BAR — find a car, narrow to a slice, choose the order.
+   3. HEADLINE TILES — the whole seat, counted. "View all" sets the lane pill.
    ========================================================================= */
-.opx .qbar {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 10px 12px; margin-bottom: 14px; border-radius: 14px;
-  border: 1px solid var(--line); background: linear-gradient(180deg, var(--panel-2), var(--deep));
+.opx .qtiles {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 14px; margin-bottom: 18px;
 }
-.opx .qbar-search {
-  display: flex; align-items: center; gap: 8px; flex: 1 1 240px; min-width: 0;
-  padding: 7px 11px; border-radius: 10px; background: var(--ov2);
-  border: 1px solid var(--line); transition: border-color .16s, box-shadow .16s;
+.opx .qtile {
+  --tone: var(--brand);
+  position: relative; display: flex; align-items: flex-start; gap: 13px;
+  padding: 16px 15px 14px; border-radius: 16px;
+  border: 1px solid var(--line); background: var(--panel);
+  box-shadow: 0 10px 24px -22px rgba(15, 27, 48, .6);
+  transition: transform .16s, border-color .16s, box-shadow .16s;
 }
-.opx .qbar-search:focus-within { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan); }
-.opx .qbar-search svg { color: var(--ink-3); flex: none; }
-.opx .qbar-search input {
-  flex: 1; min-width: 0; border: none; background: none; outline: none;
-  font-family: inherit; font-size: 13px; color: var(--ink);
+.opx .qtile.click { cursor: pointer; }
+.opx .qtile.click:hover { transform: translateY(-2px); border-color: var(--line-2); }
+.opx .qtile.on { border-color: var(--tone); box-shadow: 0 0 0 1px var(--tone), 0 16px 32px -24px var(--tone); }
+.opx .qtile-ic {
+  width: 42px; height: 42px; border-radius: 13px; flex: none; display: grid; place-items: center;
+  color: var(--tone); background: color-mix(in srgb, var(--tone) 13%, transparent);
 }
-.opx .qbar-search input::placeholder { color: var(--ink-3); }
-.opx .qbar-search input::-webkit-search-cancel-button { display: none; }
-.opx .qbar-x {
-  border: none; background: none; cursor: pointer; color: var(--ink-3); padding: 2px;
-  display: grid; place-items: center; border-radius: 6px; flex: none;
+.opx .qtile-ic svg { width: 20px; height: 20px; }
+.opx .qtile-bd { min-width: 0; }
+.opx .qtile-v { font-size: 25px; font-weight: 800; letter-spacing: -.035em; line-height: 1.05; color: var(--ink); }
+.opx .qtile-lbl {
+  margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--ink-3); line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis;
 }
-.opx .qbar-x:hover { color: var(--crit); background: var(--ov2); }
+.opx .qtile-all {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 8px;
+  font-size: 11.5px; font-weight: 700; color: var(--tone);
+}
+.opx .qtile-all svg { width: 12px; height: 12px; }
+.opx .qtile-go {
+  position: absolute; top: 12px; inset-inline-end: 12px; color: var(--ink-3); opacity: .45;
+  transition: opacity .15s, color .15s;
+}
+.opx .qtile-go svg { width: 14px; height: 14px; }
+.opx .qtile.click:hover .qtile-go { opacity: 1; color: var(--tone); }
 
-.opx .qbar-sort { display: flex; align-items: center; gap: 8px; margin-inline-start: auto; }
-.opx .qbar-sort-lbl {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase;
-  color: var(--ink-3); font-weight: 600;
+/* =========================================================================
+   4. THE VIEW BAR — lane pills, then the narrowing selects and the layout.
+   ========================================================================= */
+.opx .qfilters {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
 }
-.opx .qbar-sort select {
-  font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink);
-  padding: 7px 10px; border-radius: 10px; border: 1px solid var(--line);
-  background: var(--ov2); cursor: pointer; outline: none;
+.opx .qpills { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.opx .qpill {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-family: inherit;
+  height: 34px; padding: 0 14px; border-radius: 9px; white-space: nowrap;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-2);
+  font-size: 12.5px; font-weight: 600; letter-spacing: -.01em;
+  transition: color .15s, border-color .15s, background .15s;
 }
-.opx .qbar-sort select:focus-visible { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan); }
+.opx .qpill span { color: var(--ink-3); font-weight: 700; }
+.opx .qpill:hover { color: var(--ink); border-color: var(--line-2); }
+.opx .qpill.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.opx .qpill.on span { color: rgba(255, 255, 255, .78); }
+
+.opx .qtools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-inline-start: auto; }
+.opx .qsearch {
+  display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 11px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--panel); min-width: 0; flex: 0 1 210px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.opx .qsearch:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent); }
+.opx .qsearch svg { width: 14px; height: 14px; color: var(--ink-3); flex: none; }
+.opx .qsearch input {
+  flex: 1; min-width: 0; border: none; background: none; outline: none;
+  font-family: inherit; font-size: 12.5px; color: var(--ink);
+}
+.opx .qsearch input::placeholder { color: var(--ink-3); }
+.opx .qsearch input::-webkit-search-cancel-button { display: none; }
+.opx .qsearch-x {
+  border: none; background: none; cursor: pointer; color: var(--ink-3); padding: 0; flex: none;
+  display: grid; place-items: center;
+}
+.opx .qsearch-x svg { width: 13px; height: 13px; }
+.opx .qsearch-x:hover { color: var(--crit); }
+
+.opx .qsel {
+  height: 34px; padding: 0 30px 0 12px; border-radius: 9px; cursor: pointer; outline: none;
+  border: 1px solid var(--line); background-color: var(--panel); color: var(--ink-2);
+  font-family: inherit; font-size: 12.5px; font-weight: 600; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238592a8' stroke-width='2.4'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+[dir=rtl] .opx .qsel { padding: 0 12px 0 30px; background-position: left 10px center; }
+.opx .qsel:hover { border-color: var(--line-2); color: var(--ink); }
+.opx .qsel:focus { border-color: var(--brand); }
+
+.opx .qview {
+  display: flex; gap: 4px; padding: 3px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel);
+}
+.opx .qview button {
+  width: 28px; height: 26px; border: none; border-radius: 7px; cursor: pointer;
+  background: none; color: var(--ink-3); display: grid; place-items: center; transition: .15s;
+}
+.opx .qview button:hover { color: var(--ink-2); }
+.opx .qview button.on { background: var(--ink); color: var(--panel); }
+.opx .qview svg { width: 14px; height: 14px; }
 
 /* When the view hides anything, it says so — an empty-looking board must never be mistaken for an
    empty queue. */
 .opx .qbar-note {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
-  margin: -6px 0 14px; padding: 8px 12px; border-radius: 11px;
+  margin: -4px 0 16px; padding: 9px 13px; border-radius: 11px;
   border: 1px dashed var(--line-2); background: var(--ov);
   font-size: 12px; color: var(--ink-2);
 }
-.opx .qbar-note svg { color: var(--ink-3); flex: none; }
+.opx .qbar-note svg { width: 14px; height: 14px; color: var(--ink-3); flex: none; }
 .opx .qbar-note button {
-  margin-inline-start: auto; border: none; background: none; cursor: pointer; font-family: var(--mono);
-  font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; color: var(--cyan);
+  margin-inline-start: auto; border: none; background: none; cursor: pointer; font-family: inherit;
+  font-size: 11.5px; font-weight: 700; color: var(--brand);
 }
 .opx .qbar-note button:hover { text-decoration: underline; }
 
-/* ---- sections column + card grid ---- */
-.opx .qsections { display: flex; flex-direction: column; gap: 16px; }
-.opx .qsec-hint {
-  margin: 0 0 12px; font-size: 11.5px; color: var(--ink-3); line-height: 1.5;
-  max-width: 62ch;
+/* =========================================================================
+   5. THE BOARD — one flat grid of cars.
+   ========================================================================= */
+.opx .qboard { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 14px; }
+.opx .qboard.list { grid-template-columns: 1fr; gap: 10px; }
+.opx .qboard-empty {
+  grid-column: 1 / -1; margin: 0; padding: 48px 20px; text-align: center;
+  border: 1px dashed var(--line-2); border-radius: 16px; background: var(--panel);
+  color: var(--ink-3); font-size: 13px;
 }
-.opx .qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(288px, 1fr)); gap: 13px; }
 
-/* ---- ticket card (extends .opx-card) ---- */
-/* The card body is the door to the full ticket drawer, so it carries the pointer and lifts on
-   hover — the same affordance the pipeline board's cards have. The footer (buttons + timeline
-   toggle) stops the click, so it keeps its own default cursor. */
-.opx .qc {
-  cursor: pointer; padding: 13px 14px; display: flex; flex-direction: column;
+.opx .qcard {
+  position: relative; display: flex; flex-direction: column; overflow: hidden;
+  padding: 12px 13px 10px; border-radius: 16px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel);
+  box-shadow: 0 10px 26px -24px rgba(15, 27, 48, .7);
   transition: transform .16s, border-color .16s, box-shadow .16s;
 }
-.opx .qc:hover { transform: translateY(-2px); border-color: var(--line-2); }
-.opx .qc:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
-/* The ticket currently open in the drawer — so you can see which card you are reading. */
-.opx .qc.qc-open { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan), 0 16px 34px -20px var(--cyan); }
-.opx .qc-foot { cursor: default; }
-/* Overstayed its stage SLA — the one fact on a card that is nobody's fault but the holder's, so it
-   gets a corner flag rather than only a red number in the header. */
-.opx .qc-late { border-color: rgba(225, 29, 72, .38); }
-.opx .qc-late::after {
-  content: ''; position: absolute; top: 0; inset-inline-end: 0;
-  border-block-start: 22px solid var(--crit);
-  border-inline-start: 22px solid transparent;
-  border-start-end-radius: 12px; opacity: .5; pointer-events: none;
-}
-.opx .qc .top { align-items: flex-start; }
-.opx .qc .model { min-width: 0; }
-.opx .qc .model span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 15ch; }
-.opx .qc .now { align-self: flex-start; }
+.opx .qcard:hover { transform: translateY(-3px); border-color: var(--line-2); box-shadow: 0 20px 38px -28px rgba(15, 27, 48, .75); }
+.opx .qcard:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.opx .qcard.qcard-open { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand), 0 18px 36px -26px var(--brand); }
+.opx .qcard.qcard-late { border-color: color-mix(in srgb, var(--crit) 42%, var(--line)); }
 
-.opx .qc-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
-.opx .qc-quote {
-  margin: 10px 0 0; font-size: 11.5px; color: var(--ink-2); line-height: 1.45; font-style: italic;
+.opx .qcard-top { display: flex; align-items: center; gap: 7px; }
+.opx .qcard-ref {
+  font-size: 11px; font-weight: 700; color: var(--ink-2); letter-spacing: .01em;
+  background: var(--ov2); border-radius: 6px; padding: 3px 7px;
+}
+.opx .qprio {
+  margin-inline-start: auto; font-size: 10px; font-weight: 700; letter-spacing: .02em;
+  padding: 3px 9px; border-radius: 999px; text-transform: capitalize; white-space: nowrap;
+}
+.opx .qprio.high   { color: var(--crit);   background: color-mix(in srgb, var(--crit) 12%, transparent); }
+.opx .qprio.medium { color: var(--paused); background: color-mix(in srgb, var(--paused) 14%, transparent); }
+.opx .qprio.low    { color: var(--avail);  background: color-mix(in srgb, var(--avail) 13%, transparent); }
+.opx .qcard-go {
+  width: 20px; height: 20px; border-radius: 6px; flex: none; display: grid; place-items: center;
+}
+.opx .qcard-go svg { width: 12px; height: 12px; }
+.opx .qcard-go.high   { color: var(--crit);   background: color-mix(in srgb, var(--crit) 12%, transparent); }
+.opx .qcard-go.medium { color: var(--paused); background: color-mix(in srgb, var(--paused) 14%, transparent); }
+.opx .qcard-go.low    { color: var(--avail);  background: color-mix(in srgb, var(--avail) 13%, transparent); }
+[dir=rtl] .opx .qcard-go svg { transform: scaleX(-1); }
+
+/* ---- the car itself ---- */
+.opx .qcard-shot {
+  height: 98px; margin: 6px 0 8px; display: grid; place-items: center; overflow: hidden;
+}
+.opx .qcard-img { max-width: 96%; max-height: 98px; object-fit: contain; }
+.opx .qcard-logo { max-width: 56px; max-height: 52px; object-fit: contain; opacity: .8; }
+.opx .qcard-silhouette { width: 46px; height: 46px; color: var(--ink-3); opacity: .35; }
+
+.opx .qcard-id { min-width: 0; }
+.opx .qcard-name {
+  margin: 0; font-size: 13px; font-weight: 800; letter-spacing: -.01em; color: var(--ink);
+  text-transform: uppercase; line-height: 1.25;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-/* Source prefix on the quote — upright + bolder so the attribution reads apart from the italic note. */
-.opx .qc-quote-src { font-style: normal; font-weight: 700; color: var(--ink-3); }
-.opx .qc-pos {
-  display: flex; align-items: center; gap: 6px; margin-top: 10px;
-  font-size: 11.5px; color: var(--ink-2); font-weight: 500;
+.opx .qcard-plate {
+  display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 600; color: var(--ink-3);
+  text-decoration: none; letter-spacing: .01em;
 }
-.opx .qc-pos svg { color: var(--ink-3); flex: none; }
+.opx .qcard-plate:hover { color: var(--brand); text-decoration: underline; }
 
-.opx .qc-prog { margin-top: 11px; }
-.opx .opx-prog { height: 5px; border-radius: 4px; background: var(--ov2); overflow: hidden; }
-.opx .opx-prog i { display: block; height: 100%; border-radius: 4px; transition: width .5s cubic-bezier(.2,.7,.3,1); }
+.opx .qcard-chips { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; margin-top: 9px; }
+.opx .qchip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .01em; padding: 3px 9px; border-radius: 7px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--ink-2); background: var(--ov2);
+}
+.opx .qchip i { width: 6px; height: 6px; border-radius: 2px; flex: none; background: currentColor; transform: rotate(45deg); }
+.opx .qchip.crit     { color: var(--crit);     background: color-mix(in srgb, var(--crit) 11%, transparent); }
+.opx .qchip.paused   { color: var(--paused);   background: color-mix(in srgb, var(--paused) 13%, transparent); }
+.opx .qchip.avail    { color: var(--avail);    background: color-mix(in srgb, var(--avail) 12%, transparent); }
+.opx .qchip.rented   { color: var(--rented);   background: color-mix(in srgb, var(--rented) 12%, transparent); }
+.opx .qchip.reserved { color: var(--reserved); background: color-mix(in srgb, var(--reserved) 13%, transparent); }
+.opx .qchip.step     { color: var(--violet);   background: color-mix(in srgb, var(--violet) 12%, transparent); }
 
-.opx .qc-foot {
-  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line);
+.opx .qcard-quote {
+  margin: 9px 0 0; font-size: 11px; color: var(--ink-2); line-height: 1.45; font-style: italic;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.opx .qcard-quote-src { font-style: normal; font-weight: 700; color: var(--ink-3); }
+.opx .qcard-pos {
+  display: flex; align-items: center; gap: 6px; margin-top: 9px; font-size: 11px; color: var(--ink-3);
+}
+.opx .qcard-pos svg { width: 13px; height: 13px; flex: none; }
+.opx .qcard-pos > span:first-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opx .qcard-pos .now { margin-inline-start: auto; font-family: var(--mono); font-size: 10px; white-space: nowrap; }
+
+.opx .qcard-prog { height: 4px; border-radius: 3px; background: var(--ov2); overflow: hidden; margin-top: 10px; }
+.opx .qcard-prog i { display: block; height: 100%; border-radius: 3px; transition: width .5s cubic-bezier(.2, .7, .3, 1); }
+
+.opx .qcard-foot {
+  margin-top: auto; padding-top: 10px; cursor: default;
   display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
 }
-.opx .qc-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.opx .qc-actions .opx-btn { padding: 8px 13px; }
-.opx .qc-tl-toggle {
-  display: inline-flex; align-items: center; gap: 5px; margin-inline-start: auto;
-  font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .02em;
-  color: var(--ink-3); background: none; border: none; cursor: pointer; padding: 4px 2px;
+.opx .qcard-foot > :only-child { margin-inline: auto; }
+.opx .qcard-links { display: flex; align-items: center; gap: 4px; margin-inline-start: auto; }
+.opx .qcard-tl {
+  width: 26px; height: 26px; border-radius: 7px; border: none; background: none; cursor: pointer;
+  color: var(--ink-3); display: grid; place-items: center;
 }
-.opx .qc-tl-toggle:hover { color: var(--cyan); }
-.opx .qc-tl-toggle svg { width: 13px; height: 13px; }
+.opx .qcard-tl:hover { color: var(--brand); background: var(--ov2); }
+.opx .qcard-tl svg { width: 14px; height: 14px; }
+.opx .qcard-open-btn {
+  display: inline-flex; align-items: center; gap: 5px; border: none; background: none; cursor: pointer;
+  font-family: inherit; font-size: 11.5px; font-weight: 700; color: var(--ink-2); padding: 4px 2px;
+}
+.opx .qcard-open-btn:hover { color: var(--brand); }
+.opx .qcard-open-btn svg { width: 12px; height: 12px; }
+[dir=rtl] .opx .qcard-open-btn svg, [dir=rtl] .opx .qtile-all svg { transform: scaleX(-1); }
 
+/* the card's own action buttons, borrowed from the ops palette but sized for this surface */
+.opx .qcard .qc-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.opx .qcard .qc-actions .opx-btn { padding: 7px 11px; font-size: 11px; border-radius: 9px; }
+.opx .qcard .opx-chip { font-size: 10px; }
+
+/* ---- list view: the same card laid on its side ---- */
+.opx .qcard.qcard-row {
+  display: grid; align-items: center; gap: 4px 14px; padding: 11px 14px;
+  grid-template-columns: 86px minmax(160px, 1.1fr) minmax(0, 1.4fr) auto;
+  grid-template-areas: 'shot id chips foot' 'shot pos pos foot';
+}
+.opx .qcard-row .qcard-top { grid-area: unset; position: absolute; top: 8px; inset-inline-end: 12px; gap: 6px; }
+.opx .qcard-row .qcard-shot { grid-area: shot; height: 56px; margin: 0; }
+.opx .qcard-row .qcard-img { max-height: 56px; }
+.opx .qcard-row .qcard-id { grid-area: id; }
+.opx .qcard-row .qcard-chips { grid-area: chips; flex-direction: row; flex-wrap: wrap; margin-top: 0; }
+.opx .qcard-row .qcard-quote { display: none; }
+.opx .qcard-row .qcard-pos { grid-area: pos; margin-top: 2px; }
+.opx .qcard-row .qcard-prog { display: none; }
+.opx .qcard-row .qcard-foot { grid-area: foot; margin: 0; padding: 0; flex-direction: column; align-items: flex-end; }
+.opx .qcard-row .qc-timeline { grid-column: 1 / -1; }
+@media (max-width: 760px) {
+  .opx .qcard.qcard-row { grid-template-columns: 1fr; grid-template-areas: 'shot' 'id' 'chips' 'pos' 'foot'; }
+}
+
+/* ---- the per-card timeline, kept from the old card ---- */
 .opx .qc-timeline {
-  margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line-2);
+  margin-top: 11px; padding-top: 11px; border-top: 1px dashed var(--line-2);
   animation: qc-reveal .22s ease-out both;
 }
 .opx .qc-tl-h {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase;
   color: var(--ink-3); font-weight: 600; margin-bottom: 12px;
 }
-/* tighten the shared JourneyMap inside the compact card */
 .opx .qc-timeline .opx-jn { padding-bottom: 14px; }
 .opx .qc-timeline .opx-jn .h { font-size: 12px; }
 .opx .qc-timeline .opx-jn:last-child { padding-bottom: 2px; }
 @keyframes qc-reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
-/* ---- right rail ---- */
-.opx .qside { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 78px; }
-.opx .qload { display: flex; flex-direction: column; gap: 11px; }
-.opx .qload-row { display: grid; grid-template-columns: 1fr 96px auto; align-items: center; gap: 10px; }
-.opx .qload-lbl {
-  font-size: 11.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+/* =========================================================================
+   6. THE RIGHT RAIL
+   ========================================================================= */
+.opx .qpanel {
+  border: 1px solid var(--line); border-radius: 16px; background: var(--panel); padding: 15px 16px;
+  box-shadow: 0 10px 24px -24px rgba(15, 27, 48, .6);
 }
+.opx .qpanel-hd { display: flex; align-items: center; gap: 9px; margin-bottom: 13px; }
+.opx .qpanel-hd h3 {
+  margin: 0; font-size: 13.5px; font-weight: 700; letter-spacing: -.01em; color: var(--ink);
+  display: flex; align-items: center; gap: 7px;
+}
+.opx .qpanel-hd h3 svg { width: 15px; height: 15px; }
+.opx .qpanel-lbl {
+  margin-inline-start: auto; font-family: var(--mono); font-size: 9px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-3); text-align: end; max-width: 46%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.opx .qpanel-ct {
+  margin-inline-start: auto; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px;
+  display: grid; place-items: center; font-size: 11.5px; font-weight: 700;
+  background: var(--crit); color: #fff;
+}
+.opx .qpanel-empty { margin: 0; font-size: 12px; color: var(--ink-3); }
+
+.opx .qload { display: flex; flex-direction: column; gap: 11px; }
+.opx .qload-row { display: grid; grid-template-columns: 1fr 86px auto; align-items: center; gap: 10px; }
+.opx .qload-lbl { font-size: 11.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .opx .qload-track { height: 7px; border-radius: 5px; background: var(--ov2); overflow: hidden; }
 .opx .qload-track i { display: block; height: 100%; border-radius: 5px; transition: width .5s ease; min-width: 2px; }
-.opx .qload-ct { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink); text-align:end; }
+.opx .qload-ct { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink); text-align: end; }
 
-/* ---- responsive: collapse the side rail below the sections ---- */
-@media (max-width: 1100px) {
-  .opx .qside { position: static; }
-  .opx .qhero { gap: 14px; }
-  .opx .qhero .qroles { margin-inline-start: 0; width: 100%; }
-  .opx .qbar-sort { margin-inline-start: 0; }
+/* ---- waiting longest ---- */
+.opx .qpanel-alert {
+  border-color: color-mix(in srgb, var(--crit) 28%, var(--line));
+  background: color-mix(in srgb, var(--crit) 5%, var(--panel));
 }
-@media (max-width: 640px) {
-  .opx .qmetrics { grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); }
-  .opx .qm-v { font-size: 25px; }
-  .opx .qrole { flex: 1 1 auto; }
+.opx .qpanel-alert .qpanel-hd h3 { color: var(--crit); }
+.opx .qalert-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 6px; border: none;
+  background: none; cursor: pointer; border-radius: 10px; text-align: start; font-family: inherit;
+  transition: background .15s;
+}
+.opx .qalert-row:hover { background: color-mix(in srgb, var(--crit) 8%, transparent); }
+.opx .qalert-ic {
+  width: 28px; height: 28px; border-radius: 9px; flex: none; display: grid; place-items: center;
+  color: var(--crit); background: color-mix(in srgb, var(--crit) 12%, transparent);
+}
+.opx .qalert-ic svg { width: 15px; height: 15px; }
+.opx .qalert-bd { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.opx .qalert-t {
+  font-size: 12px; font-weight: 600; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.opx .qalert-t b { color: var(--ink-3); font-weight: 700; }
+.opx .qalert-s { font-size: 11px; color: var(--ink-3); }
+
+/* ---- need assistance ---- */
+.opx .qassist {
+  display: flex; gap: 12px; padding: 15px 16px; border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--brand) 24%, var(--line));
+  background: color-mix(in srgb, var(--brand) 7%, var(--panel));
+}
+.opx .qassist-ic {
+  width: 32px; height: 32px; border-radius: 10px; flex: none; display: grid; place-items: center;
+  color: var(--brand); background: color-mix(in srgb, var(--brand) 14%, transparent);
+}
+.opx .qassist-ic svg { width: 17px; height: 17px; }
+.opx .qassist-bd { min-width: 0; }
+.opx .qassist-bd h3 { margin: 0; font-size: 13.5px; font-weight: 700; color: var(--brand); }
+.opx .qassist-bd p { margin: 4px 0 0; font-size: 11.5px; color: var(--ink-2); line-height: 1.45; }
+.opx .qassist-cta {
+  display: inline-flex; align-items: center; margin-top: 11px; height: 32px; padding: 0 15px;
+  border-radius: 9px; background: var(--brand); color: #fff; font-size: 12px; font-weight: 700;
+  text-decoration: none; transition: filter .15s;
+}
+.opx .qassist-cta:hover { filter: brightness(1.1); }
+
+/* The notifications rail keeps its own panel chrome — just soften it to match this page. */
+.opx .qside .opx-panel { border-radius: 16px; box-shadow: 0 10px 24px -24px rgba(15, 27, 48, .6); }
+
+/* =========================================================================
+   7. CARS TO COLLECT — the driver's own block, kept on the older card shape
+   because a collection is not a ticket and must not read as one.
+   ========================================================================= */
+.opx .qsec-hint { margin: 0 0 12px; font-size: 11.5px; color: var(--ink-3); line-height: 1.5; max-width: 62ch; }
+.opx .qcol > .opx-panel { margin-bottom: 16px; border-radius: 16px; }
+.opx .qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 13px; }
+.opx .qc { cursor: pointer; padding: 13px 14px; display: flex; flex-direction: column; transition: .16s; }
+.opx .qc:hover { transform: translateY(-2px); border-color: var(--line-2); }
+.opx .qc .top { align-items: flex-start; }
+.opx .qc .model { min-width: 0; }
+.opx .qc .model span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 15ch; }
+.opx .qc-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.opx .qc-quote {
+  margin: 10px 0 0; font-size: 11.5px; color: var(--ink-2); line-height: 1.45; font-style: italic;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.opx .qc-pos { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 11.5px; color: var(--ink-2); }
+.opx .qc-pos svg { color: var(--ink-3); flex: none; }
+.opx .qc-foot {
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  cursor: default;
+}
+.opx .qc-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.opx .qc-locked { font-size: 11px; color: var(--ink-3); }
+
+/* =========================================================================
+   8. RESPONSIVE
+   ========================================================================= */
+@media (max-width: 1180px) {
+  .opx .qmain { grid-template-columns: 1fr; }
+  .opx .qside { position: static; }
+}
+@media (max-width: 760px) {
+  .opx .qbody { padding: 18px 14px 34px; }
+  .opx .qhdr-main h1 { font-size: 23px; }
+  .opx .qtools { margin-inline-start: 0; width: 100%; }
+  .opx .qsearch { flex: 1 1 100%; }
+  .opx .qboard { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 }

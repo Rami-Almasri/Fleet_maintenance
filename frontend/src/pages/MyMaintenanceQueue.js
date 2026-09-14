@@ -39,7 +39,7 @@ import Modal from '../components/ui/Modal';
 import Button from '../components/ui/Button';
 import { Input } from '../components/ui/Field';
 import {
-  CommandPanel, JourneyMap, OpsClock, severityTone,
+  CommandPanel, JourneyMap, severityTone,
 } from '../components/ops';
 import TicketActionModal from '../components/workflow/TicketActionModal';
 // The SAME full ticket the pipeline board opens — findings, suggested checks, parts, money, history
@@ -54,7 +54,10 @@ import TaskRoutingModal from '../components/workflow/TaskRoutingModal';
 import SendCarInModal from '../components/workflow/SendCarInModal';
 import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import ComplaintTriageModal from '../components/workflow/ComplaintTriageModal';
-import { resolveAction, stageAge, stageSeconds, fmtDuration, ago, custodyBlocked, custodyHolderName, assignmentBlocked, assignedDriverName, ORIGIN_LABEL } from '../components/workflow/meta';
+import { resolveAction, stageAge, stageSeconds, ago, custodyBlocked, custodyHolderName, assignmentBlocked, assignedDriverName, ORIGIN_LABEL } from '../components/workflow/meta';
+// The car's own photograph — the same registry the Fleet hub uses. A miss is silent and falls back
+// to the marque logo, then to a neutral silhouette; it NEVER guesses a different car.
+import { carPhoto, brandLogo, vehicleName } from '../lib/carAssets';
 // The oil change is recorded identically wherever it is recorded from — one dialog, one write path.
 import { OilChangeDialog } from './reminders/OilProjection';
 import './MyMaintenanceQueue.css';
@@ -139,6 +142,35 @@ const SEV_COLOR = { crit: '#fb7185', paused: '#f5a524', ok: '#34d399', info: '#6
 // Priority order when the board is sorted by urgency: red first, then amber, then everything else.
 const SEV_RANK = { crit: 0, paused: 1, info: 2, ok: 3 };
 
+// Section → the glyph on its headline tile. The tile inherits the section's own `tone`, so a lane
+// and the number that counts it read as the same colour of work.
+const SECTION_ICON = {
+  complaint_triage: Icon.Alert,
+  pending_inspections: Icon.Search,
+  on_site: Icon.Wrench,
+  final_reinspections: Icon.Check,
+  assigned_to_me: Icon.Users,
+  awaiting_dispatch_decision: Icon.Route,
+  awaiting_pickup: Icon.Truck,
+  release_dispatch: Icon.Route,
+  released_parked: Icon.Flag,
+  reinspection_failed: Icon.Alert,
+  active_dispatches: Icon.Truck,
+  release_moves: Icon.Route,
+  waiting_followup: Icon.Clock,
+  return_to_base: Icon.Tow,
+  back_from_garage: Icon.Check,
+};
+
+// Severity → the card's priority badge. Three words, because a queue is worked in the order a person
+// can read at a glance; the full graded label stays on the chip below.
+const PRIORITY_WORD = { crit: 'high', paused: 'medium', ok: 'low', info: 'low' };
+
+// The marque, as a person would pick it from a menu. `car` arrives as one string ("NISSAN PATROL"),
+// so the make is its first word — the same fold the photo registry does, kept deliberately dumb
+// because nothing here repairs the sheet's data, it only reads it.
+const makeOf = (tk) => String(tk.car || '').trim().split(/\s+/)[0]?.toUpperCase() || '';
+
 // Everything a card is worth searching by — the plate you were told on the phone, the car, the
 // fault, the garage it sits in, the complaint someone typed. One haystack, matched case-insensitively.
 const haystack = (tk) => [
@@ -147,32 +179,70 @@ const haystack = (tk) => [
 ].filter(Boolean).join(' ').toLowerCase();
 
 /**
- * A headline number on the strip. Clickable tiles double as the view's filter — the professional
- * shortcut on a busy queue is "show me only the four that are waiting on me", and the number that
- * says there are four is the natural place to press.
+ * A headline tile: the number, what it counts, and the one link that takes you to it. Pressing
+ * "View all" narrows the board below to exactly the cards the number describes — the professional
+ * shortcut on a busy queue is "show me only the six waiting on me", and the number that says there
+ * are six is the natural place to press.
  */
-function QMetric({ label, value, foot, tone = '', icon: IconCmp, pct = null, active = false, onClick, title }) {
+function QTile({ label, value, tone, icon: IconCmp, active = false, onClick, viewAll, title }) {
   const clickable = !!onClick;
   return (
     <div
-      className={`qm ${tone} ${clickable ? 'click' : ''} ${active ? 'on' : ''}`}
+      className={`qtile ${active ? 'on' : ''} ${clickable ? 'click' : ''}`}
+      style={{ '--tone': tone }}
       title={title}
       role={clickable ? 'button' : undefined}
       tabIndex={clickable ? 0 : undefined}
       onClick={onClick}
       onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
     >
-      <div className="qm-hd">
-        {IconCmp ? <span className="qm-ic"><IconCmp className="h-4 w-4" /></span> : null}
-        <span className="qm-lbl">{label}</span>
+      <span className="qtile-ic">{IconCmp ? <IconCmp /> : null}</span>
+      <div className="qtile-bd">
+        <div className="qtile-v tnum">{value}</div>
+        <div className="qtile-lbl">{label}</div>
+        {viewAll ? <span className="qtile-all">{viewAll} <Icon.ArrowRight /></span> : null}
       </div>
-      <div className="qm-v tnum">{value}</div>
-      {pct != null && (
-        <div className="qm-bar"><i style={{ width: `${Math.max(2, Math.min(100, pct))}%` }} /></div>
-      )}
-      {foot ? <div className="qm-foot">{foot}</div> : null}
+      <span className="qtile-go"><Icon.ArrowUpRight /></span>
     </div>
   );
+}
+
+/**
+ * The page's own clock: the day on one line, the time under it. Gregorian with Latin digits in
+ * Arabic too, so the date never switches calendar under an RTL reader.
+ */
+function QueueClock() {
+  const { lang } = useI18n();
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const timeLoc = lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined;
+  const dateLoc = lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined;
+  return (
+    <div className="qhdr-when">
+      <span className="qhdr-date">
+        {now.toLocaleDateString(dateLoc, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+      </span>
+      <strong className="qhdr-time tnum">
+        {now.toLocaleTimeString(timeLoc, { hour: '2-digit', minute: '2-digit', hour12: true })}
+      </strong>
+    </div>
+  );
+}
+
+/**
+ * The car's photograph, or the honest fallbacks behind it. A picture is a claim about which vehicle
+ * this card is — we hold no photo for roughly a third of the fleet, and those rows show the marque
+ * logo or a silhouette rather than a car we do not own.
+ */
+function CarShot({ car }) {
+  const photo = carPhoto(car, '');
+  const logo = photo ? null : brandLogo(car, '');
+  if (photo) return <img className="qcard-img" src={photo} alt="" loading="lazy" />;
+  if (logo) return <img className="qcard-logo" src={logo} alt="" loading="lazy" />;
+  return <Icon.Car className="qcard-silhouette" />;
 }
 
 // How long the card has sat in its current stage — replaces the (misleading) creation date. Reddens
@@ -565,7 +635,7 @@ function CardActions({ tk, can, userId, onAct, readonly, t }) {
   );
 }
 
-function QueueCard({ tk, can, userId, onAct, onSelect, active = false, readonly = false }) {
+function QueueCard({ tk, can, userId, onAct, onSelect, active = false, readonly = false, compact = false }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const sev = sevOf(tk);
@@ -594,11 +664,14 @@ function QueueCard({ tk, can, userId, onAct, onSelect, active = false, readonly 
     return done;
   }, [tk, readonly, t]);
 
+  const prio = PRIORITY_WORD[sev] || 'low';
+  const action = resolveAction(tk);
+
   return (
     // The whole card is the door to the ticket. The plate link, the action buttons and the timeline
     // toggle each stop the click so their own job still wins over opening the drawer.
-    <div
-      className={`opx-card qc ${sevClass} ${active ? 'qc-open' : ''} ${age?.over ? 'qc-late' : ''}`}
+    <article
+      className={`qcard ${sevClass} ${active ? 'qcard-open' : ''} ${age?.over ? 'qcard-late' : ''} ${compact ? 'qcard-row' : ''}`}
       role="button"
       tabIndex={0}
       title={t('queue.openTicket')}
@@ -607,60 +680,87 @@ function QueueCard({ tk, can, userId, onAct, onSelect, active = false, readonly 
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(tk); }
       }}
     >
-      <span className="sev" />
-      <div className="top">
-        <Link to={`/vehicles/${tk.vehicle_id}`} className="opx-plate" onClick={(e) => e.stopPropagation()}>
-          {tk.plate || `#${tk.id}`}
-        </Link>
-        <div className="model">{tk.car || t('common.none')}<span>{tk.fault_severity_label || tk.status_label}</span></div>
-        <TimeInStage tk={tk} t={t} />
+      {/* Ticket reference · how urgent · the way in. */}
+      <div className="qcard-top">
+        <span className="qcard-ref mono">#{tk.id}</span>
+        <span className={`qprio ${prio}`} title={tk.fault_severity_label || undefined}>
+          {t(`queue.priority.${prio}`)}
+        </span>
+        <span className={`qcard-go ${prio}`}><Icon.ArrowRight /></span>
       </div>
 
-      <div className="qc-chips">
-        {tk.fault_severity_tone && (
-          <span className={`opx-chip ${sev === 'ok' ? 'avail' : sev === 'crit' ? 'crit' : 'paused'}`}>
-            <span className="cd" />{tk.fault_severity_emoji ? `${tk.fault_severity_emoji} ` : ''}{tk.fault_severity_label}
-          </span>
+      {/* The car itself. Photograph where we hold one, marque logo where we don't, silhouette where
+          we hold neither — never a different car. */}
+      <div className="qcard-shot"><CarShot car={tk.car} /></div>
+
+      <div className="qcard-id">
+        <h3 className="qcard-name" title={tk.car || ''}>{vehicleName(tk.car, '')}</h3>
+        <Link
+          to={`/vehicles/${tk.vehicle_id}`}
+          className="qcard-plate mono"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {tk.plate || `#${tk.id}`}
+        </Link>
+      </div>
+
+      <div className="qcard-chips">
+        {reasonChip
+          ? <span className={`qchip ${reasonChip}`}><i />{reasonLabel}</span>
+          : tk.fault_severity_tone
+            ? <span className={`qchip ${sev === 'ok' ? 'avail' : sev === 'crit' ? 'crit' : 'paused'}`}>
+              <i />{tk.fault_severity_label}
+            </span>
+            : null}
+        {tk.status_label && <span className={`qchip ${sev === 'crit' ? 'crit' : sev === 'paused' ? 'paused' : 'avail'}`}><i />{tk.status_label}</span>}
+        {/* What the stage is asking for. On the mock-up this reads "Take it to Workshop" — it is the
+            card's own next move, stated before you have to open anything. */}
+        {!readonly && action && (
+          <span className="qchip step"><i />{t(`workflow.cardAction.${action.action}`)}</span>
         )}
-        {reasonChip && <span className={`opx-chip ${reasonChip}`}><span className="cd" />{reasonLabel}</span>}
-        {tk.is_recovery && <span className="opx-chip crit"><span className="cd" />{t('workflow.reasonShort.recovery') || 'Recovery'}</span>}
-        {tk.temporarily_released && <span className="opx-chip paused"><span className="cd" />⤴</span>}
+        {tk.is_recovery && <span className="qchip crit"><i />{t('workflow.reasonShort.recovery') || 'Recovery'}</span>}
+        {tk.temporarily_released && <span className="qchip paused"><i />⤴</span>}
         {age?.over && (
-          <span className="opx-chip crit" title={t('queue.timeInStage')}>
-            <span className="cd" />{t('queue.late', { age: age.label })}
-          </span>
+          <span className="qchip crit" title={t('queue.timeInStage')}><i />{t('queue.late', { age: age.label })}</span>
         )}
       </div>
 
       {/* The reported note, attributed to its source — an escalated Driver Observation must not read
           as an anonymous quote on the inspector's own queue. */}
       {tk.customer_complaint && (
-        <p className="qc-quote" title={tk.customer_complaint}>
+        <p className="qcard-quote" title={tk.customer_complaint}>
           {(tk.request_origin_label || ORIGIN_LABEL[tk.request_origin]) && (
-            <span className="qc-quote-src">{tk.request_origin_label || ORIGIN_LABEL[tk.request_origin]}: </span>
+            <span className="qcard-quote-src">{tk.request_origin_label || ORIGIN_LABEL[tk.request_origin]}: </span>
           )}
           “{tk.customer_complaint}”
         </p>
       )}
 
-      {(pos.label || tk.status_label) && (
-        <div className="qc-pos">
-          <Icon.Gauge className="h-3.5 w-3.5" />
+      {(pos.label || tk.garage) && (
+        <div className="qcard-pos">
+          <Icon.Gauge />
           <span>{pos.label || tk.status_label}{tk.garage ? ` · ${tk.garage}` : ''}</span>
+          <TimeInStage tk={tk} t={t} />
         </div>
       )}
 
-      <div className="qc-prog" title={t('queue.stageProgress')}>
-        <div className="opx-prog"><i style={{ width: `${pct}%`, background: SEV_COLOR[sev] || SEV_COLOR.info }} /></div>
+      <div className="qcard-prog" title={t('queue.stageProgress')}>
+        <i style={{ width: `${pct}%`, background: SEV_COLOR[sev] || SEV_COLOR.info }} />
       </div>
 
-      <div className="qc-foot" onClick={(e) => e.stopPropagation()}>
+      <div className="qcard-foot" onClick={(e) => e.stopPropagation()}>
         <CardActions tk={tk} can={can} userId={userId} onAct={onAct} readonly={readonly} t={t} />
-        {nodes.length > 0 && (
-          <button type="button" className="qc-tl-toggle" onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }} aria-expanded={open}>
-            <Icon.Clock className="h-3.5 w-3.5" /> {open ? t('queue.hideTimeline') : t('queue.showTimeline')}
+        <div className="qcard-links">
+          {nodes.length > 0 && (
+            <button type="button" className="qcard-tl" title={t('queue.timeline')}
+              onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }} aria-expanded={open}>
+              <Icon.Clock />
+            </button>
+          )}
+          <button type="button" className="qcard-open-btn" onClick={() => onSelect?.(tk)}>
+            {t('queue.viewDetails')} <Icon.ArrowRight />
           </button>
-        )}
+        </div>
       </div>
 
       {open && nodes.length > 0 && (
@@ -669,7 +769,7 @@ function QueueCard({ tk, can, userId, onAct, onSelect, active = false, readonly 
           <JourneyMap nodes={nodes} />
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -703,6 +803,15 @@ export default function MyMaintenanceQueue() {
   // telling the truth about the whole seat while the board underneath shows the slice you asked for.
   const [query, setQuery] = useState('');
   const [sortBy, setSortBy] = useState('priority'); // priority | waiting | plate
+  // The lane pills across the top of the board: 'all', or one section key. The board is one flat
+  // grid of cards, so the pill is what says WHICH work you are looking at.
+  const [lane, setLane] = useState('all');
+  // The three narrowing selects. Every option is read off the tickets actually in the seat — a
+  // garage with nothing in it is not offered, so an empty result can only ever mean an empty queue.
+  const [makeFilter, setMakeFilter] = useState('');
+  const [prioFilter, setPrioFilter] = useState('');
+  const [garageFilter, setGarageFilter] = useState('');
+  const [view, setView] = useState('grid');        // grid | list
 
   // Role-scoped queue: silent background revalidation every 8s (no skeleton flash, tab & scroll
   // preserved), paused while a modal is open so an in-flight action never shifts under us.
@@ -874,8 +983,23 @@ export default function MyMaintenanceQueue() {
   // ── The view: search → sort. Search NARROWS what is drawn; it never edits a count. ──
   const matches = useCallback((tk) => {
     const q = query.trim().toLowerCase();
-    return !q || haystack(tk).includes(q);
-  }, [query]);
+    if (q && !haystack(tk).includes(q)) return false;
+    if (makeFilter && makeOf(tk) !== makeFilter) return false;
+    if (prioFilter && sevOf(tk) !== prioFilter) return false;
+    if (garageFilter && (tk.garage || '') !== garageFilter) return false;
+    return true;
+  }, [query, makeFilter, prioFilter, garageFilter]);
+
+  // The select options, read off the seat's own tickets. Never a hard-coded list: a make or a garage
+  // that holds nothing is not offered, so "no results" can only mean the filters, never a stale menu.
+  const makeOptions = useMemo(
+    () => [...new Set(activeTickets.map(({ tk }) => makeOf(tk)).filter(Boolean))].sort(),
+    [activeTickets]
+  );
+  const garageOptions = useMemo(
+    () => [...new Set(activeTickets.map(({ tk }) => tk.garage).filter(Boolean))].sort(),
+    [activeTickets]
+  );
 
   const orderTickets = useCallback((list) => {
     const arr = [...list];
@@ -890,16 +1014,39 @@ export default function MyMaintenanceQueue() {
       || ((stageSeconds(b) || 0) - (stageSeconds(a) || 0)));
   }, [sortBy]);
 
-  const filtering = query.trim() !== '';
-  // How many cards the search is currently hiding across the seat — so an empty-looking board can
+  const filtering = query.trim() !== '' || !!makeFilter || !!prioFilter || !!garageFilter;
+  // How many cards the view is currently hiding across the seat — so an empty-looking board can
   // never be mistaken for an empty queue.
   const shownCount = useMemo(
     () => activeTickets.filter(({ tk }) => matches(tk)).length,
     [activeTickets, matches]
   );
+  const clearFilters = () => { setQuery(''); setMakeFilter(''); setPrioFilter(''); setGarageFilter(''); };
 
-  const roleCount = [isInspector, isDispatcher, isDriver].filter(Boolean).length;
-  const subtitleKey = roleCount > 1 ? 'both' : isInspector ? 'inspector' : isDispatcher ? 'dispatcher' : isDriver ? 'driver' : 'none';
+  // THE BOARD — one flat grid, because the lane pills above already say which work you are reading.
+  // `lane` picks the section, the selects narrow it, the sort orders it.
+  const board = useMemo(() => {
+    const picked = lane === 'all'
+      ? activeTickets
+      : activeTickets.filter(({ section }) => section.key === lane);
+    return orderTickets(picked.filter(({ tk }) => matches(tk)).map(({ tk }) => tk))
+      .map((tk) => ({ tk, section: picked.find((x) => x.tk.id === tk.id).section }));
+  }, [activeTickets, lane, matches, orderTickets]);
+
+  // The cars this seat has been sitting on longest — the rail's one honest urgency signal. Whole
+  // seat, never the filtered board: hiding a car behind a make filter does not un-strand it.
+  const attention = useMemo(
+    () => activeTickets
+      .map(({ tk }) => tk)
+      .filter((tk) => (stageSeconds(tk) || 0) > 0)
+      .sort((a, b) => (stageSeconds(b) || 0) - (stageSeconds(a) || 0))
+      .slice(0, 4),
+    [activeTickets]
+  );
+
+  // A lane you selected on one seat does not exist on the next one.
+  useEffect(() => { setLane('all'); clearFilters(); }, [activeTab]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   const maxLoad = Math.max(1, ...activeSections.map((s) => sectionCount(s)));
 
   // Red-graded work per role tab, so the role you are NOT looking at can still shout.
@@ -916,28 +1063,31 @@ export default function MyMaintenanceQueue() {
 
   return (
     <div className="opx qpage">
-      {/* Command header */}
-      <div className="opx-head">
-        <h1>
-          {t('queue.title')}
-          <span className="live"><span className="d" /> {t('queue.live')}</span>
-        </h1>
-        <OpsClock />
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button type="button" className="opx-btn" onClick={() => { reload(); loadCollections(); }}
-            title={t('queue.refresh')} aria-label={t('queue.refresh')}>
-            <Icon.Refresh className="h-4 w-4" />
-          </button>
-          <Link to="/maintenance-workflow" className="opx-btn">{t('queue.fullPipeline')}</Link>
-          {canRequest && (
-            <button type="button" className="opx-btn primary" onClick={() => setModal({ action: 'request' })}>
-              <Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}
+      <div className="opx-body qbody">
+        {/* ── The page's own masthead: what this is, what time it is, and the one button that
+            adds work to it. Everything else on the page is work that is already here. */}
+        <header className="qhdr">
+          <div className="qhdr-main">
+            <h1>{t('queue.pageTitle')}</h1>
+            <p>{t('queue.pageSub')}</p>
+          </div>
+          <QueueClock />
+          <div className="qhdr-acts">
+            <button type="button" className="qicon" onClick={() => { reload(); loadCollections(); }}
+              title={t('queue.refresh')} aria-label={t('queue.refresh')}>
+              <Icon.Refresh />
             </button>
-          )}
-        </div>
-      </div>
+            <Link to="/maintenance-workflow" className="qghost" title={t('queue.fullPipeline')}>
+              <Icon.Route /> <span>{t('queue.fullPipeline')}</span>
+            </Link>
+            {canRequest && (
+              <button type="button" className="qcta" onClick={() => setModal({ action: 'request' })}>
+                <Icon.Plus /> {t('queue.addToQueue')}
+              </button>
+            )}
+          </div>
+        </header>
 
-      <div className="opx-body">
         {error && (
           <div className="opx-panel" style={{ marginBottom: 18 }}>
             <div className="opx-panel-bd" style={{ color: 'var(--crit)' }}>{error}</div>
@@ -960,14 +1110,9 @@ export default function MyMaintenanceQueue() {
                 Who you are, what this page is for you, and — when you hold more than one role —
                 the seat you are currently reading. The role selector lives here rather than on a
                 row of its own because "which seat" is the single choice everything below obeys. */}
-            <div className="qhero">
-              <div className="qhero-id">
-                <span className="qhero-av">{(user?.name || '?').charAt(0).toUpperCase()}</span>
-                <div className="qhero-txt">
-                  <div className="qhero-name">{user?.name || t('queue.tab.' + (activeTab || 'inspector'))}</div>
-                  <p className="qhero-sub">{t(`queue.subtitle.${subtitleKey}`)}</p>
-                </div>
-              </div>
+            {/* The seat selector. One role, no switch to make — it only appears for the people who
+                genuinely hold more than one, and then it is the single choice everything below obeys. */}
+            {availableTabs.length > 1 && (
               <div className="qroles">
                 {availableTabs.map((tab) => {
                   const active = activeTab === tab.key;
@@ -978,7 +1123,7 @@ export default function MyMaintenanceQueue() {
                       style={{ '--rail': tab.rail }} onClick={() => setActiveTab(tab.key)} aria-pressed={active}
                       title={urgent ? t('queue.roleUrgent', { n: urgent }) : undefined}>
                       <span className="qrole-ic">
-                        <IconCmp className="h-5 w-5" />
+                        <IconCmp />
                         {urgent > 0 && <span className="qrole-dot" />}
                       </span>
                       <span className="qrole-txt">{t(`queue.tab.${tab.key}`)}</span>
@@ -987,167 +1132,240 @@ export default function MyMaintenanceQueue() {
                   );
                 })}
               </div>
-            </div>
-
-            {/* Headline numbers for the WHOLE seat — counts, never a filter. The board is narrowed by
-                the search box and ordered by the sort; the numbers just tell you what is there. */}
-            <div className="qmetrics">
-              <QMetric
-                label={t('queue.kpi.inQueue')} value={kpi.total} icon={Icon.Car}
-                foot={t('queue.kpi.inQueueFoot', { vehicles: kpi.vehicles })}
-              />
-              <QMetric
-                label={t('queue.kpi.awaitingQa')} value={kpi.awaitingQa} tone="good" icon={Icon.Shield}
-                foot={t('queue.kpi.awaitingQaFoot')}
-              />
-              {/* The one number that says whether this queue is being worked or merely held. */}
-              <QMetric
-                label={t('queue.kpi.oldest')} value={kpi.oldest ? fmtDuration(kpi.oldest) : '—'}
-                icon={Icon.Clock} tone={kpi.oldest >= 86400 ? 'warm' : ''}
-                foot={kpi.oldestTk ? (kpi.oldestTk.plate || `#${kpi.oldestTk.id}`) : t('queue.kpi.oldestFoot')}
-                active={sortBy === 'waiting'} onClick={() => setSortBy(sortBy === 'waiting' ? 'priority' : 'waiting')}
-                title={t('queue.kpi.oldestHint')}
-              />
-            </div>
-
-            {/* ── The view bar ────────────────────────────────────────────────────────────
-                Find a car, narrow to a slice, choose the order. None of it touches the numbers
-                above, and whenever it hides anything the bar says exactly how much. */}
-            <div className="qbar">
-              <label className="qbar-search">
-                <Icon.Search className="h-4 w-4" />
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={t('queue.searchPlaceholder')}
-                  aria-label={t('queue.searchPlaceholder')}
-                />
-                {query && (
-                  <button type="button" className="qbar-x" onClick={() => setQuery('')} aria-label={t('queue.clearFilter')}>
-                    <Icon.X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </label>
-
-              <div className="qbar-sort">
-                <span className="qbar-sort-lbl">{t('queue.sortBy')}</span>
-                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label={t('queue.sortBy')}>
-                  <option value="priority">{t('queue.sort.priority')}</option>
-                  <option value="waiting">{t('queue.sort.waiting')}</option>
-                  <option value="plate">{t('queue.sort.plate')}</option>
-                </select>
-              </div>
-            </div>
-
-            {filtering && (
-              <div className="qbar-note">
-                <Icon.Filter className="h-3.5 w-3.5" />
-                <span>{t('queue.showingOf', { shown: shownCount, total: kpi.total })}</span>
-                <button type="button" onClick={() => setQuery('')}>{t('queue.clearFilter')}</button>
-              </div>
             )}
 
-            {/* Main split: role sections + live side rail */}
-            <div className="opx-grid opx-c12">
-              <div className="opx-span-8">
-                <div className="qsections">
-                  {/* Cars still at a customer's address. First panel on the driver's tab, because a
-                      car nobody has fetched yet is the only job on this page that is standing still. */}
-                  {/* Shown to the DRIVER (he fetches and returns the car) and to the INSPECTOR —
-                      on a parking job Abu Maroof is the one who changes the oil, so the button that
-                      records it has to be where he already works, not on a driver's screen.
-                      ALWAYS rendered on BOTH tabs, empty or not, exactly like every other section
-                      here. It was hidden when empty and the feature became unfindable — twice. The
-                      second time was worse: this page defaults to the INSPECTOR tab for anyone
-                      holding maintenance.initiate (which is Leen, and every admin), so the one tab
-                      it was hidden on was the tab most people land on. A heading with "nothing
-                      right now" is not noise; it is the difference between an empty queue and a
-                      page that appears never to have shipped. */}
-                  {['driver', 'inspector'].includes(activeTab) && (
-                    <CollectionsPanel
-                      tf={tf}
-                      userId={user?.id}
-                      tasks={collections}
-                      loading={collLoading}
-                      busyId={collBusy}
-                      onClaim={claimCollection}
-                      onReceive={(task) => setReceiving({ task, action: 'pickup' })}
-                      onArrived={arriveCollection}
-                      onOilChange={setOilChanging}
-                      onReturned={returnToCustomer}
-                      query={query}
-                    />
-                  )}
-                  {activeSections.map((s) => {
-                    const tickets = sections[s.key] || [];
-                    const count = counts[s.key] ?? tickets.length;
-                    // The view's slice of this section, in the order the sort asked for. The panel's
-                    // meta shows shown/total the moment they differ, so a filtered section can never
-                    // be read as an empty one.
-                    const visible = orderTickets(tickets.filter((tk) => matches(tk)));
-                    const hidden = tickets.length - visible.length;
+            {/* Main split: the board and its headline numbers, then the live side rail. */}
+            <div className="qmain">
+              <div className="qcol">
+                {/* ── Headline numbers for the WHOLE seat. They are counts, never a view: the
+                    board underneath is narrowed by the pills and selects below, and each tile's
+                    "View all" is simply the shortcut that sets the matching pill. */}
+                <div className="qtiles">
+                  <QTile
+                    label={t('queue.kpi.vehiclesInQueue')} value={kpi.total} tone="#2563eb" icon={Icon.Car}
+                    active={lane === 'all'} onClick={() => setLane('all')} viewAll={t('queue.viewAll')}
+                    title={t('queue.kpi.inQueueFoot', { vehicles: kpi.vehicles })}
+                  />
+                  {activeSections.filter((s) => !s.supplementary).map((s) => {
+                    const IconCmp = SECTION_ICON[s.key] || Icon.Wrench;
                     return (
-                      <CommandPanel key={`${s.role}-${s.key}`} title={t(`queue.section.${s.key}.title`)}
-                        dotColor={s.tone} meta={hidden > 0 ? `${visible.length}/${count}` : (count || null)}>
-                        <p className="qsec-hint">{t(`queue.section.${s.key}.hint`)}</p>
-                        <div className="qgrid">
-                          {loading ? (
-                            <><div className="opx-skel" style={{ height: 128 }} /><div className="opx-skel" style={{ height: 128 }} /></>
-                          ) : tickets.length === 0 ? (
-                            <p className="opx-empty" style={{ gridColumn: '1 / -1', padding: '26px 10px' }}>{t('queue.nothingHere')}</p>
-                          ) : visible.length === 0 ? (
-                            <p className="opx-empty" style={{ gridColumn: '1 / -1', padding: '26px 10px' }}>
-                              {t('queue.noMatch', { n: hidden })}
-                            </p>
-                          ) : (
-                            visible.map((tk) => (
-                              <QueueCard key={tk.id} tk={tk} can={can} userId={user?.id} readonly={s.readonly}
-                                active={detail?.id === tk.id}
-                                onSelect={(ticket) => setDetail({ id: ticket.id, summary: ticket })}
-                                onAct={(action, ticket) => setModal({ action, ticket })} />
-                            ))
-                          )}
-                        </div>
-                      </CommandPanel>
+                      <QTile
+                        key={`${s.role}-${s.key}`}
+                        label={t(`queue.section.${s.key}.title`)} value={sectionCount(s)}
+                        tone={s.tone} icon={IconCmp} active={lane === s.key}
+                        onClick={() => setLane(lane === s.key ? 'all' : s.key)}
+                        viewAll={t('queue.viewAll')} title={t(`queue.section.${s.key}.hint`)}
+                      />
                     );
                   })}
-                  {!loading && !hasAnyTicket && (
-                    <p style={{ textAlign: 'center', color: 'var(--ink-3)', fontSize: 13, padding: 12 }}>{t('queue.allCaught')}</p>
+                </div>
+
+                {/* ── The view bar: which lane, then which slice of it, then how it is drawn.
+                    None of it touches the numbers above, and whenever it hides anything the
+                    line underneath says exactly how much. */}
+                <div className="qfilters">
+                  <div className="qpills">
+                    <button type="button" className={`qpill ${lane === 'all' ? 'on' : ''}`} onClick={() => setLane('all')}>
+                      {t('queue.filter.all')} <span className="tnum">({kpi.total})</span>
+                    </button>
+                    {activeSections.filter((s) => !s.supplementary).map((s) => (
+                      <button key={`${s.role}-${s.key}`} type="button"
+                        className={`qpill ${lane === s.key ? 'on' : ''}`}
+                        title={t(`queue.section.${s.key}.hint`)}
+                        onClick={() => setLane(s.key)}>
+                        {t(`queue.section.${s.key}.title`)} <span className="tnum">({sectionCount(s)})</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="qtools">
+                    <label className="qsearch">
+                      <Icon.Search />
+                      <input
+                        type="search" value={query} onChange={(e) => setQuery(e.target.value)}
+                        placeholder={t('queue.searchPlaceholder')} aria-label={t('queue.searchPlaceholder')}
+                      />
+                      {query && (
+                        <button type="button" className="qsearch-x" onClick={() => setQuery('')} aria-label={t('queue.clearFilter')}>
+                          <Icon.X />
+                        </button>
+                      )}
+                    </label>
+                    <select className="qsel" value={makeFilter} onChange={(e) => setMakeFilter(e.target.value)}
+                      aria-label={t('queue.filter.allMakes')}>
+                      <option value="">{t('queue.filter.allMakes')}</option>
+                      {makeOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <select className="qsel" value={prioFilter} onChange={(e) => setPrioFilter(e.target.value)}
+                      aria-label={t('queue.filter.priority')}>
+                      <option value="">{t('queue.filter.priority')}</option>
+                      <option value="crit">{t('queue.priority.high')}</option>
+                      <option value="paused">{t('queue.priority.medium')}</option>
+                      <option value="ok">{t('queue.priority.low')}</option>
+                    </select>
+                    <select className="qsel" value={garageFilter} onChange={(e) => setGarageFilter(e.target.value)}
+                      aria-label={t('queue.filter.allGarages')}>
+                      <option value="">{t('queue.filter.allGarages')}</option>
+                      {garageOptions.map((g) => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                    <select className="qsel" value={sortBy} onChange={(e) => setSortBy(e.target.value)}
+                      aria-label={t('queue.sortBy')}>
+                      <option value="priority">{t('queue.sort.priority')}</option>
+                      <option value="waiting">{t('queue.sort.waiting')}</option>
+                      <option value="plate">{t('queue.sort.plate')}</option>
+                    </select>
+                    <div className="qview" role="group" aria-label={t('queue.view.label')}>
+                      <button type="button" className={view === 'grid' ? 'on' : ''} onClick={() => setView('grid')}
+                        title={t('queue.view.grid')} aria-label={t('queue.view.grid')}>
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                          <rect x="3" y="3" width="7.5" height="7.5" rx="1.6" />
+                          <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6" />
+                          <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6" />
+                          <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6" />
+                        </svg>
+                      </button>
+                      <button type="button" className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}
+                        title={t('queue.view.list')} aria-label={t('queue.view.list')}>
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                          <rect x="3" y="4.5" width="18" height="2.6" rx="1.3" />
+                          <rect x="3" y="10.7" width="18" height="2.6" rx="1.3" />
+                          <rect x="3" y="16.9" width="18" height="2.6" rx="1.3" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {filtering && (
+                  <div className="qbar-note">
+                    <Icon.Filter />
+                    <span>{t('queue.showingOf', { shown: shownCount, total: kpi.total })}</span>
+                    <button type="button" onClick={clearFilters}>{t('queue.clearFilter')}</button>
+                  </div>
+                )}
+
+                {/* Cars still at a customer's address. Its own block, because a car nobody has
+                    fetched yet is the only job on this page that is standing still. */}
+                {/* Shown to the DRIVER (he fetches and returns the car) and to the INSPECTOR —
+                    on a parking job Abu Maroof is the one who changes the oil, so the button that
+                    records it has to be where he already works, not on a driver's screen.
+                    ALWAYS rendered on BOTH tabs, empty or not. It was hidden when empty and the
+                    feature became unfindable — twice. The second time was worse: this page defaults
+                    to the INSPECTOR tab for anyone holding maintenance.initiate (which is Leen, and
+                    every admin), so the one tab it was hidden on was the tab most people land on.
+                    A heading with "nothing right now" is not noise; it is the difference between an
+                    empty queue and a page that appears never to have shipped. */}
+                {['driver', 'inspector'].includes(activeTab) && (
+                  <CollectionsPanel
+                    tf={tf}
+                    userId={user?.id}
+                    tasks={collections}
+                    loading={collLoading}
+                    busyId={collBusy}
+                    onClaim={claimCollection}
+                    onReceive={(task) => setReceiving({ task, action: 'pickup' })}
+                    onArrived={arriveCollection}
+                    onOilChange={setOilChanging}
+                    onReturned={returnToCustomer}
+                    query={query}
+                  />
+                )}
+
+                {/* THE BOARD — one flat grid of cars, ordered by the sort. The pill above says
+                    which lane it is showing; the card says what the car is waiting for. */}
+                <div className={`qboard ${view}`}>
+                  {loading ? (
+                    <>
+                      <div className="opx-skel" style={{ height: 268, borderRadius: 16 }} />
+                      <div className="opx-skel" style={{ height: 268, borderRadius: 16 }} />
+                      <div className="opx-skel" style={{ height: 268, borderRadius: 16 }} />
+                      <div className="opx-skel" style={{ height: 268, borderRadius: 16 }} />
+                    </>
+                  ) : board.length === 0 ? (
+                    <p className="qboard-empty">
+                      {!hasAnyTicket
+                        ? t('queue.allCaught')
+                        : filtering
+                          ? t('queue.noMatch', { n: activeTickets.length - shownCount })
+                          : t('queue.nothingHere')}
+                    </p>
+                  ) : (
+                    board.map(({ tk, section }) => (
+                      <QueueCard key={tk.id} tk={tk} can={can} userId={user?.id} readonly={section.readonly}
+                        compact={view === 'list'}
+                        active={detail?.id === tk.id}
+                        onSelect={(ticket) => setDetail({ id: ticket.id, summary: ticket })}
+                        onAct={(action, ticket) => setModal({ action, ticket })} />
+                    ))
                   )}
                 </div>
               </div>
 
-              <div className="opx-span-4">
-                <div className="qside">
-                  {/* Queue load — real per-section counts as horizontal bars */}
-                  <CommandPanel title={t('queue.queueLoad')} label={t(`queue.tab.${activeTab}`)} meta={kpi.total || null}>
-                    <div className="qload">
-                      {activeSections.map((s) => {
-                        const c = sectionCount(s);
-                        return (
-                          <div className="qload-row" key={`${s.role}-${s.key}`}>
-                            <span className="qload-lbl">{t(`queue.section.${s.key}.title`)}</span>
-                            <div className="qload-track"><i style={{ width: `${(c / maxLoad) * 100}%`, background: s.tone }} /></div>
-                            <span className="qload-ct tnum">{c}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CommandPanel>
+              <aside className="qside">
+                {/* Queue load — real per-section counts as horizontal bars. */}
+                <section className="qpanel">
+                  <div className="qpanel-hd">
+                    <h3>{t('queue.queueLoad')}</h3>
+                    <span className="qpanel-lbl">{user?.name ? `${user.name} · ` : ''}{t(`queue.tab.${activeTab}`)}</span>
+                  </div>
+                  <div className="qload">
+                    {activeSections.map((s) => {
+                      const c = sectionCount(s);
+                      return (
+                        <div className="qload-row" key={`${s.role}-${s.key}`}>
+                          <span className="qload-lbl">{t(`queue.section.${s.key}.title`)}</span>
+                          <div className="qload-track"><i style={{ width: `${(c / maxLoad) * 100}%`, background: s.tone }} /></div>
+                          <span className="qload-ct tnum">{c}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
 
-                  {/* WHAT HAS BEEN RAISED FOR THIS SEAT — the Action Center's own role lanes, on the
-                      page where the role already works. This replaced the old Live Activity feed,
-                      which replayed handoff stamps of the very cards listed alongside it: it told
-                      you about work you were already looking at. A notification is the opposite —
-                      the thing addressed to your role that nobody has picked up yet. */}
-                  <QueueNotifications
-                    role={activeTab}
-                    can={can}
-                    roleLabel={activeTab ? t(`queue.tab.${activeTab}`) : ''}
-                  />
-                </div>
-              </div>
+                {/* WAITING LONGEST — the cars this seat is holding up, newest stage first. Red not
+                    because anything is broken, but because nobody has moved them. */}
+                <section className="qpanel qpanel-alert">
+                  <div className="qpanel-hd">
+                    <h3><Icon.Alert /> {t('queue.attention.title')}</h3>
+                    <span className="qpanel-ct">{attention.filter((tk) => stageAge(tk, t)?.over).length || attention.length}</span>
+                  </div>
+                  {attention.length === 0 ? (
+                    <p className="qpanel-empty">{t('queue.attention.none')}</p>
+                  ) : attention.map((tk) => (
+                    <button key={tk.id} type="button" className="qalert-row"
+                      onClick={() => setDetail({ id: tk.id, summary: tk })}>
+                      <span className="qalert-ic"><Icon.Car /></span>
+                      <span className="qalert-bd">
+                        <span className="qalert-t"><b className="mono">#{tk.id}</b> {vehicleName(tk.car, '')}</span>
+                        <span className="qalert-s">
+                          {t('queue.attention.waiting', { age: stageAge(tk, t)?.label || '—' })}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </section>
+
+                {/* WHAT HAS BEEN RAISED FOR THIS SEAT — the Action Center's own role lanes, on the
+                    page where the role already works. This replaced the old Live Activity feed,
+                    which replayed handoff stamps of the very cards listed alongside it: it told
+                    you about work you were already looking at. A notification is the opposite —
+                    the thing addressed to your role that nobody has picked up yet. */}
+                <QueueNotifications
+                  role={activeTab}
+                  can={can}
+                  roleLabel={activeTab ? t(`queue.tab.${activeTab}`) : ''}
+                />
+
+                {/* Where to go when the queue itself is the problem. */}
+                <section className="qassist">
+                  <span className="qassist-ic"><Icon.Users /></span>
+                  <div className="qassist-bd">
+                    <h3>{t('queue.assist.title')}</h3>
+                    <p>{t('queue.assist.body')}</p>
+                    <Link to="/control-desk" className="qassist-cta">{t('queue.assist.cta')}</Link>
+                  </div>
+                </section>
+              </aside>
             </div>
           </>
         )}

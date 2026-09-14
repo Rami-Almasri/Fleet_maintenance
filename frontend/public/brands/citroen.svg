@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Citroen">
+  <defs>
+    <linearGradient id="c" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9aa6b5"/>
+      <stop offset="0.45" stop-color="#e7ebf0"/>
+      <stop offset="0.55" stop-color="#b3bdc9"/>
+      <stop offset="1" stop-color="#7d8896"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#c)" stroke="#6b7684" stroke-width="2" stroke-linejoin="round">
+    <path d="M60 26 L94 56 L80 56 L60 39 L40 56 L26 56 Z"/>
+    <path d="M60 62 L94 92 L80 92 L60 75 L40 92 L26 92 Z"/>
+  </g>
+</svg>
