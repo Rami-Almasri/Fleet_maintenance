@@ -138,6 +138,14 @@ class VehicleResource extends JsonResource
             "color" => $this->color,
             "category" => $this->category,
             "sheet_category" => $this->sheet_category,
+            // The routing class a manager put this car in ("Luxury SUV", "Commercial / Van"). A slug
+            // validated against config, so the label is looked up rather than stored twice; null when
+            // nobody has classified the car, and every reader must treat that as "not stated" — the
+            // router's own `default_vehicle_class` fallback is a routing decision, not a claim about
+            // what the car IS, so it is deliberately not applied here.
+            "vehicle_class" => $this->vehicle_class,
+            "vehicle_class_label" => collect(config('garage_routing.vehicle_classes', []))
+                ->firstWhere('key', $this->vehicle_class)['label'] ?? null,
             "status" => $this->status,
             // What the fleet register itself calls this car — "Active" / "For sale" / "Office" /
             // "Under process" / "Insurance claim" / "Sold" — verbatim, NOT one of our status slugs.

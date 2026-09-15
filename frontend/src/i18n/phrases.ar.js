@@ -6124,6 +6124,20 @@ const phrasesAr = {
   'Could not load the fault vocabulary': 'تعذّر تحميل مفردات الأعطال',
   'Fault removed from the vocabulary': 'تم حذف العطل من القاموس',
 
+  // The vehicle dossier's masthead — the two top-bar controls, the fault card's period picker
+  // and the captions under each telemetry tile.
+  'Data freshness': 'حداثة البيانات',
+  'Read live from the fleet register, the OfficeManager contracts and the workshop log each time this page opens.':
+    'تُقرأ مباشرة من سجل الأسطول وعقود OfficeManager وسجل الورشة في كل مرة تُفتح فيها هذه الصفحة.',
+  'Refresh now': 'تحديث الآن',
+  'Vehicle actions': 'إجراءات المركبة',
+  'Fault period': 'فترة الأعطال',
+  'All Time': 'كل الفترات',
+  'No faults recorded in this period.': 'لا توجد أعطال مسجلة في هذه الفترة.',
+  'Total recorded': 'إجمالي المسجل',
+  'View Vehicle Report': 'عرض تقرير المركبة',
+  'Expired {n} days ago': 'انتهت منذ {n} يوماً',
+
   // Severity grades — lower-case because they arrive as the server's own constant values.
   'routine': 'روتيني',
   'moderate': 'متوسط',

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
@@ -30,6 +30,7 @@ import VehicleWarrantyCard from '../../components/warranties/VehicleWarrantyCard
 import VehicleServiceContractCard from '../../components/warranties/VehicleServiceContractCard';
 import VehicleCostIntelligence from './VehicleCostIntelligence';
 import { aed2, fmtDate, num } from '../../lib/format';
+import { carPhoto, brandLogo } from '../../lib/carAssets';
 import CompositionDonut from '../../components/ui/CompositionDonut';
 import { faultTagSegments, isServiceOnlyVisit, visitsForFault } from '../../lib/faultCategories';
 import { useI18n } from '../../i18n/I18nContext';
@@ -243,30 +244,81 @@ function BridgeLine({ label, hint, value, labelClass = 'text-slate-600', valueCl
 }
 
 // A quiet "fact" chip for the flat header.
-// Count-up telemetry tile on the dossier command deck.
+// Count-up telemetry tile, sitting on its own light card under the deck. `icon`/`tone` give the
+// figure a visual key so the row reads as three different measurements rather than three numbers.
 // `note` carries the tile's Data Origin (e.g. which source supplied the mileage) so the number
 // is never a bare figure the reader has to take on faith.
-function HeroStat({ label, value, unit, note }) {
+function HeroStat({ icon: Glyph, tone, label, value, unit, note }) {
   const n = useCountUp(Number(value) || 0, 1400);
   return (
-    <div className="vhero-stat">
-      <div className="lbl">{label}</div>
-      <div className="num">
-        {num(Math.round(n))}
-        {unit && <span className="unit">{unit}</span>}
+    <div className="vp-card">
+      <span className="vp-ic" data-tone={tone} aria-hidden><Glyph /></span>
+      <div className="min-w-0">
+        <div className="lbl">{label}</div>
+        <div className="num">
+          {num(Math.round(n))}
+          {unit && <span className="unit">{unit}</span>}
+        </div>
+        {note && <div className="note">{note}</div>}
       </div>
-      {note && <div className="vhero-stat-note">{note}</div>}
     </div>
   );
 }
 
-// One glowing health LED (Registration / Insurance / Service) with a short caption.
-function HeroLed({ label, status, detail }) {
+/**
+ * One piece of paperwork with a clock on it — Registration, Insurance, Service — as a meter.
+ *
+ * The bar is the point: "1,454 km left" is a number a reader has to hold against a number they
+ * don't know, and the bar supplies the second one. `tone` is the card's own identity colour, and a
+ * warn/bad status OVERRIDES it — a healthy row keeps its colour, an expiring one turns amber or
+ * red, so urgency is the only reason anything on this row is ever amber or red.
+ */
+function HeroMeter({ icon: Glyph, tone, label, status, detail, fraction }) {
+  const barTone = status === 'bad' ? 'red' : status === 'warn' ? 'amber' : status === 'unknown' ? 'slate' : tone;
+  // An unknown has nothing to draw, but an empty track reads as "zero left" — so it fills grey.
+  const pct = status === 'unknown' ? 100 : Math.max(2, Math.min(100, Math.round((fraction ?? 0) * 100)));
   return (
-    <span className="vhero-led">
-      <span className={`led ${status}`} aria-hidden />
-      <span><b>{label}</b>{detail ? ` · ${detail}` : ''}</span>
-    </span>
+    <div className="vp-card">
+      <span className="vp-ic" data-tone={status === 'bad' ? 'red' : tone} aria-hidden><Glyph /></span>
+      <div className="min-w-0 flex-1">
+        <div className="vp-meter-title">{label}</div>
+        <div className="vp-meter-sub">{detail}</div>
+        <div className="vp-track" role="presentation"><span data-tone={barTone} style={{ width: `${pct}%` }} /></div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The page's top-bar pop-overs and the fault card's range picker are the same object: a trigger,
+ * a list, and the two ways out (a click elsewhere, Escape). Rendered here once rather than three
+ * times, so all three close the same way.
+ */
+function PopMenu({ trigger, label, children, className = '' }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (wrap.current && !wrap.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      wrap.current?.querySelector('button')?.focus();
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  return (
+    <div className={`relative ${className}`} ref={wrap}>
+      <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={label} onClick={() => setOpen((o) => !o)} className={trigger.className}>
+        {trigger.content}
+      </button>
+      {open && <div role="menu" className="vp-menu">{children(() => setOpen(false))}</div>}
+    </div>
   );
 }
 
@@ -305,8 +357,23 @@ export default function VehicleProfile() {
   // Fault-distribution drill-down: a slice of the hero donut, opened to the maintenance contracts
   // that fault was recorded on. { label, keys } — `keys` are RAW fault labels, never the localized ones.
   const [faultDrill, setFaultDrill] = useState(null);
+  // How far back the fault donut looks. "All time" is the honest default — a car's fault history is
+  // the whole history — but a manager asking "is it still doing this?" needs a window, so the card
+  // offers one and always says which window it is showing.
+  const [faultRange, setFaultRange] = useState('all');
+  // The marque photograph and mark both degrade rather than guess: a 404 drops the picture instead
+  // of putting another car in this car's dossier. @see lib/carAssets
+  const [photoOk, setPhotoOk] = useState(true);
+  const [logoOk, setLogoOk] = useState(true);
 
   const VISITS_PREVIEW = 5;    // rows shown before "Show all"
+  // The fault donut's windows, newest-first. `months: null` = the whole history.
+  const FAULT_RANGES = [
+    { key: 'all', label: t('All Time'), months: null },
+    { key: '12m', label: t('Last 12 months'), months: 12 },
+    { key: '6m', label: t('Last 6 months'), months: 6 },
+    { key: '3m', label: t('Last 3 months'), months: 3 },
+  ];
   const CONTRACTS_PREVIEW = 5; // contract rows shown before "Show all"
 
   const toggleVisit = (vid) => setOpenVisits((o) => ({ ...o, [vid]: !o[vid] }));
@@ -557,8 +624,18 @@ export default function VehicleProfile() {
   // FAULTS ONLY: planned services (oil & filter, periodic maintenance, cleaning) are a different kind
   // of event and are counted out — see faultCategories.visitFaults. What was removed is stated on the
   // card rather than silently dropped, so the chart's scope is readable off the chart itself.
-  const faultSegments = faultTagSegments(maintenance, { top: 8, tf, tp });
-  const serviceOnlyVisits = maintenance.filter(isServiceOnlyVisit).length;
+  // The window the card is currently showing. A visit with no date cannot be placed in time, so a
+  // narrowed window drops it rather than assuming it happened recently — the card names its window,
+  // and a reader who wants everything has "All Time" one click away.
+  const faultWindow = FAULT_RANGES.find((r) => r.key === faultRange) || FAULT_RANGES[0];
+  const faultCutoff = faultWindow.months
+    ? new Date(new Date().setMonth(new Date().getMonth() - faultWindow.months)).toISOString().slice(0, 10)
+    : null;
+  const rangedMaintenance = faultCutoff
+    ? maintenance.filter((m) => m.date && String(m.date).slice(0, 10) >= faultCutoff)
+    : maintenance;
+  const faultSegments = faultTagSegments(rangedMaintenance, { top: 8, tf, tp });
+  const serviceOnlyVisits = rangedMaintenance.filter(isServiceOnlyVisit).length;
   const maintenanceLog = data.maintenance_log || [];
   // One unified history: legacy sheet workshop events + the manual workflow audit trail + follow-ups.
   const timeline = data.timeline || maintenanceLog;
@@ -580,27 +657,43 @@ export default function VehicleProfile() {
   // Resolved live off the loaded payload — the drill-down is a view of the same visits the donut
   // counted, never a second fetch. Newest visit first, matching the Maintenance History table.
   const faultDrillVisits = faultDrill
-    ? visitsForFault(maintenance, faultDrill.keys)
+    ? visitsForFault(rangedMaintenance, faultDrill.keys)
         .slice()
         .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
     : [];
-  // Health LEDs — same thresholds as the Overview health card (30-day amber window).
-  const ledFromDays = (label, d) => ({
-    label,
+  // The three clocks running on this car — same thresholds as the Overview health card (30-day
+  // amber window). Registration and Insurance run on DAYS and Service runs on KILOMETRES; each one
+  // is printed in its own unit rather than converted into a shared one, because a car parked for a
+  // month loses thirty days of paperwork and no kilometres of service.
+  //
+  // `fraction` is how much of the meter is still left. Registration/insurance are measured against
+  // a full year (that is the term they are issued for); the service bar against this car's own
+  // service interval, falling back to the interval implied by the current remaining distance so a
+  // car with no interval on file still gets a full-looking bar rather than a misleading empty one.
+  const meterFromDays = (label, icon, tone, d) => ({
+    label, icon, tone,
     status: d == null ? 'unknown' : d < 0 ? 'bad' : d < 30 ? 'warn' : 'good',
-    detail: d == null ? t('no record')
-      : d < 0 ? t('expired {n}d ago', { n: num(Math.abs(d)) })
-      : t('{n}d left', { n: num(d) }),
+    detail: d == null ? t('No record')
+      : d < 0 ? t('Expired {n} days ago', { n: num(Math.abs(d)) })
+      : t('{n} days left', { n: num(d) }),
+    fraction: d == null ? 0 : Math.max(0, Math.min(1, d / 365)),
   });
   const svcStatus = v.service_status;
-  const heroLeds = [
-    ledFromDays(t('Registration'), reg ? reg.registration_days_left : null),
-    ledFromDays(t('Insurance'), reg ? reg.insurance_days_left : null),
+  const svcInterval = Number(v.service_interval_km) || null;
+  const heroMeters = [
+    meterFromDays(t('Registration'), Icon.Invoice, 'green', reg ? reg.registration_days_left : null),
+    meterFromDays(t('Insurance'), Icon.Shield, 'blue', reg ? reg.insurance_days_left : null),
     {
       label: t('Service'),
+      icon: Icon.Cog,
+      tone: 'amber',
       status: !svcStatus || svcStatus.status === 'no_data' ? 'unknown' : svcStatus.status === 'service_due' ? 'bad' : 'good',
-      detail: !svcStatus || svcStatus.status === 'no_data' ? t('no data')
-        : svcStatus.status === 'service_due' ? t('{n} km overdue', { n: num(svcStatus.overdue_km) }) : t('{n} km left', { n: num(svcStatus.remaining) }),
+      detail: !svcStatus || svcStatus.status === 'no_data' ? t('No data')
+        : svcStatus.status === 'service_due' ? t('{n} km overdue', { n: num(svcStatus.overdue_km) })
+        : t('{n} km left', { n: num(svcStatus.remaining) }),
+      fraction: !svcStatus || svcStatus.status === 'no_data' || svcStatus.status === 'service_due'
+        ? 0
+        : Math.max(0, Math.min(1, (svcStatus.remaining || 0) / (svcInterval || svcStatus.remaining || 1))),
     },
   ];
   // Latest-activity ticker — newest unified-timeline entry, named with the same stage vocabulary.
@@ -613,124 +706,247 @@ export default function VehicleProfile() {
   return (
     <div className="opx py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        {/* Back */}
-        <Link to="/vehicles" className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 transition hover:text-slate-700">
-          <svg className="h-4 w-4 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
-          {t('Vehicles')}
-        </Link>
+        {/* Top bar — the way back on one side, and the page's own two controls on the other:
+            where this page's numbers come from (and how to re-pull them), and what can be DONE to
+            the car. Both are pop-overs rather than a row of buttons: the actions are commands a
+            reader needs occasionally, and spelling them all out would outshout the dossier. */}
+        <div className="flex items-center justify-between gap-3">
+          <Link to="/vehicles" className="inline-flex items-center gap-1.5 text-[15px] font-semibold text-slate-700 transition hover:text-slate-900">
+            <svg className="rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ height: 18, width: 18 }}><path d="M15 19l-7-7 7-7" /></svg>
+            {t('Vehicles')}
+          </Link>
 
-        {/* Hero header — the "command deck": a living dark cockpit panel. Drifting aurora glows,
-            blueprint grid + scanline behind; count-up telemetry tiles, glowing health LEDs and a
-            latest-activity ticker fill the identity column; the fault donut sits on frosted glass
-            so its light-theme chart colours stay legible in both themes. */}
-        <div className="vhero">
-          <span aria-hidden className="vhero-aurora a" />
-          <span aria-hidden className="vhero-aurora b" />
-          <div className="relative flex flex-col gap-6 p-6 sm:p-7 lg:flex-row lg:items-stretch lg:justify-between">
-            {/* Identity + live telemetry */}
-            <div className="vhero-in min-w-0 flex-1">
-              <div className="flex items-start gap-4">
-                <div className="vhero-badge">
-                  <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 13l1.5-4.5A2 2 0 0 1 8.4 7h7.2a2 2 0 0 1 1.9 1.5L19 13m-14 0h14m-14 0a2 2 0 0 0-2 2v3a1 1 0 0 0 1 1h1m14-6a2 2 0 0 1 2 2v3a1 1 0 0 1-1 1h-1m-12 0v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m2 0h10M7.5 16h.01M16.5 16h.01" />
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7f92b8' }}>{t('vehicleProfile.hero.dossier')}</span>
-                    <span className="vhero-live"><span className="dot" />{t('LIVE')}</span>
-                  </div>
-                  <h1 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-white sm:text-3xl" style={{ letterSpacing: '-.02em', textShadow: '0 2px 24px rgba(34,211,238,.25)' }}>
-                    {[v.make, v.model].filter(Boolean).join(' ') || t('Vehicle')}
-                  </h1>
-                  <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
-                    {(v.plate_display || v.plate_no) && <span className="opx-plate" style={{ fontSize: 13, padding: '3px 10px' }}>{v.plate_display || v.plate_no}</span>}
-                    {v.vin && <span className="mono" style={{ fontSize: 11.5, color: '#7f92b8' }}>{v.vin}</span>}
-                    {/* compact spec line — year / category / colour (odometer graduated to a live tile below) */}
-                    {[v.year, v.category, v.color].some(Boolean) && (
-                      <span style={{ fontSize: 12, color: '#93a7cd' }}>{[v.year, v.category, v.color].filter(Boolean).join(' · ')}</span>
-                    )}
-                  </div>
-                  <div className="mt-3.5 flex flex-wrap items-center gap-2">
-                    {/* Canonical dual-state — the same rental + maintenance identity used across the app. */}
-                    <DualState vehicle={{ ...v, av_state: av.state }} size="md" />
-                    {v.for_sale && <Badge tone="amber" dot>{t('vehicleProfile.hero.forSale')}</Badge>}
-                  </div>
-                </div>
-              </div>
+          <div className="flex items-center gap-2">
+            {/* "Live" is a claim, so the menu behind it says what makes it one — which sources fed
+                this page and when it was last pulled — and offers the re-pull. */}
+            <PopMenu
+              label={t('Data freshness')}
+              trigger={{
+                className: 'vp-chip',
+                content: <><span className="dot" aria-hidden />{t('Live')}<Icon.ChevronDown className="h-4 w-4 text-slate-400" /></>,
+              }}
+            >
+              {(close) => (
+                <>
+                  <div className="head">{t('Data freshness')}</div>
+                  <p className="px-[0.7rem] pb-2 text-xs leading-relaxed text-slate-500">
+                    {t('Read live from the fleet register, the OfficeManager contracts and the workshop log each time this page opens.')}
+                  </p>
+                  <button type="button" role="menuitem" onClick={() => { close(); reload(); }}>{t('Refresh now')}</button>
+                </>
+              )}
+            </PopMenu>
 
-              {/* Telemetry tiles — the numbers count up on load */}
-              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <HeroStat
-                  label={t('vehicleProfile.hero.odometer')}
-                  value={v.odometer}
-                  unit="km"
-                  note={v.odometer_source ? t(`vehicleProfile.hero.odoSource.${v.odometer_source}`) : null}
+            <PopMenu
+              label={t('Vehicle actions')}
+              trigger={{
+                className: 'vp-actions',
+                content: <><span aria-hidden className="text-lg leading-none">···</span>{t('Actions')}<Icon.ChevronDown className="h-4 w-4 text-white/70" /></>,
+              }}
+            >
+              {(close) => (
+                <>
+                  {canManageVehicle && (
+                    <button type="button" role="menuitem" onClick={() => { close(); setMaintOpen(true); }}>
+                      {t('vehicleProfile.maint.title')}
+                    </button>
+                  )}
+                  <button type="button" role="menuitem" onClick={() => { close(); navigate(`/reports/vehicle/${v.id}`); }}>
+                    {t('Vehicle Report')}
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { close(); changeTab('activity'); }}>
+                    {t('Timeline')}
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { close(); reload(); }}>{t('Refresh now')}</button>
+                </>
+              )}
+            </PopMenu>
+          </div>
+        </div>
+
+        {/* The masthead: the car on the left, what's wrong with it on the right.
+            The dark deck is now an IDENTITY PLATE and nothing else — which car this is, in its own
+            photograph, with its plate, its paperwork identity and its live state. Every number that
+            used to sit inside it as a glass chip moved out onto the light cards below, where a figure
+            can be the biggest thing on its card instead of competing with an aurora. */}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+          {/* ── the car ───────────────────────────────────────────────────────────── */}
+          <div className="space-y-4 lg:col-span-2">
+            <div className="vhero vhero-plate">
+              <span aria-hidden className="vhero-aurora a" />
+              <span aria-hidden className="vhero-aurora b" />
+              {/* The catalogue photograph of this exact model, bleeding off the right edge. A model
+                  the catalogue does not carry simply shows no car — never another one's picture. */}
+              {photoOk && carPhoto(v.make, v.model) && (
+                <img
+                  src={carPhoto(v.make, v.model)}
+                  alt=""
+                  aria-hidden="true"
+                  className="vhero-photo"
+                  onError={() => setPhotoOk(false)}
                 />
-                <HeroStat label={t('vehicleProfile.hero.visits')} value={maintenance.length} />
-                <HeroStat label={t('vehicleProfile.hero.faults')} value={totalFaults} />
-              </div>
-
-              {/* Health LEDs — registration / insurance / service, glowing by urgency */}
-              <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2">
-                {heroLeds.map((l) => <HeroLed key={l.label} {...l} />)}
-              </div>
-
-              {/* Latest activity ticker */}
-              {lastEvent && (
-                <div className="vhero-ticker">
-                  <span className="vhero-live"><span className="dot" /></span>
-                  <span className="min-w-0 truncate">
-                    {t('vehicleProfile.hero.latestActivity')} <span className="what">{lastEventLabel}</span>
-                    {lastEvent.garage ? <> {t('vehicleProfile.hero.at')} <span className="what">{lastEvent.garage}</span></> : null}
-                    {lastEvent.date ? <span style={{ color: '#7f92b8' }}> · {fmtDate(lastEvent.date)}</span> : null}
-                  </span>
+              )}
+              {/* What the fleet calls this car, in the corner. Self-hides on a car nobody classified
+                  — an unclassified car is a fact about our records, not a car with no class. */}
+              {(v.vehicle_class_label || v.condition_grade_label) && (
+                <div className="vhero-class">
+                  {v.vehicle_class_label && <div>{v.vehicle_class_label}</div>}
+                  {v.condition_grade_label && <div className="sub">{t(v.condition_grade_label)}</div>}
                 </div>
               )}
+
+              <div className="vhero-in relative flex h-full min-h-[300px] flex-col justify-center gap-5 p-6 sm:p-7">
+                <div className="flex items-start gap-5">
+                  {/* the marque's own mark, falling back to a car glyph */}
+                  {logoOk && brandLogo(v.make, v.model) ? (
+                    <div className="vhero-badge">
+                      <img src={brandLogo(v.make, v.model)} alt="" aria-hidden="true" onError={() => setLogoOk(false)} />
+                    </div>
+                  ) : (
+                    <div className="vhero-badge glyph">
+                      <svg className="h-11 w-11" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 13l1.5-4.5A2 2 0 0 1 8.4 7h7.2a2 2 0 0 1 1.9 1.5L19 13m-14 0h14m-14 0a2 2 0 0 0-2 2v3a1 1 0 0 0 1 1h1m14-6a2 2 0 0 1 2 2v3a1 1 0 0 1-1 1h-1m-12 0v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m2 0h10M7.5 16h.01M16.5 16h.01" />
+                      </svg>
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.2em', textTransform: 'uppercase', color: '#8fa2c8' }}>{t('vehicleProfile.hero.dossier')}</span>
+                      <span className="vhero-live"><span className="dot" />{t('LIVE')}</span>
+                    </div>
+                    <h1 className="mt-1 font-display text-3xl font-bold uppercase tracking-tight text-white sm:text-4xl" style={{ letterSpacing: '-.02em', textShadow: '0 2px 24px rgba(34,211,238,.25)' }}>
+                      {[v.make, v.model].filter(Boolean).join(' ') || t('Vehicle')}
+                    </h1>
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      {(v.plate_display || v.plate_no) && <span className="opx-plate" style={{ fontSize: 15, padding: '5px 12px' }}>{v.plate_display || v.plate_no}</span>}
+                      {v.vin && <span className="mono" style={{ fontSize: 12.5, color: '#8fa2c8' }}>{v.vin}</span>}
+                      {/* compact spec line — year / category / colour (odometer has its own tile below) */}
+                      {[v.year, v.category, v.color].some(Boolean) && (
+                        <span style={{ fontSize: 13.5, color: '#a6b8da' }}>{[v.year, v.category, v.color].filter(Boolean).join(' · ')}</span>
+                      )}
+                    </div>
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      {/* Canonical dual-state — the same rental + maintenance identity used across the app. */}
+                      <DualState vehicle={{ ...v, av_state: av.state }} size="md" />
+                      {v.for_sale && <Badge tone="amber" dot>{t('vehicleProfile.hero.forSale')}</Badge>}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* Fault distribution — frosted glass telemetry card */}
-            <div className="vhero-glass w-full shrink-0 p-5 lg:w-96">
-              <div className="text-[10px] font-semibold uppercase text-slate-400" style={{ letterSpacing: '.14em', marginBottom: 4 }}>{t('vehicleProfile.faults.title')}</div>
-              <p className="mb-1 text-xs text-slate-500">{t('vehicleProfile.faults.subtitle')}</p>
-              <p className="mb-4 text-[11px] text-slate-400">
-                {t('vehicleProfile.faults.faultsOnly')}
-                {serviceOnlyVisits > 0 && <> · {tp('vehicleProfile.faults.serviceExcluded', serviceOnlyVisits, { n: num(serviceOnlyVisits) })}</>}
-              </p>
+            {/* Telemetry tiles — the numbers count up on load */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <HeroStat
+                icon={Icon.Gauge}
+                tone="blue"
+                label={t('vehicleProfile.hero.odometer')}
+                value={v.odometer}
+                unit="km"
+                note={v.odometer_source ? t(`vehicleProfile.hero.odoSource.${v.odometer_source}`) : null}
+              />
+              <HeroStat
+                icon={Icon.Wrench}
+                tone="indigo"
+                label={t('vehicleProfile.hero.visits')}
+                value={maintenance.length}
+                note={t('Total visits')}
+              />
+              <HeroStat
+                icon={Icon.Alert}
+                tone="red"
+                label={t('vehicleProfile.hero.faults')}
+                value={totalFaults}
+                note={t('Total recorded')}
+              />
+            </div>
+
+            {/* The three clocks running on this car — registration, insurance, the next service */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {heroMeters.map((m) => <HeroMeter key={m.label} {...m} />)}
+            </div>
+
+            {/* Latest activity — the newest thing that happened, and the way into the whole trail */}
+            {lastEvent && (
+              <button type="button" className="vp-activity" onClick={() => changeTab('activity')}>
+                <Icon.Clock className="h-5 w-5 shrink-0 text-slate-400" />
+                <span className="min-w-0 flex-1 truncate">
+                  {t('vehicleProfile.hero.latestActivity')} <span className="what">{lastEventLabel}</span>
+                  {lastEvent.garage ? <> {t('vehicleProfile.hero.at')} <span className="what">{lastEvent.garage}</span></> : null}
+                  {lastEvent.date ? <span className="text-slate-400"> · {fmtDate(lastEvent.date)}</span> : null}
+                </span>
+                <Icon.ArrowRight className="h-4 w-4 shrink-0 text-slate-400 rtl:-scale-x-100" />
+              </button>
+            )}
+          </div>
+
+          {/* ── what is wrong with it ─────────────────────────────────────────────── */}
+          <div className="vp-panel flex flex-col p-6 lg:col-span-1">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-1.5 pt-1">
+                <span className="text-[11px] font-bold uppercase text-slate-500" style={{ letterSpacing: '.12em' }}>{t('vehicleProfile.faults.title')}</span>
+                <InfoTip content={t('vehicleProfile.faults.drillHint')} />
+              </div>
+              {/* The window this donut is looking through. Always named, never implied. */}
+              <PopMenu
+                label={t('Fault period')}
+                trigger={{
+                  className: 'vp-range',
+                  content: <>{faultWindow.label}<Icon.ChevronDown className="h-3.5 w-3.5 text-slate-400" /></>,
+                }}
+              >
+                {(close) => FAULT_RANGES.map((r) => (
+                  <button
+                    key={r.key}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={r.key === faultRange}
+                    onClick={() => { close(); setFaultRange(r.key); setFaultDrill(null); }}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </PopMenu>
+            </div>
+
+            <p className="mt-3 text-[15px] text-slate-600">{t('vehicleProfile.faults.subtitle')}</p>
+            <p className="mt-1.5 text-[13px] text-slate-400">
+              {t('vehicleProfile.faults.faultsOnly')}
+              {serviceOnlyVisits > 0 && <> · {tp('vehicleProfile.faults.serviceExcluded', serviceOnlyVisits, { n: num(serviceOnlyVisits) })}</>}
+            </p>
+
+            <div className="mt-6 flex-1">
               {faultSegments.length ? (
                 <CompositionDonut
-                  className="!flex-col !gap-5"
+                  className="!flex-col !gap-6"
                   segments={faultSegments}
                   centerLabel={t('Faults')}
-                  size={168}
-                  stroke={24}
+                  size={200}
+                  stroke={26}
                   format={(n) => num(Math.round(n))}
                   onSelect={openFaultDrill}
+                  showValue
                 />
               ) : (
-                <div className="flex h-[168px] items-center justify-center text-xs text-slate-400">
-                  {t('No fault history recorded yet.')}
+                <div className="flex h-[200px] items-center justify-center text-center text-sm text-slate-400">
+                  {faultWindow.months ? t('No faults recorded in this period.') : t('No fault history recorded yet.')}
                 </div>
               )}
-              {faultSegments.length > 0 && (
-                <p className="mt-3 text-[11px] text-slate-400">{t('vehicleProfile.faults.drillHint')}</p>
-              )}
-              {/*
-                ONE DOOR. This card used to offer three ways out — a printable dossier of what the car
-                IS, a system dashboard of what it has SUFFERED (which opened on the engine, so a reader
-                had to choose a system before the page would tell them anything), and later both at
-                once. The Vehicle Report is all of it: the ranked problem list first, the per-system
-                evidence one click in, and the dossier PDF as a button ON that page — which is where a
-                reader deciding what to print already is.
-              */}
-              <div className="mt-5">
-                <Link to={`/reports/vehicle/${v.id}`} className="block">
-                  <Button variant="secondary" className="w-full justify-center">
-                    <Icon.Activity className="h-4 w-4" /> {t('Vehicle Report')}
-                  </Button>
-                </Link>
-              </div>
             </div>
+
+            {/*
+              ONE DOOR. This card used to offer three ways out — a printable dossier of what the car
+              IS, a system dashboard of what it has SUFFERED (which opened on the engine, so a reader
+              had to choose a system before the page would tell them anything), and later both at
+              once. The Vehicle Report is all of it: the ranked problem list first, the per-system
+              evidence one click in, and the dossier PDF as a button ON that page — which is where a
+              reader deciding what to print already is.
+            */}
+            <Link to={`/reports/vehicle/${v.id}`} className="vp-cta mt-6">
+              <Icon.Activity className="h-5 w-5" />
+              <span className="flex-1 text-center">{t('View Vehicle Report')}</span>
+              <Icon.ArrowRight className="h-4 w-4 text-white/70 rtl:-scale-x-100" />
+            </Link>
           </div>
         </div>
 

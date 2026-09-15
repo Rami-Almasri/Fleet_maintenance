@@ -33,6 +33,11 @@ export default function CompositionDonut({
   stroke = 24,
   className = '',
   onSelect = null,
+  // Print each legend row's own value beside its share. A percentage alone answers "how much of
+  // the whole"; on a small total ("85.7%" of seven faults) the reader's very next question is
+  // "how many is that?", and the answer is already in hand. Off by default so the cards that only
+  // ever wanted shares are untouched.
+  showValue = false,
 }) {
   const data = segments.filter((s) => (s.value || 0) > 0);
   const sum = total != null ? total : data.reduce((a, s) => a + (s.value || 0), 0);
@@ -148,6 +153,11 @@ export default function CompositionDonut({
                 <span className="shrink-0 text-end text-xs font-semibold tabular-nums text-slate-400">
                   {(a.frac * 100).toFixed(1)}%
                 </span>
+                {showValue && (
+                  <span className="w-10 shrink-0 text-end text-xs font-semibold tabular-nums text-slate-500">
+                    {format(a.value)}
+                  </span>
+                )}
               </div>
               {isOpen && kids.length > 0 && (
                 <div className="mt-1 space-y-1 border-s border-slate-200 ps-3 ms-1.5">
