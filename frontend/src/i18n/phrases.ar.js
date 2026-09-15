@@ -5920,6 +5920,13 @@ const phrasesAr = {
   'Check the bill against what you typed': 'طابِق الفاتورة مع ما أدخلته',
   'Attach the bill and it appears here, next to the numbers.': 'أرفق الفاتورة لتظهر هنا بجانب الأرقام.',
   'Open the photo full size': 'افتح الصورة بالحجم الكامل',
+  // Contract detail — the page bar and the maintenance-details grid.
+  'Download PDF': 'تنزيل PDF',
+  'More actions for contract {no}': 'إجراءات أخرى للعقد {no}',
+  'Open the vehicle': 'افتح المركبة',
+  'Open the customer': 'افتح العميل',
+  'Reload this contract': 'أعد تحميل هذا العقد',
+  'Since {date}': 'منذ {date}',
   'These parts': 'هذه القطع',
   'VAT / tax you typed': 'الضريبة التي أدخلتها',
   'Comes to': 'المجموع',

@@ -14,8 +14,11 @@ import { useEffect, useRef, useState } from 'react';
  * @param items  [{ key, label, onSelect, danger }] — already filtered by the caller. An empty list
  *               renders nothing at all, so a row with no secondary actions has no dangling control.
  * @param label  accessible name for the trigger, e.g. "More actions for invoice 33333"
+ * @param triggerLabel  optional visible text on the trigger. Given one, the trigger stops being a bare
+ *                      "⋮" square and becomes a labelled pill — for a page header, where the menu is the
+ *                      only one on screen and has to announce itself rather than hide in a row of them.
  */
-export default function ActionMenu({ items = [], label = 'More actions', align = 'end', glyph = '⋮' }) {
+export default function ActionMenu({ items = [], label = 'More actions', align = 'end', glyph = '⋮', triggerLabel = null }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef(null);
 
@@ -48,8 +51,11 @@ export default function ActionMenu({ items = [], label = 'More actions', align =
         aria-expanded={open}
         aria-label={label}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+        className={triggerLabel
+          ? 'inline-flex items-center gap-2 rounded-lg bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 transition hover:bg-slate-50 hover:ring-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400'
+          : 'inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400'}
       >
+        {triggerLabel}
         <span aria-hidden="true" className="text-lg leading-none">{glyph}</span>
       </button>
 
