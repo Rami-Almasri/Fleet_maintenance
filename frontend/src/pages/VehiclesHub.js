@@ -85,13 +85,13 @@ export default function VehiclesHub() {
       {onRegistry && can('vehicles.manage') && (
         /* The registry page owns the create form and the export; this button only asks for them,
            over a window event. See AddVehicleBridge in pages/Vehicles.js. */
-        <div className="inline-flex items-stretch overflow-hidden rounded-xl bg-indigo-600 shadow-sm shadow-indigo-600/20">
+        <div className="inline-flex shrink-0 items-stretch overflow-hidden rounded-xl bg-indigo-600 shadow-sm shadow-indigo-600/20">
           <button
             type="button"
             onClick={() => window.dispatchEvent(new CustomEvent('fleet:add-vehicle'))}
-            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700"
+            className="inline-flex items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" className="h-4 w-4">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" className="h-4 w-4 shrink-0">
               <path d="M12 5v14M5 12h14" />
             </svg>
             {t('vehicles.addVehicle')}
@@ -99,7 +99,13 @@ export default function VehiclesHub() {
           <span className="my-2 w-px bg-white/25" />
           <span className="flex items-center pe-1 text-white [&_button]:text-white [&_button:hover]:bg-indigo-700">
             <ActionMenu
-              glyph="⌄"
+              /* A drawn chevron, not the "⌄" character: the glyph sits near the baseline in most
+                 fonts and reads as a dropped comma next to a centred label. */
+              glyph={(
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              )}
               label={t('vehicles.moreFleetActions')}
               items={[
                 { key: 'add', label: t('vehicles.addVehicle'), onSelect: () => window.dispatchEvent(new CustomEvent('fleet:add-vehicle')) },
