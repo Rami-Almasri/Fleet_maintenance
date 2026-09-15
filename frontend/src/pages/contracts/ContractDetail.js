@@ -4,6 +4,7 @@ import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
 import Badge, { ContractTypeBadge, ContractStateBadge } from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
+import ActionMenu from '../../components/ui/ActionMenu';
 import { Card, Spinner, ErrorState } from '../../components/ui/Misc';
 import { CommandPanel } from '../../components/ops';
 import ExchangeChainPanel from '../../components/ExchangeChainPanel';
@@ -271,14 +272,50 @@ export default function ContractDetail() {
         { label: 'Deposit', value: aed2(c.contract_deposit), accent: 'indigo', icon: 'M3 10l9-6 9 6M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9' },
       ] : []);
 
+  // The header's identity strip. Only facts this contract actually carries appear — an empty
+  // "Customer —" column would take a reader's glance to learn nothing.
+  const heroFacts = [
+    c.vehicle && {
+      label: t('contractDetail.fields.vehicle'),
+      value: [c.vehicle.plate_no, [c.vehicle.make, c.vehicle.model].filter(Boolean).join(' ')].filter(Boolean).join(' · '),
+      to: `/vehicles/${c.vehicle_id}`,
+    },
+    c.customer && {
+      label: t('contractDetail.fields.customer'),
+      value: c.customer.name_en || `#${c.customer.customer_no}`,
+      to: `/customers/${c.customer_id}`,
+    },
+    isMaintenance && garageName && { label: garageLabel, value: garageName },
+  ].filter(Boolean);
+
   return (
     <div className="opx py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        {/* Back */}
-        <Link to="/contracts" className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 transition hover:text-slate-700">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
-          Contracts
-        </Link>
+        {/* Page bar — the way out on one side, the whole-page actions on the other. The actions belong
+            here rather than in the hero: the hero says what this contract IS, the bar says what you can
+            do to it, and a reader looking for either never has to search the other. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link to="/contracts" className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-700">
+            <svg className="h-4 w-4 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
+            {t('contractDetail.back')}
+          </Link>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => window.print()}>
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V4h12v5M6 18H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-1M6 14h12v6H6z" /></svg>
+              {t('Download PDF')}
+            </Button>
+            <ActionMenu
+              triggerLabel={t('Actions')}
+              label={t('More actions for contract {no}', { no: c.contract_no || c.id })}
+              items={[
+                { key: 'edit', label: t('contractDetail.edit'), onSelect: () => navigate(`/contracts/${id}/edit`) },
+                ...(c.vehicle_id ? [{ key: 'vehicle', label: t('Open the vehicle'), onSelect: () => navigate(`/vehicles/${c.vehicle_id}`) }] : []),
+                ...(c.customer_id ? [{ key: 'customer', label: t('Open the customer'), onSelect: () => navigate(`/customers/${c.customer_id}`) }] : []),
+                { key: 'reload', label: t('Reload this contract'), onSelect: reload },
+              ]}
+            />
+          </div>
+        </div>
 
         {/* Hero */}
         <div className="relative overflow-hidden rounded-2xl bg-navy-950 p-6 shadow-card sm:p-8">
@@ -292,8 +329,11 @@ export default function ContractDetail() {
                 </svg>
               </div>
               <div className="min-w-0">
-                <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{isMaintenance ? 'Maintenance' : 'Contract'} #{c.contract_no || c.id}</h1>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
+                {/* The kind is an eyebrow, not part of the number: the number is what anyone reads the
+                    header for, and "Maintenance #80805" makes it share its line with a word. */}
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">{isMaintenance ? 'Maintenance' : 'Contract'}</p>
+                <h1 className="mt-1 text-3xl font-bold tracking-tight text-white sm:text-4xl">#{c.contract_no || c.id}</h1>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
                   <ContractTypeBadge type={c.contract_type} />
                   <ContractStateBadge state={c.state} />
                   {mStatus && <Badge tone={mStatus.badge}>{mStatus.label}</Badge>}
@@ -304,33 +344,42 @@ export default function ContractDetail() {
                   {SHOW_FINANCIALS && Number(c.customer?.available_wallet) > 0 && <Badge tone="cyan" className="font-semibold">💰 Customer wallet {aed2(c.customer.available_wallet)}</Badge>}
                   {SHOW_FINANCIALS && Number(c.customer?.balance) > 0 && <Badge tone="red" className="font-semibold">⚠️ Customer owes {aed2(c.customer.balance)}</Badge>}
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {c.customer && (
-                    <Link to={`/customers/${c.customer_id}`} className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-white ring-1 ring-inset ring-white/15 backdrop-blur transition hover:bg-white/15">
-                      <svg className="h-3.5 w-3.5 text-indigo-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" /></svg>
-                      {c.customer.name_en || `#${c.customer.customer_no}`}
-                    </Link>
-                  )}
-                  {c.vehicle && (
-                    <Link to={`/vehicles/${c.vehicle_id}`} className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-white ring-1 ring-inset ring-white/15 backdrop-blur transition hover:bg-white/15">
-                      <svg className="h-3.5 w-3.5 text-indigo-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M5 13l1.5-4.5A2 2 0 0 1 8.4 7h7.2a2 2 0 0 1 1.9 1.5L19 13m-14 0h14M7.5 16h.01M16.5 16h.01" /></svg>
-                      {c.vehicle.plate_no || [c.vehicle.make, c.vehicle.model].filter(Boolean).join(' ')}
-                    </Link>
-                  )}
-                </div>
+                {/* Who this contract is about, as labelled facts rather than a row of pills. A pill
+                    makes the reader work out what it means from its icon; a label says it outright,
+                    and the ones that lead somewhere carry a chevron so that is visible too. */}
+                <dl className="mt-5 flex flex-wrap gap-x-10 gap-y-4">
+                  {heroFacts.map((f) => (
+                    <div key={f.label} className="min-w-0">
+                      <dt className="text-[11px] font-medium uppercase tracking-wide text-white/45">{f.label}</dt>
+                      <dd className="mt-0.5 text-sm font-semibold text-white">
+                        {f.to ? (
+                          <Link to={f.to} className="inline-flex items-center gap-1 transition hover:text-indigo-200">
+                            <span className="truncate">{f.value}</span>
+                            <svg className="h-3.5 w-3.5 shrink-0 text-white/50 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
+                          </Link>
+                        ) : (
+                          <span className="truncate">{f.value}</span>
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
               </div>
             </div>
 
             <div className="w-full shrink-0 rounded-2xl bg-white/5 p-4 ring-1 ring-inset ring-white/10 backdrop-blur lg:w-64">
               {SHOW_FINANCIALS && (
                 <>
-                  <p className="text-xs font-medium text-white/55">{isMaintenance ? 'Total Cost' : 'Balance'}</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/55">{isMaintenance ? 'Total Cost' : 'Balance'}</p>
                   <p className={`mt-1 text-3xl font-bold tracking-tight ${!isMaintenance && Number(c.contract_balance) > 0 ? 'text-red-300' : !isMaintenance && Number(c.contract_balance) < 0 ? 'text-emerald-300' : 'text-white'}`}>
                     {isMaintenance ? aed2(c.maintenance_total ?? c.contract_debit) : aed2(c.contract_balance)}
                   </p>
                 </>
               )}
-              <Button variant="secondary" className={`${SHOW_FINANCIALS ? 'mt-4' : ''} w-full justify-center`} onClick={() => navigate(`/contracts/${id}/edit`)}>{t('contractDetail.edit')}</Button>
+              <Button variant="secondary" className={`${SHOW_FINANCIALS ? 'mt-4' : ''} w-full justify-center`} onClick={() => navigate(`/contracts/${id}/edit`)}>
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M16.9 3.6a2 2 0 0 1 2.8 2.8L8.4 17.7l-3.6.8.8-3.6z" /></svg>
+                {t('contractDetail.edit')}
+              </Button>
             </div>
           </div>
         </div>
@@ -432,34 +481,42 @@ export default function ContractDetail() {
 
         {(c.contract_type === 'U' || (c.items && c.items.length > 0)) && (
           <Card className="p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('contractDetail.maintenance.title')}</h3>
-              {garageName && (
-                <span className="text-sm text-slate-600">
-                  {garageLabel}: <span className="font-medium text-slate-900">{garageName}</span>
-                  {garage?.as_of && <span className="text-slate-400"> · {fmtDate(garage.as_of)}</span>}
-                </span>
-              )}
+            <div className="mb-5 flex items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4a4 4 0 0 0-1 7.9V20a2 2 0 1 0 4 0v-8.1A4 4 0 0 0 11 4zM14.5 4.5l-2 2 3 3 2-2" /></svg>
+              </span>
+              <h3 className="text-sm font-semibold text-slate-900">{t('contractDetail.maintenance.title')}</h3>
             </div>
 
-            <div className="mb-4 grid grid-cols-1 gap-x-8 gap-y-1 sm:grid-cols-3">
+            {/* Label above value, not label-left/value-right: these are facts about the visit read as a
+                set, and a column of right-aligned values reads far faster than ten hyphen-separated
+                pairs. The caption under a value carries the fact that qualifies it — since when the car
+                has been at that garage, how late it came back — instead of inventing another field. */}
+            <div className="mb-5 grid grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-4">
               {[
-                [t('contractDetail.fields.vehicle'), c.vehicle?.plate_no ? <Link to={`/vehicles/${c.vehicle_id}`} className="text-indigo-600 hover:text-indigo-700">{c.vehicle.plate_no}</Link> : null],
-                ['Responsible', c.responsible],
-                ['Approved By', c.approved_by],
-                ['Sent to Garage', c.out_date ? fmtDate(c.out_date) : null],
-                [t('contractDetail.fields.expectedReturn'), c.expected_return_date ? fmtDate(c.expected_return_date) : null],
-                ['Returned', c.in_date ? fmtDate(c.in_date) : null],
-                ['Late by', (c.in_date && c.expected_return_date && dayDiff(c.in_date, c.expected_return_date) > 0) ? <span className="text-red-600">{dayDiff(c.in_date, c.expected_return_date)} days</span> : null],
-                ['Mileage Out', c.out_milage != null ? `${num(c.out_milage)} km` : null],
-                ['Mileage In', c.in_milage != null ? `${num(c.in_milage)} km` : null],
-                [t('contractDetail.fields.days'), c.days != null ? c.days : null],
+                { label: t('contractDetail.fields.vehicle'), value: c.vehicle?.plate_no ? <Link to={`/vehicles/${c.vehicle_id}`} className="text-indigo-600 hover:text-indigo-700">{c.vehicle.plate_no}</Link> : null, caption: [c.vehicle?.make, c.vehicle?.model].filter(Boolean).join(' ') || null },
+                { label: 'Sent to Garage', value: c.out_date ? fmtDate(c.out_date) : null },
+                { label: garageLabel || 'Garage', value: garageName, caption: garage?.as_of ? t('Since {date}', { date: fmtDate(garage.as_of) }) : null },
+                { label: t('contractDetail.fields.expectedReturn'), value: c.expected_return_date ? fmtDate(c.expected_return_date) : null },
+                {
+                  label: 'Returned',
+                  value: c.in_date ? fmtDate(c.in_date) : null,
+                  caption: (c.in_date && c.expected_return_date && dayDiff(c.in_date, c.expected_return_date) > 0)
+                    ? tp('contractDetail.overdue.lateBy', dayDiff(c.in_date, c.expected_return_date)) : null,
+                  captionTone: 'text-red-600',
+                },
+                { label: 'Mileage Out', value: c.out_milage != null ? `${num(c.out_milage)} km` : null },
+                { label: 'Mileage In', value: c.in_milage != null ? `${num(c.in_milage)} km` : null },
+                { label: t('contractDetail.fields.days'), value: c.days != null ? c.days : null },
+                { label: 'Responsible', value: c.responsible },
+                { label: 'Approved By', value: c.approved_by },
               ]
-                .filter(([, v]) => v !== null && v !== undefined && v !== '')
-                .map(([l, v]) => (
-                  <div key={l} className="flex justify-between gap-4 py-1.5 text-sm">
-                    <span className="text-slate-500">{l}</span>
-                    <span className="text-end font-medium text-slate-900">{v}</span>
+                .filter((f) => f.value !== null && f.value !== undefined && f.value !== '')
+                .map((f) => (
+                  <div key={f.label} className="min-w-0">
+                    <p className="text-xs font-medium text-slate-500">{f.label}</p>
+                    <p className="mt-1 truncate text-sm font-semibold text-slate-900" title={typeof f.value === 'string' ? f.value : undefined}>{f.value}</p>
+                    {f.caption && <p className={`mt-0.5 truncate text-xs ${f.captionTone || 'text-slate-400'}`}>{f.caption}</p>}
                   </div>
                 ))}
             </div>
