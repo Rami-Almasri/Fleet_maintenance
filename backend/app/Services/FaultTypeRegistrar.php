@@ -161,6 +161,18 @@ class FaultTypeRegistrar
     }
 
     /**
+     * The library half of a fault type, or null when no row knows the word.
+     *
+     * Exposed so a caller holding the catalog row can reach the fields only the library carries — the
+     * detail line is the one a merged form edits — without re-implementing the normalised lookup and
+     * eventually matching on raw text, which is how the second row gets created.
+     */
+    public function keywordFor(FaultCatalog $fault): ?FindingKeyword
+    {
+        return $this->keywordRowNamed(TextNormalizer::key($fault->name));
+    }
+
+    /**
      * Carry a rename / re-grade across to the twin, so the two tables cannot say different things about
      * one fault. A row the config authors is left alone: the file would assert its own wording back.
      */

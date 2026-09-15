@@ -12,6 +12,7 @@ use App\Http\Controllers\DriverController;
 use App\Http\Controllers\FaultCauseController;
 use App\Http\Controllers\FindingKeywordController;
 use App\Http\Controllers\FaultCatalogController;
+use App\Http\Controllers\FaultVocabularyController;
 use App\Http\Controllers\VehicleLocationController;
 use App\Http\Controllers\FleetController;
 use App\Http\Controllers\GarageInvoiceController;
@@ -1303,6 +1304,12 @@ Route::middleware('auth:sanctum')->prefix('finding-keywords')->controller(Findin
 // onto the authored config), which is what it used to take a deploy to do. It does NOT author the
 // word's meaning — synonyms and slang stay in database/seeders/ontology/*.php, and every row reports
 // whether it has any.
+// THE MERGED READ. A fault type is two rows and one word; this is the single list the office reads it
+// on. It writes nothing — the two doors below and above stay the only writers, so the registrar keeps
+// being the one place that decides what a twin looks like ([[FaultVocabularyController]]).
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])
+    ->get('fault-vocabulary', [FaultVocabularyController::class, 'index']);
+
 Route::middleware('auth:sanctum')->prefix('fault-catalog')->controller(FaultCatalogController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:maintenance.view');
     Route::post('/', 'store')->middleware('permission:maintenance.manage');

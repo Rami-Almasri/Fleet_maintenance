@@ -164,7 +164,12 @@ class FaultCatalogController extends Controller
         // The other half of a fault type: its risk grade and the canonical term the matcher searches.
         // Without this the fault is tappable and ungraded — it never appears in the Keyword Risk
         // Library, so the page that decides how serious a fault is has never heard of it.
-        $registrar->ensureKeyword($fault);
+        $twin = $registrar->ensureKeyword($fault);
+
+        // The detail line lives on the library half only, and the merged Fault Vocabulary form asks for
+        // it in the same act as the name. Forwarded rather than duplicated onto this table: one field,
+        // one column, and a second copy is a thing that drifts.
+        $this->applyDescription($twin, $request, $data);
 
         return ResponseHelper::SuccessResponse(
             [
@@ -206,6 +211,9 @@ class FaultCatalogController extends Controller
         // fault differently — a chip reading one thing and its risk row another is how a "critical"
         // fault ends up filed as routine.
         $registrar->syncKeywordFrom($faultCatalog, $previousName);
+
+        // Found AFTER the sync — the twin is located by the wording the row carries now.
+        $this->applyDescription($registrar->keywordFor($faultCatalog), $request, $data);
 
         return ResponseHelper::SuccessResponse(
             ['has_vocabulary' => OntologyConcepts::has($faultCatalog->name)],
@@ -287,6 +295,24 @@ class FaultCatalogController extends Controller
     }
 
     /**
+     * Write the detail line onto the library half.
+     *
+     * Applied only when the caller actually SENT the field. A blank string clears it (a curator
+     * deleting the line means it); an absent field leaves whatever is there alone, so the older
+     * single-purpose callers that never knew about this column cannot wipe it.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    private function applyDescription(?\App\Models\FindingKeyword $keyword, Request $request, array $data): void
+    {
+        if (! $keyword || ! $request->has('description')) {
+            return;
+        }
+
+        $keyword->update(['description' => filled($data['description'] ?? null) ? trim($data['description']) : null]);
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function rules(?int $ignoreId = null): array
@@ -302,6 +328,9 @@ class FaultCatalogController extends Controller
             'category_key'     => ['required', 'string', Rule::in($this->categoryKeys())],
             'default_severity' => ['required', Rule::in(self::SEVERITIES)],
             'on_site'          => ['nullable', 'boolean'],
+            // Stored on the library half — see applyDescription(). Bounded to the same 500 the
+            // keyword controller enforces, so the two doors cannot accept different lengths.
+            'description'      => ['nullable', 'string', 'max:500'],
         ];
     }
 

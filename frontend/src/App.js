@@ -348,10 +348,10 @@ export default function App() {
                   <Route path="/executive" element={<Executive />} />
                   <Route path="/intelligence/garages/compare" element={<GarageCompare />} />
                   <Route path="/intelligence/garages/:id" element={<GarageProfile />} />
-                  <Route path="/finding-keywords" element={<RedirectToTab to="/control-desk" tab="keywords" />} />
-                  {/* Where on the car a fault can be — the other half of the fault vocabulary, so it
-                      sits beside Keyword Risk on the Control Desk rather than on its own route. */}
-                  <Route path="/fault-types" element={<RedirectToTab to="/control-desk" tab="fault-types" />} />
+                  {/* Both old routes land on one section: a fault type is two rows and was two pages,
+                      and it is one word on one page now. See pages/FaultVocabulary. */}
+                  <Route path="/finding-keywords" element={<RedirectToTab to="/control-desk" tab="vocabulary" />} />
+                  <Route path="/fault-types" element={<RedirectToTab to="/control-desk" tab="vocabulary" />} />
                   <Route path="/vehicle-locations" element={<RedirectToTab to="/control-desk" tab="locations" />} />
                   {/* Maintenance Analytics is marked "Coming Soon" in the module registry —
                       redirect the old URL so the unfinished page isn't reachable directly. */}

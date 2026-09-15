@@ -5,9 +5,8 @@ import { useI18n } from '../i18n/I18nContext';
 import InspectionReviewQueue from './InspectionReviewQueue';
 import OilProjection from './reminders/OilProjection';
 import InvoiceMatching from './InvoiceMatching';
-import FindingKeywords from './FindingKeywords';
 import VehicleLocations from './VehicleLocations';
-import FaultTypes from './FaultTypes';
+import FaultVocabulary from './FaultVocabulary';
 
 /**
  * Control Desk — the Controllers' (Lin & Marwa) day, in one place. Five jobs that were five separate
@@ -20,16 +19,16 @@ import FaultTypes from './FaultTypes';
  *                          Call the customer, key the odometer they report, the projection re-anchors.
  *   • Invoice Matching   → the car is back. Key each garage's bill beside the work it covers and see
  *                          whether the paper and the repair agree.
- *   • Keyword Risk       → the fault vocabulary the inspection picker offers, and how serious each
- *                          fault type is. The desk's own settings, not a daily queue.
- *   • Fault Types        → WHAT can be reported at all. Adding one here puts it in the picker with no
+ *   • Fault Vocabulary   → WHAT can be reported at all, HOW SERIOUS it is, and whether the matcher can
+ *                          read it in a written note. Adding one here puts it in the picker with no
  *                          deploy, which is what it used to take.
  *   • Vehicle Locations  → the other half of that same vocabulary: WHERE on the car a fault can be,
  *                          and which fault types must name a place before the report can be filed.
  *
- * The last three are one job split across three pages — a fault is WHAT it is, HOW SERIOUS it is,
- * HOW MANY there are and WHERE they are, and the same two people curate all of it. Keeping them apart
- * meant grading a keyword on one route and its location rule on another; they sit side by side now.
+ * Fault Vocabulary WAS two sections — "Keyword Risk" and "Fault Types" — because a fault type is two
+ * database rows. That is an implementation fact and it was on screen as two lists with two totals that
+ * differ by design, which read as "one of these is broken". One word, one row, one page now; both old
+ * `?tab=` keys still resolve here.
  *
  * A SIDEBAR rather than a tab strip: these are separate jobs, not five readings of one board, and the
  * rail stays in view while you work inside one of them.
@@ -76,22 +75,18 @@ export default function ControlDesk() {
         Component: InvoiceMatching,
       },
       {
-        key: 'keywords',
-        label: t('Keyword Risk'),
-        hint: t('The fault vocabulary, graded by how serious it is'),
+        key: 'vocabulary',
+        label: t('Fault Vocabulary'),
+        hint: t('What can be reported, how serious it is, and what the matcher knows'),
         icon: <Icon.Flag className="h-4 w-4" />,
         permission: 'maintenance.view',
+        // Both retired keys still land here, so every bookmark and deep link into either half of the
+        // old pair opens the merged page rather than falling through to the first section.
+        aliases: ['keywords', 'fault-types'],
+        // '/finding-keywords' is the path the role deny lists in config/access.js name, and the merged
+        // section has to keep being hidden from exactly the roles that could not see it before.
         was: '/finding-keywords',
-        Component: FindingKeywords,
-      },
-      {
-        key: 'fault-types',
-        label: t('Fault Types'),
-        hint: t('What an inspector can report, and what it is worth'),
-        icon: <Icon.Flag className="h-4 w-4" />,
-        permission: 'maintenance.view',
-        was: '/fault-types',
-        Component: FaultTypes,
+        Component: FaultVocabulary,
       },
       {
         key: 'locations',

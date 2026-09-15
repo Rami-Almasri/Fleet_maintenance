@@ -6035,23 +6035,50 @@ const phrasesAr = {
   'Still needed: {fields}': 'ما زال مطلوباً: {fields}',
   'and': 'و',
 
-  // Fault Types — the WHAT axis, curated in the Control Desk instead of in a deploy. Note the
-  // vocabulary wording: "no words yet" is not an error, it says the matcher cannot read the fault in
-  // a written note yet, which is a different (and recoverable) thing from the fault being broken.
-  'Fault Types': 'أنواع الأعطال',
-  'Fault types': 'أنواع الأعطال',
-  'What an inspector can report. Adding one here puts it in the picker straight away.':
-    'ما يمكن للفاحص الإبلاغ عنه. إضافة عطل هنا تجعله متاحاً في القائمة مباشرة.',
-  'What an inspector can report, and what it is worth': 'ما يمكن للفاحص الإبلاغ عنه، وما مدى خطورته',
-  'Add fault type': 'إضافة نوع عطل',
-  'Edit fault type': 'تعديل نوع العطل',
+  // Fault Vocabulary — WHAT can be reported, HOW SERIOUS it is, and what the matcher knows, curated
+  // in the Control Desk instead of in a deploy. Was two pages ("Fault Types" + "Keyword Risk")
+  // because a fault type is two database rows; that is an implementation fact and it does not belong
+  // on screen. Note the vocabulary wording: "no words yet" is not an error, it says the matcher cannot
+  // read the fault in a written note yet, which is a different (and recoverable) thing from the fault
+  // being broken. And "the garage records it" is not a fault either — it is withheld on purpose.
+  'Fault Vocabulary': 'مفردات الأعطال',
+  'What an inspector can report, how serious it is, and whether the matcher can read it in a written note.':
+    'ما يمكن للفاحص الإبلاغ عنه، ومدى خطورته، وهل يستطيع المحرك قراءته في ملاحظة مكتوبة.',
+  'What can be reported, how serious it is, and what the matcher knows':
+    'ما يمكن الإبلاغ عنه، ومدى خطورته، وما يعرفه المحرك',
+  'Add a fault': 'إضافة عطل',
+  'Edit fault': 'تعديل العطل',
+  'Words in the vocabulary': 'المفردات في القاموس',
   'Offered in the picker': 'معروضة في القائمة',
+  'Recorded by the garage': 'تسجّلها الورشة',
+  'Missing from the picker': 'غير موجودة في القائمة',
+  '{n} words are graded and matchable, and no inspector can tap them.':
+    '{n} مفردة مصنّفة وقابلة للمطابقة، ولا يستطيع أي فاحص اختيارها.',
+  'Each one is half a fault type — the library knows it, the picker never got it. Open one and save it to write the missing half.':
+    'كل واحدة منها نصف نوع عطل — المكتبة تعرفها، والقائمة لم تصلها قط. افتح أي واحدة واحفظها لكتابة النصف الناقص.',
+  '{n} words the matcher cannot recognise in a written note.':
+    '{n} مفردة لا يتعرف عليها المحرك في الملاحظات المكتوبة.',
+  'They work in the picker. Their synonyms and workshop slang are authored in the fault ontology, by a developer — not here.':
+    'تعمل في القائمة. أما مرادفاتها ولهجة الورشة فتُكتب في قاموس الأعطال بواسطة المطوّر — وليس من هنا.',
+  'Grade': 'التصنيف',
   'No words behind them': 'بدون مفردات',
-  'Tappable, but the matcher cannot recognise them in written notes.':
-    'يمكن اختيارها، لكن المحرك لا يتعرف عليها في الملاحظات المكتوبة.',
-  'Search a fault type…': 'ابحث عن نوع عطل…',
-  'Only ones missing words': 'فقط التي بدون مفردات',
-  'Words': 'المفردات',
+  'Search a fault…': 'ابحث عن عطل…',
+  'Where it lives': 'أين تعيش',
+  'What the matcher knows': 'ما يعرفه المحرك',
+  'In the picker': 'في القائمة',
+  'Garage records it': 'تسجّلها الورشة',
+  'Not in the picker': 'ليست في القائمة',
+  'No library row': 'بدون سجل في المكتبة',
+  'Library says {grade}': 'المكتبة تقول {grade}',
+  '{n} faults are graded one way in the picker and another in the library.':
+    '{n} عطل مصنّف بطريقة في القائمة وبطريقة أخرى في المكتبة.',
+  'They were graded on two separate screens before this one existed. Opening a row and saving it settles both halves on one grade.':
+    'صُنّفت على شاشتين منفصلتين قبل وجود هذه الشاشة. افتح السطر واحفظه ليستقر النصفان على تصنيف واحد.',
+  'Graded differently in each half': 'مصنّفة بشكل مختلف في كل نصف',
+  'The library currently grades this {grade}. It was graded twice, on two screens, before they became one — saving reconciles both halves to the grade above.':
+    'المكتبة تصنّفه حالياً {grade}. صُنّف مرتين على شاشتين قبل أن تصبحا واحدة — الحفظ يوحّد النصفين على التصنيف أعلاه.',
+  'The config file offers this word directly, so it is tappable without a fault type of its own. Renaming or re-grading it here changes the library half only.':
+    'ملف الإعدادات يعرض هذه المفردة مباشرة، فهي قابلة للاختيار بدون نوع عطل خاص بها. إعادة تسميتها أو تصنيفها هنا تغيّر نصف المكتبة فقط.',
   'Recorded on': 'مسجل على',
   'On site': 'في الموقع',
   'Understood': 'مفهوم',
@@ -6061,10 +6088,18 @@ const phrasesAr = {
   'In config': 'في الإعدادات',
   'Retire': 'إيقاف',
   'Authored in the config file — remove it there': 'مكتوب في ملف الإعدادات — يجب حذفه من هناك',
-  'No fault types match': 'لا توجد أنواع أعطال مطابقة',
+  'No faults match': 'لا توجد أعطال مطابقة',
   'Try a different search, or clear the filters.': 'جرّب بحثاً آخر، أو امسح عوامل التصفية.',
-  'It becomes selectable in the findings picker as soon as you save.':
-    'يصبح قابلاً للاختيار في قائمة النتائج فور الحفظ.',
+  'One save writes both halves: the chip an inspector taps and the grade the engine reads.':
+    'حفظة واحدة تكتب النصفين: الزر الذي يختاره الفاحص والتصنيف الذي يقرأه المحرك.',
+  'What this fault means': 'ماذا يعني هذا العطل',
+  'One line, for whoever has to decide what to do about it.':
+    'سطر واحد، لمن سيقرر ما العمل بشأنه.',
+  'Stop renting the car until it is fixed.': 'أوقف تأجير السيارة حتى يتم الإصلاح.',
+  'Fix it at the next visit — the car can keep working.':
+    'أصلحه في الزيارة القادمة — السيارة تستطيع الاستمرار في العمل.',
+  'Housekeeping. Fix it when the car is in anyway.':
+    'أمر تنظيمي. أصلحه عندما تكون السيارة في الورشة على أي حال.',
   'Fault name (English)': 'اسم العطل (إنجليزي)',
   'Fault name (Arabic)': 'اسم العطل (عربي)',
   'e.g. Detached trim': 'مثال: إنفصال الزينة',
@@ -6076,14 +6111,18 @@ const phrasesAr = {
     'يستطيع الفاحصون اختياره فوراً. لن يتعرف عليه المحرك في الملاحظات المكتوبة حتى يضيف المطوّر مفرداته إلى قاموس الأعطال.',
   'This fault is also written in the application config. Renaming it here sticks, and the next deployment will leave your version alone.':
     'هذا العطل مكتوب أيضاً في إعدادات النظام. إعادة تسميته هنا تبقى، ولن يغيّرها التحديث القادم.',
-  'Delete this fault type?': 'حذف نوع العطل هذا؟',
+  'This word is withheld from the picker on purpose — the garage records it during the repair. Saving will not add it.':
+    'هذه المفردة محجوبة عن القائمة عن قصد — الورشة تسجّلها أثناء الإصلاح. الحفظ لن يضيفها.',
+  'This word has no fault type behind it, so nobody can tap it. Saving writes the missing half and puts it in the picker.':
+    'هذه المفردة بلا نوع عطل خلفها، فلا يستطيع أحد اختيارها. الحفظ يكتب النصف الناقص ويضعها في القائمة.',
+  'Delete this fault?': 'حذف هذا العطل؟',
   '“{name}” has never been used on a task, so deleting it loses nothing.':
     '«{name}» لم يُستخدم في أي مهمة، لذا حذفه لا يفقد شيئاً.',
-  'Could not save this fault type': 'تعذّر حفظ نوع العطل',
-  'Could not change this fault type': 'تعذّر تغيير نوع العطل',
-  'Could not delete this fault type': 'تعذّر حذف نوع العطل',
-  'Could not load the fault types': 'تعذّر تحميل أنواع الأعطال',
-  'Fault type deleted': 'تم حذف نوع العطل',
+  'Could not save this fault': 'تعذّر حفظ العطل',
+  'Could not change this fault': 'تعذّر تغيير العطل',
+  'Could not delete this fault': 'تعذّر حذف العطل',
+  'Could not load the fault vocabulary': 'تعذّر تحميل مفردات الأعطال',
+  'Fault removed from the vocabulary': 'تم حذف العطل من القاموس',
 
   // Severity grades — lower-case because they arrive as the server's own constant values.
   'routine': 'روتيني',

@@ -28,9 +28,11 @@ import { useI18n } from '../../i18n/I18nContext';
  * declares `was` — the route it replaced — and is hidden unless the viewer both holds the permission
  * and is not blocked from that original path.
  *
- * Section shape: { key, label, hint?, icon?, permission?, permissionAny?, was?, Component }
+ * Section shape: { key, label, hint?, icon?, permission?, permissionAny?, was?, aliases?, Component }
  *   permission — omit (or null) for "any authenticated user"; `permissionAny` takes a list instead.
  *   hint       — one line under the label in the rail, so the section says what it is for.
+ *   aliases    — retired `?tab=` keys this section still answers to, so folding two sections into one
+ *                does not quietly redirect an old bookmark into a different job.
  *
  * Only the active section is mounted, so exactly one data-fetch / poll loop runs at a time.
  */
@@ -51,7 +53,12 @@ export default function SidebarHub({ title, subtitle, ariaLabel, icon, sections 
   // The active section lives in the URL (?tab=…) so every section stays deep-linkable, and so the
   // retired routes can keep redirecting in through the same RedirectToTab helper the other hubs use.
   const [searchParams, setSearchParams] = useSearchParams();
-  const current = visible.find((s) => s.key === searchParams.get('tab')) || visible[0];
+  // `aliases` are the keys a section USED to answer to, before two sections became one. Without them
+  // an old deep link falls through to `visible[0]` and silently opens a different job — which is worse
+  // than a 404, because it looks like it worked.
+  const tab = searchParams.get('tab');
+  const current =
+    visible.find((s) => s.key === tab || (s.aliases || []).includes(tab)) || visible[0];
   // Switching sections drops the previous one's own params (?focus, ?ticket, …) — they mean nothing
   // to the section being opened.
   const setActive = (key) => setSearchParams({ tab: key }, { replace: true });
