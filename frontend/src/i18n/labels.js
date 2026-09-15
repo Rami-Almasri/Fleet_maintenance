@@ -169,6 +169,8 @@ const en = {
   shell: {
     back: 'Back',
     backHint: 'Back to previous page',
+    // The line under the page title in the header — the house tagline.
+    tagline: 'Manage. Track. Keep Faster Moving.',
     home: 'Home',
     homeHint: 'Home — main page',
     search: 'Search',
@@ -6168,6 +6170,7 @@ const ar = {
   shell: {
     back: 'رجوع',
     backHint: 'العودة إلى الصفحة السابقة',
+    tagline: 'إدارة. متابعة. لتبقى فاستر في حركة.',
     home: 'الرئيسية',
     homeHint: 'الرئيسية — الصفحة الأساسية',
     search: 'بحث',

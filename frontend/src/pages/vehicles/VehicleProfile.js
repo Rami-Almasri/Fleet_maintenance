@@ -739,8 +739,8 @@ export default function VehicleProfile() {
         <PausedRibbon vehicle={{ ...v, av_state: av.state }} />
 
         {/* Tab navigation — the persistent hero above stays visible on every tab. Sticks just
-            below the app header (h-16) so a manager keeps the tabs in reach while scrolling. */}
-        <div className="sticky top-16 z-10 -mx-4 bg-white/80 px-4 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+            below the app header (h-20) so a manager keeps the tabs in reach while scrolling. */}
+        <div className="sticky top-20 z-10 -mx-4 bg-white/80 px-4 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
           <Tabs
             active={activeTab}
             onChange={changeTab}

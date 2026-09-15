@@ -87,10 +87,10 @@ export default function SidebarHub({ title, subtitle, ariaLabel, icon, sections 
 
   return (
     <div className="flex flex-col lg:flex-row lg:items-start">
-      {/* 7.5rem = the app header (h-16) plus the module tab bar that sits sticky under it (top-16,
+      {/* 8.5rem = the app header (h-20) plus the module tab bar that sits sticky under it (top-20,
           ~57px tall). The rail parks just below both and scrolls internally if it ever outgrows the
           viewport. See AppLayout's <header> and components/workspace/ModuleTabBar. */}
-      <aside className="shrink-0 px-4 pt-5 sm:px-6 lg:sticky lg:top-[7.5rem] lg:max-h-[calc(100vh-8.5rem)] lg:w-[19.5rem] lg:overflow-y-auto lg:px-5 lg:py-8">
+      <aside className="shrink-0 px-4 pt-5 sm:px-6 lg:sticky lg:top-[8.5rem] lg:max-h-[calc(100vh-9.5rem)] lg:w-[19.5rem] lg:overflow-y-auto lg:px-5 lg:py-8">
         <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card">
           {/* Masthead. The faint brand wash is what separates "a panel" from "a box". It is a flat
               `bg-indigo-50/40` and NOT a gradient on purpose: index.css's dark layer re-maps whole

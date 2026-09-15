@@ -14,7 +14,7 @@ import Brand from '../components/Brand';
 import { PageStatProvider, PageStatGauge } from '../components/PageStat';
 import { SHOW_FINANCIALS, DEMO_MODE, SHOW_FLEET_INTELLIGENCE } from '../config/features';
 import { pathBlockedForRoles, homePathForRoles } from '../config/access';
-import { moduleForPath } from '../config/moduleRegistry';
+import { moduleForPath, moduleNameKey } from '../config/moduleRegistry';
 import ModuleTabBar from '../components/workspace/ModuleTabBar';
 import { useI18n } from '../i18n/I18nContext';
 
@@ -459,59 +459,41 @@ export default function AppLayout() {
       {/* Full-width shell — no sidebar. The launcher (/) is home; the header
           Back/Home buttons + the module tab bar + ⌘K search carry navigation. */}
       <div>
-        <header className="glass sticky top-0 z-20 flex h-16 items-center gap-2 border-b border-slate-200/70 px-3 sm:gap-4 sm:px-6 lg:px-8">
-          {isLauncher ? (
-            // Home surface — show the full brand lockup, no nav buttons needed.
-            // `overflow-hidden` keeps the lockup inside its share of the bar so a
-            // long wordmark truncates instead of sliding under the action cluster.
-            <div className="flex min-w-0 flex-1 items-center overflow-hidden">
-              <Brand />
-            </div>
-          ) : (
-            // Inner page — a single compact nav cluster (Back · Home) followed by
-            // the page title. The module bar below carries the module identity, so
-            // the header stays clean and un-duplicated.
-            <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-              <div className="flex shrink-0 items-center gap-1 rounded-xl border border-slate-200 bg-white p-0.5 shadow-sm">
-                <button
-                  onClick={() => navigate(-1)}
-                  className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
-                  title={t('shell.backHint')}
-                  aria-label={t('shell.backHint')}
-                >
-                  {/* Chevron mirrors with the document direction so "back" always points
-                      away from the reading direction. */}
-                  <svg className="h-4 w-4 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M15 18l-6-6 6-6" />
-                  </svg>
-                  <span className="hidden sm:inline">{t('shell.back')}</span>
-                </button>
-                {!atHome && (
-                  <>
-                    <span className="h-5 w-px bg-slate-200" />
-                    <button
-                      onClick={() => navigate(homePath)}
-                      className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
-                      title={t('shell.homeHint')}
-                      aria-label={t('shell.homeHint')}
-                    >
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" />
-                      </svg>
-                      <span className="hidden sm:inline">{t('shell.home')}</span>
-                    </button>
-                  </>
-                )}
-              </div>
-              <span className="hidden h-6 w-px bg-slate-200 sm:block" />
-              <h2 className="truncate text-[15px] font-semibold text-slate-800">{pageName || 'Faster'}</h2>
-            </div>
-          )}
+        <header className="glass sticky top-0 z-20 flex h-20 items-center gap-3 overflow-hidden border-b border-slate-200/70 px-3 sm:gap-5 sm:px-6 lg:px-8">
+          {/* Our mark, ghosted across the header plate — the identity is present
+              without competing with the page title for attention. Decorative
+              only, so it is hidden from assistive tech and from the pointer. */}
+          <img
+            src="/brand-logo.webp"
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute left-1/2 top-1/2 hidden h-28 -translate-x-1/2 -translate-y-1/2 select-none opacity-[0.07] md:block"
+          />
+
+          {/* Brand lockup — now on every page, not just the launcher, so the
+              header reads as one masthead: mark · divider · page identity. */}
+          <div className="relative flex shrink-0 items-center">
+            <Brand />
+          </div>
+          <span className="relative hidden h-10 w-px shrink-0 bg-slate-200 sm:block" />
+
+          {/* Page identity: which module we are in (eyebrow), the page itself
+              (title), and the house line underneath. Back / Home moved down into
+              the nav bar so the masthead carries nothing but identity. */}
+          <div className="relative min-w-0 flex-1">
+            <p className="truncate text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">
+              {activeModule ? tf(moduleNameKey(activeModule), activeModule.name) : 'Faster'}
+            </p>
+            <h1 className="truncate font-display text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+              {pageName || 'Faster'}
+            </h1>
+            <p className="hidden truncate text-xs text-slate-500 sm:block">{t('shell.tagline')}</p>
+          </div>
 
           {/* Action cluster. `shrink-0` is load-bearing: without it flexbox
               shrinks this box below the width of its (non-shrinkable) buttons,
               and they spill backwards across the brand / page title. */}
-          <div className="flex shrink-0 items-center gap-1 sm:gap-3">
+          <div className="relative flex shrink-0 items-center gap-1 sm:gap-3">
             <LiveClock name={user?.name} />
 
             <LanguageToggle />
@@ -527,16 +509,6 @@ export default function AppLayout() {
               aria-label={t('shell.shortcuts')}
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 3-3 3M12 17h.01" /></svg>
-            </button>
-
-            <button
-              onClick={() => setCmdOpen(true)}
-              className="hidden items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-400 shadow-sm transition hover:text-slate-600 hover:ring-1 hover:ring-slate-200 sm:flex"
-              title={t('shell.searchHint')}
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.3-4.3M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z" /></svg>
-              {t('shell.search')}
-              <kbd className="rounded border border-slate-200 bg-slate-50 px-1 text-[10px] font-semibold text-slate-400">⌘K</kbd>
             </button>
 
             <NotificationBell />
@@ -564,9 +536,11 @@ export default function AppLayout() {
           </div>
         </header>
 
-        {/* Persistent module tab bar — the primary in-app navigation. Appears on
-            the module Overview and every section page that belongs to a module. */}
-        {activeModule && <ModuleTabBar module={activeModule} />}
+        {/* The nav row under the masthead: Home · Back, then the module's tabs
+            when the page belongs to a module. It renders on every page except the
+            launcher — a page outside a module still gets the nav cluster, just
+            with no tabs after it. Search stays on ⌘K only. */}
+        {!isLauncher && <ModuleTabBar module={activeModule} homePath={atHome ? null : homePath} />}
 
         {/* Page content — re-animates on every route change; an error here can't blank the app */}
         <main>

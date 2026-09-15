@@ -1,7 +1,10 @@
-// The persistent per-module top navigation. Rendered by AppLayout under the app
-// header on the module Overview AND every section page that belongs to the
-// module, so the user always knows which app they're in and can move between its
-// sections without "leaving" it. Tabs are permission-filtered via the registry.
+// The persistent nav row under the app masthead. Rendered by AppLayout on every
+// page except the launcher. It carries Home · Back at the start — the two moves
+// that work anywhere — and, when the page belongs to a module,
+// that module's identity chip and section tabs after them, so the user always knows
+// which app they're in and can move between its sections without "leaving" it.
+// Tabs are permission-filtered via the registry. `module` may be null: a page
+// outside every module still gets the row, just with no tabs in the middle.
 //
 // When the tabs overflow the bar's width they don't collapse — instead the bar
 // scrolls horizontally with an always-visible, grabbable scrollbar (`.tabbar-scroll`),
@@ -15,7 +18,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import { usePermissions } from '../../hooks/usePermissions';
 import { visibleSections, OVERVIEW_ROUTE, moduleNameKey, sectionNameKey, menuLabelKey } from '../../config/moduleRegistry';
@@ -31,12 +34,13 @@ const BUBBLE = {
   slate:   'bg-slate-100 text-slate-600',
 };
 
-export default function ModuleTabBar({ module }) {
+export default function ModuleTabBar({ module, homePath = null }) {
   const { can, roles } = usePermissions();
   const { t, tf, dir, isRTL } = useI18n();
   const { pathname } = useLocation();
-  const ModuleIcon = module.icon;
-  const moduleName = tf(moduleNameKey(module), module.name);
+  const navigate = useNavigate();
+  const ModuleIcon = module?.icon;
+  const moduleName = module ? tf(moduleNameKey(module), module.name) : '';
 
   // The open dropdown: { name, left, top } (viewport coords of the tab that owns it), or null.
   const [menu, setMenu] = useState(null);
@@ -123,10 +127,12 @@ export default function ModuleTabBar({ module }) {
 
   // `name` stays the English identity (it keys the open-dropdown state and the
   // React list); `label` is what the user actually reads.
-  const tabs = [
-    { name: 'Overview', label: t('modules.overview'), route: OVERVIEW_ROUTE(module.id), icon: module.icon },
-    ...visibleSections(module, can, roles).map((s) => ({ ...s, label: tf(sectionNameKey(module, s), s.name) })),
-  ];
+  const tabs = module
+    ? [
+      { name: 'Overview', label: t('modules.overview'), route: OVERVIEW_ROUTE(module.id), icon: module.icon },
+      ...visibleSections(module, can, roles).map((s) => ({ ...s, label: tf(sectionNameKey(module, s), s.name) })),
+    ]
+    : [];
 
   const isActive = (tab) => {
     if (!tab.route) return false; // "Soon" tabs have no route
@@ -175,14 +181,50 @@ export default function ModuleTabBar({ module }) {
   }, [openTab?.name, openTab?.countsUrl]);
 
   return (
-    <div ref={barRef} data-module-bar={module.id} className="glass sticky top-16 z-10 border-b border-slate-200/70">
-      <div className="mx-auto flex max-w-7xl items-stretch gap-4 px-4 sm:px-6 lg:px-8">
+    <div ref={barRef} data-module-bar={module?.id || 'none'} className="glass sticky top-20 z-10 border-b border-slate-200/70">
+      <div className="flex items-stretch gap-3 px-4 sm:px-6 lg:px-8">
+        {/* Home · Back — the two moves that never depend on which module you are
+            in, so they lead the row ahead of the module's own tabs. */}
+        <div className="flex shrink-0 items-center gap-1 py-2">
+          {homePath && (
+            <button
+              type="button"
+              onClick={() => navigate(homePath)}
+              className="flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+              title={t('shell.homeHint')}
+              aria-label={t('shell.homeHint')}
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" />
+              </svg>
+              <span className="hidden sm:inline">{t('shell.home')}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+            title={t('shell.backHint')}
+            aria-label={t('shell.backHint')}
+          >
+            {/* Chevron mirrors with the document direction so "back" always points
+                away from the reading direction. */}
+            <svg className="h-4 w-4 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+            <span className="hidden sm:inline">{t('shell.back')}</span>
+          </button>
+        </div>
+        <span className="my-3 hidden w-px shrink-0 bg-slate-200 sm:block" />
+
+        {module && (
         <div className="flex shrink-0 items-center gap-2.5 py-3">
           <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${BUBBLE[module.tone] || BUBBLE.slate}`}>
             <ModuleIcon className="h-5 w-5" />
           </span>
           <span className="font-display text-sm font-bold text-slate-900">{moduleName}</span>
         </div>
+        )}
 
         <nav
           ref={navRef}
