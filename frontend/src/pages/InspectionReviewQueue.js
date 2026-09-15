@@ -33,6 +33,7 @@ import ComplaintIntakeModal from '../components/workflow/ComplaintIntakeModal';
 import SuggestedChecks from '../components/workflow/SuggestedChecks';
 import NoteLines, { noteFacts } from '../components/workflow/NoteLines';
 import { num, fmtDate, fmtClock } from '../lib/format';
+import { carPhoto, brandLogo } from '../lib/carAssets';
 // The oil change is recorded identically wherever it is recorded from — one dialog, one write path.
 import { OilChangeDialog } from './reminders/OilProjection';
 
@@ -134,53 +135,73 @@ function SystemDetail({ detail, suggested }) {
   const rules = Array.isArray(detail?.rules) ? detail.rules : [];
   const svc = detail?.service || null;
 
+  // "Overdue by" is lifted out of the figures and shown as the panel's own chip: it is not one
+  // measurement among four, it is the reason the other three are on screen.
+  const overdue = km(svc?.overdue_km);
   const values = [
-    [tf('reviewQueue.detail.currentKm', 'Current mileage'), km(svc?.current_km)],
-    [tf('reviewQueue.detail.intervalKm', 'Service interval'), km(svc?.interval_km)],
-    [tf('reviewQueue.detail.overdueBy', 'Overdue by'), km(svc?.overdue_km)],
-    [tf('reviewQueue.detail.nextDue', 'Next due'), dueDate(svc?.next_due_at)],
+    [tf('reviewQueue.detail.currentKm', 'Current mileage'), km(svc?.current_km), <Icon.Gauge className="h-4 w-4 text-slate-400" />],
+    [tf('reviewQueue.detail.intervalKm', 'Service interval'), km(svc?.interval_km), <Icon.Wrench className="h-4 w-4 text-slate-400" />],
+    [tf('reviewQueue.detail.nextDue', 'Next due'), dueDate(svc?.next_due_at), <Icon.Calendar className="h-4 w-4 text-slate-400" />],
   ].filter(([, v]) => v);
 
   // Only the ticket's OWN stored suggestions — never re-derived from the checklist rules.
   const chips = (suggested || []).filter((v, i, a) => v && a.indexOf(v) === i);
 
   return (
-    <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
-        <span aria-hidden>🤖</span> {t('Why the system flagged this')}
+    <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+          <Icon.Alert className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm font-bold text-slate-900">{t('Why the system flagged this')}</p>
+            {overdue && (
+              <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-700 ring-1 ring-inset ring-rose-200">
+                {tf('reviewQueue.detail.overdueChip', 'Overdue by {km}', { km: overdue })}
+              </span>
+            )}
+          </div>
+
+          {rules.length > 0 && (
+            <ul className="mt-1.5 space-y-1.5">
+              {rules.map((r, i) => (
+                <li key={r.key || i} className="flex items-start gap-2 text-xs text-slate-700">
+                  <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${SEV_DOT[r.severity] || 'bg-slate-400'}`} />
+                  <span>
+                    <span className="font-semibold text-slate-800">{r.label}</span>
+                    {r.why && <span className="text-slate-500"> — {r.why}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
-      {rules.length > 0 && (
-        <ul className="mt-1.5 space-y-1.5">
-          {rules.map((r, i) => (
-            <li key={r.key || i} className="flex items-start gap-2 text-xs text-slate-700">
-              <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${SEV_DOT[r.severity] || 'bg-slate-400'}`} />
-              <span>
-                <span className="font-medium text-slate-800">{r.label}</span>
-                {r.why && <span className="text-slate-500"> — {r.why}</span>}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-
+      {/* The figures the rules were measured against — the numbers, given room to be read. */}
       {values.length > 0 && (
-        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
-          {values.map(([label, value]) => (
-            <div key={label} className="flex items-center justify-between gap-2 text-[11px]">
-              <dt className="text-slate-400">{label}</dt>
-              <dd className="font-mono font-medium text-slate-700">{value}</dd>
+        <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
+          {values.map(([label, value, icon]) => (
+            <div key={label} className="min-w-0">
+              <dt className="text-[11px] text-slate-400">{label}</dt>
+              <dd className="mt-0.5 flex items-center gap-1.5 font-mono text-sm font-bold text-slate-800">
+                {icon}{value}
+              </dd>
             </div>
           ))}
         </dl>
       )}
 
+      {/* What the request is actually FOR — the obligation, not a hint. */}
       {chips.length > 0 && (
-        <div className="mt-2">
-          <p className="text-[11px] text-slate-400">{tf('reviewQueue.dueFor', 'What this request is due for')}</p>
-          <div className="mt-1 flex flex-wrap gap-1">
+        <div className="mt-3 border-t border-slate-100 pt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            {tf('reviewQueue.dueFor', 'What this request is due for')}
+          </p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
             {chips.map((c) => (
-              <span key={c} className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-200">
+              <span key={c} className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200">
                 {c}
               </span>
             ))}
@@ -482,13 +503,6 @@ function SystemRulesPanel() {
 }
 
 // Exact, human timestamp — shown as the tooltip on relative times and as a secondary line.
-function fmtDateTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return `${fmtDate(iso)} ${fmtClock(iso)}`;
-}
-
 // Fault severity → priority chip. Only meaningful once the inspector has graded the fault; a fresh
 // driver request has none yet (it's set at the Decide step).
 const SEV_META = {
@@ -498,10 +512,18 @@ const SEV_META = {
   routine:  { label: 'Routine',  emoji: '🟢', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
 };
 
-// Vehicle avatar — the fleet has no photo column, so we render a branded make-initials glyph tile
-// (a car silhouette watermark behind the make's first letters) as a consistent stand-in.
-function VehicleAvatar({ make }) {
+// Vehicle avatar — the marque's own mark where the catalogue carries one, and the make's initials on
+// a glyph tile where it does not. The mark is the fastest way to tell two cards apart at a glance.
+function VehicleAvatar({ make, model = '' }) {
+  const logo = brandLogo(make, model);
   const initials = (make || '?').trim().slice(0, 2).toUpperCase();
+  if (logo) {
+    return (
+      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-2 ring-1 ring-inset ring-slate-200">
+        <img src={logo} alt="" aria-hidden loading="lazy" className="h-full w-full object-contain" />
+      </div>
+    );
+  }
   return (
     <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white ring-1 ring-inset ring-white/20">
       <Icon.Car className="absolute h-9 w-9 opacity-20" />
@@ -510,18 +532,39 @@ function VehicleAvatar({ make }) {
   );
 }
 
+/**
+ * The car itself, in the corner of its own card.
+ *
+ * A photograph is a CLAIM about which vehicle this request is for. The catalogue carries no shot for
+ * roughly a third of the fleet, and those cards show none — never a different car that happens to be
+ * the same marque. Purely decorative when it is there (the plate above it is the identity), so it is
+ * hidden from assistive tech and dropped entirely on a narrow screen, where the words need the room.
+ */
+function CarShot({ make, model }) {
+  const photo = carPhoto(model, '') || carPhoto(make, model);
+  if (!photo) return null;
+  return (
+    <img
+      src={photo}
+      alt=""
+      aria-hidden
+      loading="lazy"
+      className="pointer-events-none absolute bottom-0 end-1 hidden h-[104px] w-auto max-w-[48%] select-none object-contain object-bottom sm:block"
+    />
+  );
+}
+
 // One compact info tile: icon + label on top, value (+ optional sub) below. The grid of these is the
 // card's "at a glance" data block.
 function MetaTile({ icon, label, value, sub, muted }) {
   return (
-    <div className="rounded-lg bg-slate-50 px-2.5 py-2 ring-1 ring-inset ring-slate-100">
-      <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-        {icon}{label}
-      </p>
-      <p className={`mt-0.5 truncate text-xs font-semibold ${muted ? 'text-slate-400' : 'text-slate-700'}`} title={typeof value === 'string' ? value : undefined}>
+    <div className="rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-inset ring-slate-100">
+      <span className="text-indigo-400">{icon}</span>
+      <p className="mt-1 text-[11px] text-slate-400">{label}</p>
+      <p className={`mt-0.5 truncate text-sm font-bold ${muted ? 'text-slate-400' : 'text-slate-800'}`} title={typeof value === 'string' ? value : undefined}>
         {value ?? '—'}
       </p>
-      {sub && <p className="truncate text-[10px] text-slate-400">{sub}</p>}
+      {sub && <p className="truncate text-[11px] text-slate-400">{sub}</p>}
     </div>
   );
 }
@@ -856,6 +899,9 @@ function OilFollowUpNote({ ctx, onRecordOilChange }) {
 function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRemind, onCancelReminder, onRecordOilChange, ackBusy, remindBusy, highlight }) {
   const { t, tf } = useI18n();
   const [expanded, setExpanded] = useState(false);
+  // Whether this car's Suggested Checks panel found anything — it reports back, because the layout
+  // beside it depends on the answer and only the panel knows it (it fetches its own data).
+  const [hasChecks, setHasChecks] = useState(false);
   const reasonTone = REASON_TONE[tk.trigger_reason] || 'slate';
   const reasonLabel = REASON_LABEL[tk.trigger_reason] ? t(REASON_LABEL[tk.trigger_reason]) : tk.trigger_reason;
   const requested = tk.handoffs?.requested;
@@ -912,6 +958,9 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
   const lm = tk.last_maintenance;
   const lmOnboard = !!lm && (lm.reason === 'onboarding' || lm.source === 'onboarding');
 
+  // The system's own case for this request — only a scheduler-raised one carries it.
+  const showsDetail = isSystem && !!(tk.trigger_detail || (tk.suggested_findings || []).length > 0);
+
   return (
     <div
       id={`review-card-${tk.id}`}
@@ -922,47 +971,51 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
           : isSystem ? 'border-indigo-200' : 'border-slate-200'
       }`}
     >
-      {/* ── Header: vehicle identity (primary) + classification badges ───────────────── */}
-      <div className="flex items-start gap-3 border-b border-slate-100 p-4">
-        <VehicleAvatar make={tk.vehicle_make} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <Link to={`/vehicles/${tk.vehicle_id}`} className="truncate font-mono text-xl font-extrabold leading-tight text-slate-900 hover:text-indigo-600">
+      {/* ── Header: the CAR first ──────────────────────────────────────────────────────
+          A reviewer works this queue by car, not by ticket number: the plate, the model and the
+          vehicle's own photograph lead, and the classification badges sit to the side of them. The
+          photo is decoration over an identity the words already carry — see <CarShot>. */}
+      <div className="relative overflow-hidden border-b border-slate-100 bg-gradient-to-b from-white to-slate-50 p-4 sm:min-h-[150px]">
+        <CarShot make={tk.vehicle_make} model={tk.car} />
+        <div className="relative flex items-start gap-3">
+          <VehicleAvatar make={tk.vehicle_make} model={tk.car} />
+          <div className="min-w-0 flex-1">
+            <Link to={`/vehicles/${tk.vehicle_id}`} className="block truncate font-mono text-2xl font-extrabold leading-tight text-slate-900 hover:text-indigo-600">
               {tk.plate || `#${tk.id}`}
             </Link>
-            <div className="flex shrink-0 flex-col items-end gap-1">
-              {/* The outcome leads when there is one: a Controller scanning the queue must see at a glance
-                  that this card is settled before they read anything else on it. */}
-              {isWithdrawn && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700 ring-1 ring-inset ring-violet-200">
-                  <Icon.Check className="h-3 w-3" /> {t('Withdrawn')}
+            <p className="truncate text-base font-bold text-slate-700">{tk.car || t('Vehicle')}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 sm:max-w-[60%]">
+              {tk.operational_status && <StatusPill status={tk.operational_status} />}
+              {tk.vehicle_odometer != null && (
+                <span className="inline-flex items-center gap-1 font-mono text-[11px] text-slate-500">
+                  <Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />{num(tk.vehicle_odometer)} km
                 </span>
               )}
-              {/* Reason (WHY) and Source (WHERE FROM) are two independent facts — both are shown, and
-                  neither is inferred from the other. */}
-              <Badge tone={reasonTone}>{reasonLabel}</Badge>
-              {originLabel && (
-                <Badge tone={ORIGIN_TONE[origin] || 'slate'}>
-                  {isSystem && <span aria-hidden>🤖</span>} {originLabel}
-                </Badge>
-              )}
-              {sev && (
-                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ring-inset ${sev.cls}`}>
-                  <span aria-hidden>{sev.emoji}</span> {t(sev.label)}
-                </span>
+              {identityBits.length > 0 && (
+                <span className="text-[11px] text-slate-400">{identityBits.join(' · ')}</span>
               )}
             </div>
           </div>
-          <p className="truncate text-sm font-semibold text-slate-600">{tk.car || t('Vehicle')}</p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            {tk.operational_status && <StatusPill status={tk.operational_status} />}
-            {tk.vehicle_odometer != null && (
-              <span className="inline-flex items-center gap-1 font-mono text-[11px] text-slate-500">
-                <Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />{num(tk.vehicle_odometer)} km
+          <div className="relative z-10 flex shrink-0 flex-col items-end gap-1">
+            {/* The outcome leads when there is one: a Controller scanning the queue must see at a glance
+                that this card is settled before they read anything else on it. */}
+            {isWithdrawn && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700 ring-1 ring-inset ring-violet-200">
+                <Icon.Check className="h-3 w-3" /> {t('Withdrawn')}
               </span>
             )}
-            {identityBits.length > 0 && (
-              <span className="text-[11px] text-slate-400">{identityBits.join(' · ')}</span>
+            {/* Reason (WHY) and Source (WHERE FROM) are two independent facts — both are shown, and
+                neither is inferred from the other. */}
+            <Badge tone={reasonTone}>{reasonLabel}</Badge>
+            {originLabel && (
+              <Badge tone={ORIGIN_TONE[origin] || 'slate'}>
+                {isSystem && <span aria-hidden>🤖</span>} {originLabel}
+              </Badge>
+            )}
+            {sev && (
+              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ring-inset ${sev.cls}`}>
+                <span aria-hidden>{sev.emoji}</span> {t(sev.label)}
+              </span>
             )}
           </div>
         </div>
@@ -974,14 +1027,29 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
 
         {/* ── Driver's report (expandable when long) ───────────────────────────────── */}
         {complaint && (
-          <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-100">
-            <p className="mb-0.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              <Icon.Flag className="h-3 w-3" />
+          /* A system flag and a driver's report are not the same kind of sentence, and they no longer
+             look the same: the scheduler's flag is the alarm that put this card here, so it reads as
+             one. The driver's own words stay quiet and quoted — they are testimony, not a verdict. */
+          <div className={isSystem
+            ? 'flex items-start gap-3 rounded-xl bg-rose-50 px-4 py-3 ring-1 ring-inset ring-rose-100'
+            : 'rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-100'}
+          >
+            {isSystem && (
+              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-600 text-white">
+                <Icon.Alert className="h-5 w-5" />
+              </span>
+            )}
+            <div className="min-w-0 flex-1">
+            <p className={isSystem
+              ? 'mb-0.5 text-sm font-bold text-rose-700'
+              : 'mb-0.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400'}
+            >
+              {!isSystem && <Icon.Flag className="h-3 w-3" />}
               {isSystem
-                ? t('Flagged reason')
+                ? tf('reviewQueue.systemFlagged', 'System Flagged')
                 : fromObservation ? t('What the driver observed') : t('What the driver reported')}
             </p>
-            <NoteLines facts={shownFacts} quote className="text-xs italic text-slate-600" />
+            <NoteLines facts={shownFacts} quote className={isSystem ? 'text-sm font-semibold italic text-slate-800' : 'text-xs italic text-slate-600'} />
             {isLong && (
               <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-0.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">
                 {expanded ? t('Show less') : t('Show more')}
@@ -999,6 +1067,7 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
                 {' '}{t('— logged as a note first, then raised for inspection.')}
               </p>
             )}
+            </div>
           </div>
         )}
 
@@ -1040,32 +1109,41 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
           </div>
         )}
 
-        {isSystem && (tk.trigger_detail || (tk.suggested_findings || []).length > 0) && (
-          <SystemDetail detail={tk.trigger_detail} suggested={tk.suggested_findings} />
-        )}
+        {/* WHY IT IS HERE, and WHAT THIS CAR TENDS TO NEED — side by side, because they are read
+            together: the flag on the left is the obligation, the panel on the right is the advice
+            (see [[check-requirement-three-way-contract]]). They only pair up when both have
+            something to say; either one alone takes the full width rather than leaving a gap. */}
+        <div className={`grid gap-3 ${showsDetail && hasChecks ? 'lg:grid-cols-2' : 'grid-cols-1'}`}>
+          {showsDetail && (
+            <SystemDetail detail={tk.trigger_detail} suggested={tk.suggested_findings} />
+          )}
 
-        {/* Per-car suggested checks — this car's own repeat faults + service forecast. Rendered for
-            EVERY request, not just system-raised ones: a driver reporting a noise on a car that has
-            been back for brakes four times is exactly when the reviewer needs to know. Fetches itself
-            when the card scrolls into view, so a 140-card queue stays fast. Read-only here (no
-            onPick) — the reviewer approves or rejects; the inspector does the tapping at Decide. */}
-        <SuggestedChecks vehicleId={tk.vehicle_id} />
+          {/* Per-car suggested checks — this car's own repeat faults + service forecast. Rendered for
+              EVERY request, not just system-raised ones: a driver reporting a noise on a car that has
+              been back for brakes four times is exactly when the reviewer needs to know. Fetches itself
+              when the card scrolls into view, so a 140-card queue stays fast. Read-only here (no
+              onPick) — the reviewer approves or rejects; the inspector does the tapping at Decide. */}
+          <SuggestedChecks vehicleId={tk.vehicle_id} onHasContent={setHasChecks} />
+        </div>
 
         {/* ── At-a-glance data grid ────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <MetaTile
-            icon={<Icon.Users className="h-3 w-3" />}
+            icon={<Icon.Users className="h-4 w-4" />}
             label={tf('reviewQueue.requestedBy', 'Requested by')}
             value={isSystem ? t('System') : (requested?.name || t('Driver'))}
             sub={requested?.at ? ago(requested.at, t) : null}
           />
           <MetaTile
-            icon={<Icon.Clock className="h-3 w-3" />}
+            icon={<Icon.Calendar className="h-4 w-4" />}
             label={tf('reviewQueue.requested', 'Requested')}
-            value={requested?.at ? fmtDateTime(requested.at) : '—'}
+            // Date on the line that is read, clock underneath — the day is the fact that decides
+            // whether this is stale; the minute is only ever a tie-breaker.
+            value={requested?.at ? (dueDate(requested.at) || '—') : '—'}
+            sub={requested?.at ? fmtClock(requested.at) : null}
           />
           <MetaTile
-            icon={<Icon.Wrench className="h-3 w-3" />}
+            icon={<Icon.Wrench className="h-4 w-4" />}
             label={tf('reviewQueue.lastMaintenance', 'Last maintenance')}
             value={!lm ? t('No record') : (lmOnboard ? t('None yet') : (dueDate(lm.at) || '—'))}
             sub={!lm
@@ -1076,7 +1154,7 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
             muted={!lm || lmOnboard}
           />
           <MetaTile
-            icon={<Icon.Gauge className="h-3 w-3" />}
+            icon={<Icon.Gauge className="h-4 w-4" />}
             label={tf('reviewQueue.sinceOil', 'Since oil service')}
             value={tk.last_service
               ? (kmSince != null ? `${num(kmSince)} km` : `${num(tk.last_service.odometer)} km`)
@@ -1149,7 +1227,9 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
       </div>
 
       {/* ── Actions ──────────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-4 py-3">
+      {/* Four answers, side by side and the same size, because they are four answers — the row used
+          to be a right-aligned huddle in which the two "yes" buttons sat closest together. */}
+      <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/50 px-4 py-3">
         {isWithdrawn ? (
           // Nothing to decide. The only useful move left is to go and look at the car that is in the shop,
           // so that is the only button — an Approve/Reject pair here would be offering a choice that no
@@ -1164,7 +1244,7 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
             </Link>
           </>
         ) : isLegacy ? (
-          <Button variant="secondary" loading={ackBusy} onClick={() => onAcknowledge(tk)}>
+          <Button variant="secondary" size="lg" className="ms-auto" loading={ackBusy} onClick={() => onAcknowledge(tk)}>
             <Icon.Check className="h-4 w-4" /> {t('Acknowledge')}
           </Button>
         ) : (
@@ -1172,7 +1252,7 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
             {/* "The customer still has it, ask me again after lunch" is precisely the case this button
                 exists for — and it is now the alternative to approving early rather than the only thing
                 a reviewer can do with a rented car. */}
-            <Button variant="ghost" loading={remindBusy} onClick={() => onRemind(tk)}>
+            <Button variant="secondary" size="lg" className="flex-1 basis-[150px]" loading={remindBusy} onClick={() => onRemind(tk)}>
               <Icon.Clock className="h-4 w-4" />
               {tk.my_reminder
                 ? tf('review.remind.change', 'Change reminder')
@@ -1185,7 +1265,7 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
                 (it waits in Abu Maroof's queue until the car arrives); a rented car is the same
                 situation with a less certain date, and the person reading the card is the one entitled
                 to weigh that. */}
-            <Button variant="danger" onClick={() => onReject(tk)}>
+            <Button variant="danger" size="lg" className="flex-1 basis-[150px]" onClick={() => onReject(tk)}>
               <Icon.XCircle className="h-4 w-4" /> {t('Reject')}
             </Button>
             {/* THE THIRD ANSWER. "Yes" to a request was a single button and it meant one thing: send the
@@ -1195,10 +1275,10 @@ function RequestCard({ tk, onApprove, onDispatch, onReject, onAcknowledge, onRem
                 at this card and found only Approve on it, so pressing the one forward button started the
                 test drive they had just said was unnecessary. Both yeses are on the card now, and they
                 say which is which. */}
-            <Button variant="warning" onClick={() => onDispatch(tk)}>
+            <Button variant="warning" size="lg" className="flex-1 basis-[170px]" onClick={() => onDispatch(tk)}>
               <Icon.Wrench className="h-4 w-4" /> {tf('reviewQueue.toGarage', 'Straight to the garage')}
             </Button>
-            <Button variant="success" onClick={() => onApprove(tk)}>
+            <Button variant="success" size="lg" className="flex-1 basis-[170px]" onClick={() => onApprove(tk)}>
               <Icon.Check className="h-4 w-4" /> {tf('reviewQueue.toTest', 'Send for a test drive')}
             </Button>
           </>
@@ -2686,7 +2766,10 @@ export default function InspectionReviewQueue() {
                   ) : (
                   <>
                   <InspectionReviewAnalytics tickets={awaitingShown} />
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {/* Two per row only once there is real room for one: the card now carries the car's
+                      photograph, a four-tile fact row and a side-by-side evidence pair, and at a
+                      laptop's width a half-width column crushes all three. */}
+                  <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
                     {awaitingShown.map((tk) => (
                       <RequestCard
                         key={tk.id}

@@ -252,13 +252,22 @@ function Suggestion({ s, onPick }) {
  * @param {object}   [data]    a pre-fetched payload; skips the fetch entirely
  * @param {function} [onPick]  called with the suggestion when tapped. Omit on read-only surfaces —
  *                             without it, nothing in the panel is clickable.
+ * @param {function} [onHasContent] told whether this car has anything to suggest, once the fetch
+ *                             resolves. A caller that puts the panel in a column beside something
+ *                             else needs to know, or it lays out an empty half-width gap for the
+ *                             (common) car with a clean history.
  */
-export default function SuggestedChecks({ vehicleId, data: provided, onPick }) {
+export default function SuggestedChecks({ vehicleId, data: provided, onPick, onHasContent, className = 'mt-3' }) {
   const { tf, tp } = useI18n();
   const { data, ref } = useSuggestedChecks(vehicleId, provided);
 
   const suggestions = data?.suggestions || [];
   const checklist = data?.checklist;
+  const hasContent = !!data && (suggestions.length > 0 || !!checklist);
+
+  useEffect(() => {
+    if (onHasContent) onHasContent(hasContent);
+  }, [hasContent, onHasContent]);
 
   // The sentinel must stay mounted while there is nothing to show: it is what the observer watches to
   // know the card arrived. Rendering null before the fetch would mean the fetch never fires.
@@ -273,9 +282,9 @@ export default function SuggestedChecks({ vehicleId, data: provided, onPick }) {
   const unplaceable = data.summary?.unplaceable || 0;
 
   return (
-    <div ref={ref} className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-700">
-        <Icon.Search className="h-3.5 w-3.5 text-slate-400" />
+    <div ref={ref} className={`rounded-xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm ${className}`}>
+      <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+        <Icon.Search className="h-4 w-4 text-slate-400" />
         {tf('suggestedChecks.title', 'Suggested checks for this car')}
       </div>
       {/* Data Origin — every panel says where its content came from. */}
