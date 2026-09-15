@@ -16,6 +16,7 @@ import FleetPulseGrid from '../components/FleetPulseGrid';
 import RepeatLeaderboard from '../components/dashboard/RepeatLeaderboard';
 import PipelinePanel from '../components/analytics/PipelinePanel';
 import { aed, fmtDate } from '../lib/format';
+import { carPhoto, brandLogo, vehicleName } from '../lib/carAssets';
 import { useCheckpointVocab, resolveCheckpointTicket } from '../lib/maintenanceCheckpoints';
 import CheckpointModal from '../components/maintenance/CheckpointModal';
 import { useToast } from '../components/ui/Toast';
@@ -53,11 +54,29 @@ const TILE_TONE_SOFT = {
 
 // Threshold palette for the repair-progress bar. Green under 75% of target, orange 75–100%, red
 // once the target is exceeded — matched track / fill / badge / percent tints so a card reads as one.
+// `band` tints the fault strip the same colour as the bar it carries, and `btn` gives "File update"
+// the urgency of the card it sits on — the one control on the card should not read calmer than the
+// card does.
 const PROGRESS_TONE = {
-  green:  { bar: 'bg-emerald-500', track: 'bg-emerald-100', badge: 'bg-emerald-50 text-emerald-700 ring-emerald-200', pct: 'text-emerald-600', dot: 'bg-emerald-500', from: '#34d399', to: '#059669', accent: 'from-emerald-400 to-emerald-500', glow: 'bg-emerald-400/20' },
-  orange: { bar: 'bg-amber-500',   track: 'bg-amber-100',   badge: 'bg-amber-50 text-amber-700 ring-amber-200',       pct: 'text-amber-600',   dot: 'bg-amber-500', from: '#fbbf24', to: '#d97706', accent: 'from-amber-400 to-amber-500',   glow: 'bg-amber-400/20' },
-  red:    { bar: 'bg-rose-500',    track: 'bg-rose-100',    badge: 'bg-rose-50 text-rose-700 ring-rose-200',          pct: 'text-rose-600',    dot: 'bg-rose-500',  from: '#fb7185', to: '#e11d48', accent: 'from-rose-400 to-rose-500',     glow: 'bg-rose-400/20' },
+  green:  { bar: 'bg-emerald-500', track: 'bg-emerald-100', badge: 'bg-emerald-50 text-emerald-700 ring-emerald-200', pct: 'text-emerald-600', dot: 'bg-emerald-500', from: '#34d399', to: '#059669', accent: 'from-emerald-400 to-emerald-500', glow: 'bg-emerald-400/20', band: 'bg-emerald-50/70 ring-emerald-100', icon: 'text-emerald-500', btn: 'bg-emerald-600 hover:bg-emerald-700' },
+  orange: { bar: 'bg-amber-500',   track: 'bg-amber-100',   badge: 'bg-amber-50 text-amber-700 ring-amber-200',       pct: 'text-amber-600',   dot: 'bg-amber-500', from: '#fbbf24', to: '#d97706', accent: 'from-amber-400 to-amber-500',   glow: 'bg-amber-400/20',   band: 'bg-amber-50/70 ring-amber-100',     icon: 'text-amber-500',   btn: 'bg-amber-600 hover:bg-amber-700' },
+  red:    { bar: 'bg-rose-500',    track: 'bg-rose-100',    badge: 'bg-rose-50 text-rose-700 ring-rose-200',          pct: 'text-rose-600',    dot: 'bg-rose-500',  from: '#fb7185', to: '#e11d48', accent: 'from-rose-400 to-rose-500',     glow: 'bg-rose-400/20',    band: 'bg-rose-50/70 ring-rose-100',       icon: 'text-rose-500',    btn: 'bg-rose-600 hover:bg-rose-700' },
 };
+
+/**
+ * The car's photograph, with the honest fallbacks behind it — the same rule the Fleet Registry and
+ * the Maintenance Cycle board follow. A picture is a claim about WHICH vehicle this card is, so a
+ * model we hold no photograph of falls to its marque logo and then to a silhouette, never to another
+ * car. The catalogue shots are cut-outs, so they are contained rather than cropped.
+ */
+function CarShot({ car }) {
+  const photo = carPhoto(car, '');
+  const logo = photo ? null : brandLogo(car, '');
+  const base = 'flex h-16 w-24 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70';
+  if (photo) return <span className={base}><img src={photo} alt="" aria-hidden="true" loading="lazy" className="h-full w-full object-contain p-0.5" /></span>;
+  if (logo) return <span className={base}><img src={logo} alt="" aria-hidden="true" loading="lazy" className="h-7 w-12 object-contain" /></span>;
+  return <span className={`${base} bg-slate-50 text-slate-300`}><Icon.Car className="h-7 w-7" /></span>;
+}
 
 // Whole days the revised ETA slipped past the previous one (positive = later).
 function checkpointDelayDays(prev, next) {
@@ -75,7 +94,12 @@ function CheckpointLine({ cp }) {
   const { t } = useI18n();
   const { delayReasonLabel } = useCheckpointVocab();
   if (!cp) {
-    return <p className="text-[11px] font-semibold text-amber-600">{t('dash.cp.none')}</p>;
+    return (
+      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+        <span className="truncate">{t('dash.cp.none')}</span>
+      </p>
+    );
   }
   const reason = cp.delay_reason === 'other' ? (cp.delay_reason_other || null) : delayReasonLabel(cp.delay_reason);
   const etaMoved = !!cp.next_expected_date
@@ -208,12 +232,9 @@ function RepairProgressCard({ item, onCheckpoint, busy, highlighted }) {
         className="absolute inset-0 z-0 rounded-2xl focus-ring-self"
       />
       <div className="pointer-events-none relative z-10">
-      {/* Vehicle header */}
-      <div className="relative mb-3 flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-slate-900">{plate || car || t('dash.repair.vehicle')}</p>
-          <p className="truncate text-xs text-slate-400">{[car, garage].filter(Boolean).join(' · ') || '—'}</p>
-        </div>
+      {/* Vehicle header — the plate this card is about, and where we know it from. */}
+      <div className="relative mb-2 flex items-start justify-between gap-2">
+        <p className="truncate text-sm font-bold text-slate-900">{plate || car || t('dash.repair.vehicle')}</p>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
           {/* Data origin — sheet contract, app ticket, or both (traceability: no card without its source). */}
           <SourceBadge source={source} />
@@ -236,33 +257,44 @@ function RepairProgressCard({ item, onCheckpoint, busy, highlighted }) {
         </div>
       </div>
 
-      {/* WHY the car is in the shop — the fault(s)/reason behind the visit. */}
-      <div className="relative mb-3 rounded-xl bg-slate-50 px-2.5 py-2 ring-1 ring-slate-100">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{t('dash.repair.problem')}</p>
-        {problem ? (
-          <p className="truncate text-xs font-semibold text-slate-700" title={(problem_items || []).length > 1 ? problem_items.join(' · ') : problem}>
-            {problem}{problem_type ? <span className="ms-1 font-normal text-slate-400">· {problem_type}</span> : null}
+      {/* THE CAR ITSELF. A card on this grid is a vehicle before it is a repair, so the photograph
+          leads and the model is named beside it — a reader recognises the car long before they read
+          a plate number. The garage sits under the model: where the car physically is. */}
+      <div className="relative mb-3 flex items-center gap-3">
+        <CarShot car={car} />
+        <div className="min-w-0 flex-1 text-end">
+          <p className="truncate text-sm font-bold uppercase tracking-tight text-slate-900" title={car || undefined}>
+            {car ? vehicleName(car, '') : t('dash.repair.vehicle')}
           </p>
-        ) : (
-          <p className="text-xs text-slate-400">
-            {t(source === 'workshop' ? 'dash.repair.noFaultTicket' : 'dash.repair.noFaultContract')}
-          </p>
-        )}
+          <p className="truncate text-xs text-slate-400">{garage || plate || '—'}</p>
+        </div>
       </div>
 
-      {/* Progress bar */}
-      <div className="relative">
-        <div className="mb-1.5 flex items-baseline justify-between gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t('dash.repair.progress')}</span>
-          <span className="flex items-baseline gap-1 tabular-nums">
-            <span className={`text-lg font-extrabold leading-none ${c.pct}`}>{pct}%</span>
+      {/* WHY the car is in the shop, and HOW FAR ALONG the visit is — one band, because they are read
+          together: this fault, this much of its planned time gone. The band and the bar under it wear
+          the same threshold tone. */}
+      <div className={`relative rounded-xl px-2.5 py-2 ring-1 ${c.band}`}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <Icon.Wrench className={`h-3.5 w-3.5 shrink-0 ${c.icon}`} />
+            {problem ? (
+              <span className="truncate text-xs font-semibold text-slate-700" title={(problem_items || []).length > 1 ? problem_items.join(' · ') : problem}>
+                {problem}{problem_type ? <span className="ms-1 font-normal text-slate-400">{problem_type}</span> : null}
+              </span>
+            ) : (
+              <span className="truncate text-xs text-slate-400">
+                {t(source === 'workshop' ? 'dash.repair.noFaultTicket' : 'dash.repair.noFaultContract')}
+              </span>
+            )}
+          </span>
+          <span
+            className={`shrink-0 text-lg font-extrabold leading-none tabular-nums ${c.pct}`}
+            title={`${t('dash.repair.day')} ${el} · ${t('dash.repair.target', { days: days(al) })}`}
+          >
+            {pct}%
           </span>
         </div>
-        <div className="mb-1.5 flex items-baseline justify-between text-xs font-semibold text-slate-700">
-          <span>{t('dash.repair.day')} <span className="tabular-nums">{el}</span></span>
-          <span className="text-slate-400">{t('dash.repair.target', { days: days(al) })}</span>
-        </div>
-        <div className={`h-2.5 w-full overflow-hidden rounded-full ring-1 ring-inset ring-slate-200/50 ${c.track}`}>
+        <div className={`mt-1.5 h-2 w-full overflow-hidden rounded-full ring-1 ring-inset ring-slate-200/50 ${c.track}`}>
           <div
             className="relative h-full rounded-full transition-[width] duration-[900ms] ease-out"
             style={{ width: `${Math.max(3, pct)}%`, background: `linear-gradient(90deg, ${c.from}, ${c.to})` }}
@@ -270,46 +302,97 @@ function RepairProgressCard({ item, onCheckpoint, busy, highlighted }) {
             <span className="absolute inset-x-0 top-0 h-1/2 rounded-full bg-white/25" />
           </div>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${c.badge}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${c.dot} ${status === 'overdue' ? 'animate-pulse' : ''}`} />
-            {badge}
-          </span>
-        </div>
       </div>
 
-      {/* Last checkpoint filed on /maintenance-progress — the delay story (ETA change + reason + who/when). */}
-      <div className="relative mt-2.5 rounded-xl bg-slate-50/70 px-2.5 py-2 ring-1 ring-slate-100">
-        <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">{t('dash.repair.latestCheckpoint')}</p>
-        <CheckpointLine cp={checkpoint} />
+      {/* Where that leaves the promised date, in words. */}
+      <div className="relative mt-2 flex flex-wrap items-center gap-2">
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${c.badge}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${c.dot} ${status === 'overdue' ? 'animate-pulse' : ''}`} />
+          {badge}
+        </span>
       </div>
 
-      {/* Underlying figures */}
-      <dl className="relative mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-100 pt-3">
+      {/* The figures behind the bar, on one line: how long it has been in, how long it was meant to
+          take, when it is due back, when it went in. Remaining/overdue is not repeated here — the
+          chip above states it in words. */}
+      <dl className="relative mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-100 pt-2.5 sm:grid-cols-4">
         <KpiCell label={t('dash.repair.inWorkshop')} value={days(el)} />
         <KpiCell label={t('dash.repair.planned')} value={`${days(al)}${est ? ` · ${t('dash.repair.estAbbr')}` : ''}`} />
-        <KpiCell
-          label={status === 'overdue' ? t('dash.repair.overdue') : t('dash.repair.remaining')}
-          value={status === 'overdue' ? days(over) : status === 'due_today' ? t('dash.repair.dueToday') : days(left)}
-          tone={remainTone}
-        />
-        <KpiCell label={t('dash.repair.expected')} value={fmtDate(e.expected_on) || '—'} />
+        <KpiCell label={t('dash.repair.expected')} value={fmtDate(e.expected_on) || '—'} tone={status === 'overdue' ? remainTone : 'text-slate-800'} />
         <KpiCell label={t('dash.repair.started')} value={fmtDate(e.started_on) || '—'} />
       </dl>
       </div>
 
-      {/* File the workshop's progress update from here — the promised date, why it moved, a note and
-          photos. A contract-only car has no ticket yet; the handler links one before opening the form. */}
-      <div className="relative z-10 mt-3 flex justify-end border-t border-slate-100 pt-3">
+      {/* The workshop's last word on this car, and the control that adds the next one. They belong on
+          one line: "nobody has reported anything" is the reason you press the button beside it. The
+          form files the promised date, why it moved, a note and photos without leaving the Dashboard;
+          a contract-only car has no ticket yet, so the handler links one before the form opens. */}
+      <div className="relative z-10 mt-2.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-2.5">
+        <div className="min-w-0 flex-1" title={t('dash.repair.latestCheckpoint')}>
+          <CheckpointLine cp={checkpoint} />
+        </div>
         <button
           type="button"
           disabled={busy}
           onClick={() => onCheckpoint?.(item)}
-          className="focus-ring-self inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60"
+          className={`focus-ring-self inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-white transition disabled:opacity-60 ${c.btn}`}
         >
           {busy ? t('dash.repair.opening') : t('dash.repair.fileUpdate')}
         </button>
       </div>
+    </div>
+  );
+}
+
+// The shop read as a whole, above the cars in it: how many are in, how many have passed the date
+// they were promised back, and how long the average car has been standing there. Every figure is a
+// straight count over the cards BELOW IT — narrow the grid with the plate box or a source filter and
+// these move with it, because a summary that outlives its own list is a summary of nothing.
+function InShopSummary({ items, overdueOnly, onPick }) {
+  const { t } = useI18n();
+  const n = items.length;
+  const overdue = items.filter((it) => (it.eta || {}).status === 'overdue').length;
+
+  // Both tiles count the SAME set — every car the source filter and the plate box left standing —
+  // so the number on a tile never changes because that tile is the one being pressed.
+  const tiles = [
+    {
+      key: 'cars', on: !overdueOnly, value: n,
+      icon: <Icon.Wrench className="h-4 w-4" />,
+      tile: 'bg-blue-50 text-blue-600', tone: 'text-slate-900',
+      ring: 'border-blue-300 ring-1 ring-blue-300',
+      label: t('dash.repair.summaryCars'), hint: t('dash.repair.summaryCarsHint'),
+    },
+    {
+      key: 'overdue', on: overdueOnly, value: overdue,
+      icon: <Icon.Alert className="h-4 w-4" />,
+      tile: overdue ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-400',
+      tone: overdue ? 'text-rose-600' : 'text-slate-900',
+      ring: 'border-rose-300 ring-1 ring-rose-300',
+      label: t('dash.repair.summaryOverdue'), hint: t('dash.repair.summaryOverdueHint'),
+    },
+  ];
+
+  return (
+    <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {tiles.map((s) => (
+        <button
+          key={s.key}
+          type="button"
+          onClick={() => onPick(s.key === 'overdue')}
+          aria-pressed={s.on}
+          title={s.hint}
+          className={`focus-ring-self flex items-center gap-2.5 rounded-xl border bg-white px-3 py-2.5 text-start shadow-soft transition hover:bg-slate-50 ${
+            s.on ? s.ring : 'border-slate-200/70'
+          }`}
+        >
+          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${s.tile}`}>{s.icon}</span>
+          <div className="min-w-0">
+            <p className={`truncate text-lg font-extrabold leading-none tabular-nums ${s.tone}`}>{s.value}</p>
+            <p className="truncate text-[11px] font-medium text-slate-400">{s.label}</p>
+          </div>
+        </button>
+      ))}
     </div>
   );
 }
@@ -384,7 +467,15 @@ function ProactiveFlags({ data, loading, onReload }) {
     const hay = `${it.plate || ''} ${it.car || ''}`.toLowerCase().replace(/[\s-]+/g, '');
     return hay.includes(plateNeedle);
   };
-  const items = allItems.filter((it) => matchesSource(it) && matchesPlate(it));
+  // Everything the source filter and the plate box left standing. The summary tiles count THIS set;
+  // the grid below may be narrower still.
+  const scoped = allItems.filter((it) => matchesSource(it) && matchesPlate(it));
+
+  // "Past their date" is the one thing a supervisor opens this panel to see, so the tile that counts
+  // them is also the control that isolates them. Pressing it narrows the grid to the cars that have
+  // passed the date they were promised back; pressing "Cars in the workshop" puts the rest back.
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const items = overdueOnly ? scoped.filter((it) => (it.eta || {}).status === 'overdue') : scoped;
 
   // Counts stay on the SOURCE pills as the provenance split of the whole shop; the plate box narrows
   // what is rendered without rewriting those totals (they answer "how big is each record", not
@@ -402,11 +493,12 @@ function ProactiveFlags({ data, loading, onReload }) {
       key: 'maintenance', title: t('dash.flags.inMaintenance'), icon: <Icon.Wrench className="h-4 w-4" />, tone: 'blue',
       // While a plate is being searched the badge counts the MATCHES, not the whole shop — otherwise
       // a header reading "17" over a single visible card would be lying about what is on screen.
-      count: plateNeedle ? items.length : inShop.count,
+      count: plateNeedle || overdueOnly ? items.length : inShop.count,
       note: plateNeedle ? t('dash.flags.plateMatches', { n: items.length, total: inShop.count }) : null,
       viewAll: '/maintenance-workflow',
-      empty: t(plateNeedle ? 'dash.flags.emptyPlate' : sourceFilter === 'all' ? 'dash.flags.emptyAll' : 'dash.flags.emptySource'),
+      empty: t(overdueOnly ? 'dash.flags.emptyOverdue' : plateNeedle ? 'dash.flags.emptyPlate' : sourceFilter === 'all' ? 'dash.flags.emptyAll' : 'dash.flags.emptySource'),
       cardItems: items,
+      summary: <InShopSummary items={scoped} overdueOnly={overdueOnly} onPick={setOverdueOnly} />,
       // The provenance filter, doubling as the split ("7 from sheet · 10 from system"), preceded by
       // the plate box — the "just show me THIS car" escape hatch from a shop-wide grid.
       filter: (
@@ -496,7 +588,11 @@ function ProactiveFlags({ data, loading, onReload }) {
               </div>
               {g.cardItems ? (
                 // In Maintenance — a responsive grid of visual Repair-Progress KPI cards, one per car.
-                g.cardItems.length === 0 ? (
+                // The summary tiles stay up even when the grid comes back empty: they are the filter,
+                // and a filter that disappears with its own results cannot be undone.
+                <>
+                {g.summary}
+                {g.cardItems.length === 0 ? (
                   <p className="py-6 text-center text-xs text-slate-400">{g.empty}</p>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
@@ -510,7 +606,8 @@ function ProactiveFlags({ data, loading, onReload }) {
                       />
                     ))}
                   </div>
-                )
+                )}
+                </>
               ) : g.rows.length === 0 ? (
                 <p className="py-6 text-center text-xs text-slate-400">{g.empty}</p>
               ) : (

@@ -27,6 +27,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Icon from '../ui/Icon';
 import FindingsAiSuggestion from './FindingsAiSuggestion';
+import systemIcon from './systemIcons';
 import useFaultHistory from '../../hooks/useFaultHistory';
 import { useI18n } from '../../i18n/I18nContext';
 
@@ -137,10 +138,19 @@ function Chip({ label, tone, kind, kindLabel, t, active, locked, lockedTitle, re
 // FindingsAiSuggestion): a Yes/No given on a real car during a real inspection is ground truth about
 // the vocabulary, and is filed apart from admin experiments on the keyword-library page. They are
 // optional — the picker works identically without them, the verdicts just lose their provenance.
-export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], onChange, locked = [], required = [], requiredNote = null, onSiteOnly = false, onSiteKeywords = [], suggested = [], statusConditions = [], ticketId = null, vehicleId = null, aiContext = 'test_findings', focusCategory = null }) {
+// `suggestedPanel` is a slot, not a data prop: the caller decides WHAT this car should be looked over
+// for (SuggestedChecks fetches its own evidence), and the picker only decides WHERE that sits. It
+// belongs directly under the search box — the inspector's two routes into the catalog are "I already
+// know the fault, type it" and "tell me what this car keeps coming back for", and they read as one
+// choice only when they are next to each other.
+export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], onChange, locked = [], required = [], requiredNote = null, onSiteOnly = false, onSiteKeywords = [], suggested = [], statusConditions = [], ticketId = null, vehicleId = null, aiContext = 'test_findings', focusCategory = null, suggestedPanel = null }) {
   const { t, tf, lang } = useI18n();
   const [custom, setCustom] = useState('');
   const [query, setQuery] = useState('');
+  // The suggested-checks panel is open on arrival — it is the answer to a question the inspector has
+  // before he starts typing. The toggle is for the one who already knows what he found and wants the
+  // catalog back; it never removes evidence, it folds it.
+  const [showSuggested, setShowSuggested] = useState(true);
   // Which category accordions are open. Everything starts CLOSED — the inspector opens the systems they
   // actually inspected. A category holding a pick auto-opens once (see the effect below) so a selection
   // is never hidden behind a closed row.
@@ -273,6 +283,16 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
       .filter((c) => c.keywords.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categories, q, keywordMeta]);
+  // Split into two balanced columns, reading DOWN the first then down the second — the order a list is
+  // read, not the left-right zigzag a CSS grid would produce. Four or fewer systems (a narrowed On-Site
+  // checklist, or a search that matched three) stay in one column: two short stacks read as two unrelated
+  // lists rather than one menu.
+  const categoryColumns = useMemo(() => {
+    if (visibleCategories.length <= 4) return [visibleCategories];
+    const half = Math.ceil(visibleCategories.length / 2);
+    return [visibleCategories.slice(0, half), visibleCategories.slice(half)];
+  }, [visibleCategories]);
+
   const searching = q.length > 0;
   const matchCount = useMemo(
     () => visibleCategories.reduce((n, c) => n + c.keywords.length, 0),
@@ -411,28 +431,49 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
         </p>
       )}
 
-      {/* Search — one box across the entire catalog, so a known fault never needs a category hunt. */}
+      {/* Search — one box across the entire catalog, so a known fault never needs a category hunt.
+          The Suggest-checks toggle sits on the same line because it is the same question answered the
+          other way round: type the fault you know, or be shown the ones this car keeps returning for. */}
       <div className="space-y-2">
-        <div className="relative">
-          <Icon.Search className="pointer-events-none absolute inset-y-0 start-3 my-auto h-4 w-4 text-slate-400" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('findingsPicker.searchPlaceholder')}
-            className="w-full rounded-xl border border-slate-300 bg-white py-2 pe-9 ps-9 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-          />
-          {query && (
+        <div className="flex items-stretch gap-2">
+          <div className="relative flex-1">
+            <Icon.Search className="pointer-events-none absolute inset-y-0 start-3 my-auto h-4 w-4 text-slate-400" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('findingsPicker.searchPlaceholder')}
+              className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pe-9 ps-9 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                aria-label={t('findingsPicker.clearSearch')}
+                className="absolute inset-y-0 end-2 my-auto flex h-6 w-6 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              >
+                <Icon.X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          {suggestedPanel && (
             <button
               type="button"
-              onClick={() => setQuery('')}
-              aria-label={t('findingsPicker.clearSearch')}
-              className="absolute inset-y-0 end-2 my-auto flex h-6 w-6 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              onClick={() => setShowSuggested((v) => !v)}
+              aria-expanded={showSuggested}
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3.5 text-[11px] font-bold uppercase tracking-wide transition ${
+                showSuggested
+                  ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                  : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
             >
-              <Icon.X className="h-3.5 w-3.5" />
+              <Icon.Spark className="h-4 w-4" />
+              {tf('findingsPicker.suggestChecks', 'Suggest checks')}
             </button>
           )}
         </div>
+
+        {suggestedPanel && showSuggested && suggestedPanel}
 
         <div className="flex items-center justify-between gap-2 text-[11px]">
           <span className="font-medium text-slate-500">
@@ -574,65 +615,81 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
         </div>
       )}
 
-      {/* Categories — collapsed accordions. The header reports what's inside so a closed row is never a
-          black box; the chips only render once it's open (or while a search is filtering). */}
-      <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
-        {visibleCategories.map((cat) => {
-          const open = isOpen(cat);
-          const picked = pickedIn(cat);
-          return (
-            <div key={cat.key}>
-              <button
-                type="button"
-                onClick={() => toggleCat(cat.key)}
-                aria-expanded={open}
-                className={`flex w-full items-center gap-2 px-3 py-2.5 text-start transition ${open ? 'bg-slate-50/80' : 'hover:bg-slate-50'}`}
-              >
-                <Icon.ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? '' : '-rotate-90 rtl:rotate-90'}`} />
-                <span className="min-w-0 truncate text-sm font-semibold text-slate-700">{catLabel(cat)}</span>
-                {/* PLANNED WORK, NOT A DEFECT. Routine servicing sits in the same picker as the fault
-                    categories, so without a marker an inspector reads "Oil Change" as something found
-                    wrong with the car. The backend types these as kind=service from the catalog; this is
-                    the same statement made visible at the point of selection (audit M9). */}
-                {SERVICE_CATEGORIES.has(cat.key) && (
-                  <span className="shrink-0 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700 ring-1 ring-inset ring-sky-200">
-                    {t('findingsPicker.plannedService')}
-                  </span>
-                )}
-                <span className="min-w-0 flex-1" />
-                {picked > 0 && (
-                  <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold text-white">
-                    {picked}
-                  </span>
-                )}
-                <span className="text-[11px] tabular-nums text-slate-400">{cat.keywords.length}</span>
-              </button>
-              {open && (
-                <div className="flex flex-wrap gap-1.5 border-t border-slate-100 bg-white px-3 pb-3 pt-2.5">
-                  {cat.keywords.map((k) => (
-                    <Chip
-                      key={k}
-                      label={kwLabel(k)}
-                      tone={kwTone(k)}
-                      kind={kwKind(k)}
-                      kindLabel={kwKindLabel(k)}
-                      t={t}
-                      active={has(k)}
-                      locked={isLocked(k)}
-                      lockedTitle={t('findingsPicker.alreadyReported')}
-                      required={isRequired(k)}
-                      requiredTitle={requiredNote || tf('findingsPicker.requiredNote', 'Required — decided before this step, and not removable here.')}
-                      onClick={() => toggle(k)}
-                    />
-                  ))}
-                </div>
-              )}
+      {/* Categories — collapsed accordions, in TWO columns. The catalog is thirteen systems long, and as
+          one column it pushed the custom-issue box and the rest of the report below the fold on every
+          screen; side by side the whole car fits in one look. Each column is its own card so opening a
+          system expands inside its column instead of shunting the other six down.
+          The header reports what's inside so a closed row is never a black box; the chips only render
+          once it's open (or while a search is filtering). */}
+      {visibleCategories.length > 0 && (
+        <div className={`grid gap-2 ${categoryColumns.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+          {categoryColumns.map((column, ci) => (
+            <div key={`col-${ci}`} className="divide-y divide-slate-100 self-start overflow-hidden rounded-xl border border-slate-200 bg-white">
+              {column.map((cat) => {
+                const open = isOpen(cat);
+                const picked = pickedIn(cat);
+                const SystemIcon = systemIcon(cat.key);
+                return (
+                  <div key={cat.key}>
+                    <button
+                      type="button"
+                      onClick={() => toggleCat(cat.key)}
+                      aria-expanded={open}
+                      className={`flex w-full items-center gap-2 px-3 py-2.5 text-start transition ${open ? 'bg-slate-50/80' : 'hover:bg-slate-50'}`}
+                    >
+                      {/* The system, drawn. A category reads as a part of the car before its label is read —
+                          and it is the same glyph the suggested-checks panel above used for the same system. */}
+                      <SystemIcon className={`h-4 w-4 shrink-0 ${picked > 0 ? 'text-indigo-500' : 'text-slate-400'}`} />
+                      <span className="min-w-0 truncate text-sm font-semibold text-slate-700">{catLabel(cat)}</span>
+                      {/* PLANNED WORK, NOT A DEFECT. Routine servicing sits in the same picker as the fault
+                          categories, so without a marker an inspector reads "Oil Change" as something found
+                          wrong with the car. The backend types these as kind=service from the catalog; this is
+                          the same statement made visible at the point of selection (audit M9). */}
+                      {SERVICE_CATEGORIES.has(cat.key) && (
+                        <span className="shrink-0 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700 ring-1 ring-inset ring-sky-200">
+                          {t('findingsPicker.plannedService')}
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1" />
+                      {picked > 0 && (
+                        <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold text-white">
+                          {picked}
+                        </span>
+                      )}
+                      <span className="text-[11px] tabular-nums text-slate-400">{cat.keywords.length}</span>
+                      <Icon.ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-300 transition-transform ${open ? '' : '-rotate-90 rtl:rotate-90'}`} />
+                    </button>
+                    {open && (
+                      <div className="flex flex-wrap gap-1.5 border-t border-slate-100 bg-white px-3 pb-3 pt-2.5">
+                        {cat.keywords.map((k) => (
+                          <Chip
+                            key={k}
+                            label={kwLabel(k)}
+                            tone={kwTone(k)}
+                            kind={kwKind(k)}
+                            kindLabel={kwKindLabel(k)}
+                            t={t}
+                            active={has(k)}
+                            locked={isLocked(k)}
+                            lockedTitle={t('findingsPicker.alreadyReported')}
+                            required={isRequired(k)}
+                            requiredTitle={requiredNote || tf('findingsPicker.requiredNote', 'Required — decided before this step, and not removable here.')}
+                            onClick={() => toggle(k)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
+          ))}
+        </div>
+      )}
 
-        {visibleCategories.length === 0 && (
-          <div className="space-y-2 px-1 py-3">
+      {visibleCategories.length === 0 && (
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="space-y-2 px-3 py-3">
             <p className="text-center text-xs text-slate-400">
               {t('findingsPicker.noLiteralMatch', { query })}
             </p>
@@ -649,8 +706,8 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
               context={aiContext}
             />
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Custom issue — captured as a tag like any other, so it stays searchable/reportable. */}
       <div className="border-t border-slate-100 pt-3">

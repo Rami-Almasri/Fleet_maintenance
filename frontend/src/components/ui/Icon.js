@@ -77,6 +77,20 @@ const Icon = {
   Video: base(<><rect x="2" y="6" width="14" height="12" rx="2" /><path d="M16 10l6-3v10l-6-3z" /></>),
   Camera: base(<><path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h5l1 1.5H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><circle cx="12" cy="13" r="3.2" /></>),
   X: base(<><path d="M6 6l12 12M18 6L6 18" /></>),
+
+  // Vehicle systems — one per findings-catalog category, so a category reads as the part of the car
+  // it is about before the label is read. Consumed through workflow/systemIcons.js, never picked ad
+  // hoc at a call site: the picker and the suggested-checks panel must draw the same system the same way.
+  Engine: base(<><path d="M7 9h3l2-2h3v2h2l2 2v4h-2v2H9l-2-2H5v-4z" /><path d="M9 7V5h4" /><path d="M19 11h2v3h-2" /></>),
+  Disc: base(<><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3.5" /></>),
+  Tyre: base(<><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4" /><path d="M12 3v5M12 16v5M3 12h5M16 12h5" /></>),
+  Steering: base(<><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2.5" /><path d="M3.3 10.5h17.4M12 14.5V21" /></>),
+  Cog: base(<><circle cx="12" cy="12" r="3.2" /><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1M18.7 18.7l-2.1-2.1M7.4 7.4L5.3 5.3" /></>),
+  Bolt: base(<><path d="M13 2L4 14h7l-1 8 9-12h-7z" /></>),
+  Snowflake: base(<><path d="M12 2v20M3.5 7l17 10M20.5 7l-17 10" /><path d="M12 6l-2.2-2.2M12 6l2.2-2.2M12 18l-2.2 2.2M12 18l2.2 2.2" /></>),
+  Seat: base(<><path d="M7 4h4a3 3 0 0 1 3 3v7H9a2 2 0 0 1-2-2z" /><path d="M14 14h3a2 2 0 0 1 2 2v4" /><path d="M5 20h10" /></>),
+  Droplet: base(<><path d="M12 3s6 6.4 6 10.2A6 6 0 0 1 6 13.2C6 9.4 12 3 12 3z" /></>),
+  Sun: base(<><circle cx="12" cy="12" r="4" /><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" /></>),
 };
 
 export default Icon;

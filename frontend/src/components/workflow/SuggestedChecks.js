@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
 import Icon from '../ui/Icon';
+import systemIcon from './systemIcons';
 
 // One car's payload is reused across every card and page that asks for it in this session. The
 // Inspection Review Queue can hold 140 cards over ~137 distinct vehicles; without this, scrolling
@@ -88,14 +89,6 @@ function useSuggestedChecks(vehicleId, provided) {
   return { data, ref };
 }
 
-// Severity → the dot beside a suggestion. Same scale the service ranks on.
-const LEVEL_DOT = {
-  critical: 'bg-rose-500',
-  moderate: 'bg-amber-500',
-  minor: 'bg-sky-500',
-  routine: 'bg-emerald-500',
-};
-
 // Condition keys the forecast group can emit, mapped to a readable name. Kept here (not in the
 // engine) because it is presentation: the engine emits the key, the UI decides the wording.
 const CONDITION_KEY = {
@@ -161,23 +154,27 @@ function useReasonLine() {
   };
 }
 
-/** The group header — names the evidence source, so no line is a black box. */
-function GroupHeader({ group }) {
-  const { tf } = useI18n();
-  const meta =
-    group === 'recurring'
-      ? { icon: <Icon.Refresh className="h-3 w-3" />, key: 'suggestedChecks.group.recurring', en: 'Recurring history', cls: 'text-rose-600' }
-      : { icon: <Icon.TrendUp className="h-3 w-3" />, key: 'suggestedChecks.group.forecast', en: 'Forecast', cls: 'text-indigo-600' };
+// Severity → the colour the row's system icon is drawn in. Same scale the service ranks on; the dot
+// it replaces said the same thing in less space than the icon now occupies for free.
+const LEVEL_ICON = {
+  critical: 'text-rose-500',
+  moderate: 'text-amber-500',
+  minor: 'text-sky-500',
+  routine: 'text-emerald-500',
+};
 
-  return (
-    <p className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide ${meta.cls}`}>
-      {meta.icon}
-      {tf(meta.key, meta.en)}
-    </p>
-  );
-}
+// The evidence source, named on the row itself rather than as a heading above a block of them.
+// A heading is only read once; on a four-row panel where three rows are history and one is forecast,
+// the badge is what stops a reader carrying the first heading down the whole list.
+const GROUP_BADGE = {
+  recurring: { key: 'suggestedChecks.group.recurring', en: 'Recurring history', cls: 'bg-rose-50 text-rose-700 ring-rose-200' },
+  forecast:  { key: 'suggestedChecks.group.forecast',  en: 'Forecast',          cls: 'bg-indigo-50 text-indigo-700 ring-indigo-200' },
+};
 
-function Suggestion({ s, onPick }) {
+// `showGroup` — the badge is printed on the FIRST row of each source only. Repeating "Recurring
+// history" on four consecutive rows is noise; dropping it entirely would leave the reader unable to
+// tell which claim came from which ledger. See [[traceability-visibility-requirement]].
+function Suggestion({ s, onPick, showGroup }) {
   const { tf, lang } = useI18n();
   const reasonLine = useReasonLine();
 
@@ -188,52 +185,69 @@ function Suggestion({ s, onPick }) {
   const name = s.chip
     ? (isAr && s.chip_ar) || s.chip
     : (isAr && s.category_label_ar) || s.category_label;
+  // The system this row is about, which is the system the picker below draws with the same glyph.
+  const systemName = (isAr && s.category_label_ar) || s.category_label || name;
 
   const lines = (s.reasons || []).map(reasonLine).filter(Boolean);
+  const badge = showGroup ? GROUP_BADGE[s.group] : null;
+  const SystemIcon = systemIcon(s.category_key);
+  // Every row leads somewhere, but NOT by the same route. A catalog keyword is itself the tap target —
+  // the word you are logging is the thing you press, and it goes straight in as a finding. A
+  // category-only row has no word to press, so the action is to open that system in the picker and let
+  // a PERSON choose one; the engine never invents it ([[findings-vocabulary-contract]]).
+  const openCategory = !s.selectable && s.picker_category && onPick
+    ? tf('suggestedChecks.openCategory', 'Open {category} checks', { category: systemName })
+    : null;
 
   return (
-    <li className="flex items-start gap-2 py-1.5">
-      <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${LEVEL_DOT[s.level] || 'bg-slate-400'}`} />
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {s.selectable && onPick ? (
-            <button
-              type="button"
-              onClick={() => onPick(s)}
-              className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200 transition hover:bg-indigo-50 hover:ring-indigo-300"
-            >
-              {name}
-            </button>
-          ) : (
-            <span className="text-[11px] font-semibold text-slate-800">{name}</span>
-          )}
+    <li>
+      <div className="flex items-start gap-3 py-2.5">
+        <SystemIcon className={`mt-0.5 h-5 w-5 shrink-0 ${LEVEL_ICON[s.level] || 'text-slate-400'}`} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {s.selectable && onPick ? (
+              <button
+                type="button"
+                onClick={() => onPick(s)}
+                title={tf('suggestedChecks.addFinding', 'Add {name}', { name })}
+                className="rounded text-sm font-bold text-slate-900 underline decoration-slate-300 decoration-dashed underline-offset-4 transition hover:text-rose-700 hover:decoration-rose-400"
+              >
+                {name}
+              </button>
+            ) : (
+              <span className="text-sm font-bold text-slate-900">{name}</span>
+            )}
+            {badge && (
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${badge.cls}`}>
+                {tf(badge.key, badge.en)}
+              </span>
+            )}
+            {s.promoted && (
+              <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-700 ring-1 ring-inset ring-rose-200">
+                {tf('suggestedChecks.dueNow', 'Due now')}
+              </span>
+            )}
+            {/* Both sources produced this row — the merge is visible, not silent. */}
+            {s.also_group && (
+              <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                {tf('suggestedChecks.bothSources', 'history + forecast')}
+              </span>
+            )}
+          </div>
 
-          {s.promoted && (
-            <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-700 ring-1 ring-inset ring-rose-200">
-              {tf('suggestedChecks.dueNow', 'Due now')}
-            </span>
-          )}
-          {/* Both sources produced this row — the merge is visible, not silent. */}
-          {s.also_group && (
-            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-              {tf('suggestedChecks.bothSources', 'history + forecast')}
-            </span>
+          {lines.length > 0 && (
+            <p className="mt-0.5 text-[11px] leading-relaxed text-rose-600/90">{lines.join(' · ')}</p>
           )}
         </div>
 
-        {lines.length > 0 && (
-          <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{lines.join(' · ')}</p>
-        )}
-
-        {/* A category-only suggestion still leads somewhere useful: open the picker on the right
-            group and let a person choose the keyword, rather than the engine inventing one. */}
-        {!s.selectable && s.picker_category && onPick && (
+        {openCategory && (
           <button
             type="button"
             onClick={() => onPick(s)}
-            className="mt-0.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700"
+            className="inline-flex shrink-0 items-center gap-1 self-center text-[11px] font-semibold text-rose-600 transition hover:text-rose-700"
           >
-            {tf('suggestedChecks.openCategory', 'Open {category} checks', { category: name })}
+            {openCategory}
+            <Icon.ChevronDown className="h-3.5 w-3.5 -rotate-90 rtl:rotate-90" aria-hidden />
           </button>
         )}
       </div>
@@ -282,60 +296,65 @@ export default function SuggestedChecks({ vehicleId, data: provided, onPick, onH
   const unplaceable = data.summary?.unplaceable || 0;
 
   return (
-    <div ref={ref} className={`rounded-xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm ${className}`}>
-      <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
-        <Icon.Search className="h-4 w-4 text-slate-400" />
-        {tf('suggestedChecks.title', 'Suggested checks for this car')}
+    <div ref={ref} className={`overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm ${className}`}>
+      <div className="px-3.5 pt-3">
+        <p className="text-sm font-bold text-slate-900">
+          {tf('suggestedChecks.title', 'Suggested checks for this car')}
+        </p>
+        {/* Data Origin — every panel says where its content came from. */}
+        <p className="mt-0.5 text-[11px] text-slate-400">
+          {tf('suggestedChecks.origin', "From this car's own repair history and service forecast")}
+        </p>
       </div>
-      {/* Data Origin — every panel says where its content came from. */}
-      <p className="mt-0.5 text-[11px] text-slate-400">
-        {tf('suggestedChecks.origin', "From this car's own repair history and service forecast")}
+
+      {/* One list, not two stacked blocks. Both ledgers rank into the same order the service returned;
+          each row carries its own source badge, so the merge is legible without splitting the panel
+          into halves the reader has to compare. */}
+      {(recurring.length > 0 || forecast.length > 0) && (
+        <ul className="mt-1.5 divide-y divide-slate-100 px-3.5">
+          {recurring.map((s, i) => (
+            <Suggestion key={`r-${s.category_key}`} s={s} onPick={onPick} showGroup={i === 0} />
+          ))}
+          {forecast.map((s, i) => (
+            <Suggestion key={`f-${s.category_key}`} s={s} onPick={onPick} showGroup={i === 0} />
+          ))}
+        </ul>
+      )}
+
+      {/* WHAT THIS PANEL IS. Four rows that name real faults, drawn from real history, sitting above a
+          catalog — without this sentence they read as findings already logged. They are an agenda; the
+          inspector logs what he actually found, here or by hand. See [[vehicle-suggested-checks]]. */}
+      <p className="mt-2 flex items-start gap-1.5 bg-slate-50 px-3.5 py-2 text-[11px] text-slate-500 ring-1 ring-inset ring-slate-100">
+        <Icon.Info className="mt-px h-3.5 w-3.5 shrink-0 text-sky-500" />
+        {tf('suggestedChecks.agendaNote', 'These are suggested checks. You can add issues manually using the search above.')}
       </p>
 
-      {recurring.length > 0 && (
-        <div className="mt-2">
-          <GroupHeader group="recurring" />
-          <ul className="mt-0.5 divide-y divide-slate-100">
-            {recurring.map((s) => (
-              <Suggestion key={`r-${s.category_key}`} s={s} onPick={onPick} />
-            ))}
-          </ul>
-        </div>
-      )}
+      {(checklist || unplaceable > 0) && (
+        <div className="px-3.5 pb-3">
+          {/* The old fixed checklist, in its proper place: an agenda, clearly not findings. */}
+          {checklist && (
+            <div className="mt-2.5 rounded-md bg-slate-50 px-2.5 py-2 ring-1 ring-inset ring-slate-100">
+              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                <Icon.Check className="h-3 w-3" />
+                {tf('suggestedChecks.checklist.title', 'Standard post-idle checklist')}
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-600">{checklist.items.join(' · ')}</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                {checklist.reason ? tp('suggestedChecks.reason.postIdle', checklist.days || 0, { n: checklist.days }) : null}
+                {' — '}
+                {tf('suggestedChecks.checklist.note', 'a look-at list, not findings to confirm')}
+              </p>
+            </div>
+          )}
 
-      {forecast.length > 0 && (
-        <div className="mt-2">
-          <GroupHeader group="forecast" />
-          <ul className="mt-0.5 divide-y divide-slate-100">
-            {forecast.map((s) => (
-              <Suggestion key={`f-${s.category_key}`} s={s} onPick={onPick} />
-            ))}
-          </ul>
+          {/* No silent truncation: if repeat faults exist that we cannot offer as checks, say so and
+              point at the report that does show them. */}
+          {unplaceable > 0 && (
+            <p className="mt-2 border-t border-slate-100 pt-1.5 text-[11px] text-slate-400">
+              {tp('suggestedChecks.unplaceable', unplaceable, { n: unplaceable })}
+            </p>
+          )}
         </div>
-      )}
-
-      {/* The old fixed checklist, in its proper place: an agenda, clearly not findings. */}
-      {checklist && (
-        <div className="mt-2.5 rounded-md bg-slate-50 px-2.5 py-2 ring-1 ring-inset ring-slate-100">
-          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
-            <Icon.Check className="h-3 w-3" />
-            {tf('suggestedChecks.checklist.title', 'Standard post-idle checklist')}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-600">{checklist.items.join(' · ')}</p>
-          <p className="mt-0.5 text-[11px] text-slate-400">
-            {checklist.reason ? tp('suggestedChecks.reason.postIdle', checklist.days || 0, { n: checklist.days }) : null}
-            {' — '}
-            {tf('suggestedChecks.checklist.note', 'a look-at list, not findings to confirm')}
-          </p>
-        </div>
-      )}
-
-      {/* No silent truncation: if repeat faults exist that we cannot offer as checks, say so and
-          point at the report that does show them. */}
-      {unplaceable > 0 && (
-        <p className="mt-2 border-t border-slate-100 pt-1.5 text-[11px] text-slate-400">
-          {tp('suggestedChecks.unplaceable', unplaceable, { n: unplaceable })}
-        </p>
       )}
     </div>
   );

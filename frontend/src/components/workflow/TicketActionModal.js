@@ -341,11 +341,16 @@ const PHOTO_GATED = new Set([
 // a black box. Tapping any row opens it; "Continue" walks forward.
 //
 // `open` defaults to true, so a caller that doesn't drive the accordion gets the old always-expanded card.
-function Step({ n, title, hint, done = false, children, open = true, onOpen, summary, onNext, nextLabel }) {
+//
+// `icon` draws the step's subject (a stethoscope on Diagnosis, a clipboard on the decision) beside the
+// title in BOTH states, so a collapsed row is recognisable before its words are read. `banner` is a
+// band pinned above the step's own row inside the same group — step 1 uses it for the stage clocks,
+// which belong to closing out the test drive rather than floating above the report as a fifth thing.
+function Step({ n, title, hint, done = false, children, open = true, onOpen, summary, onNext, nextLabel, icon: StepIcon = null, banner = null, last = false }) {
   const badge = (
     <span
       className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-        done ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-500'
+        done ? 'bg-emerald-500 text-white' : open ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-500'
       }`}
       aria-hidden
     >
@@ -353,25 +358,49 @@ function Step({ n, title, hint, done = false, children, open = true, onOpen, sum
     </span>
   );
 
+  // The rail. The badge sits OUTSIDE the card in a fixed-width gutter, and a hairline runs down it
+  // between steps, so four cards read as one numbered sequence rather than four stacked panels.
+  const withRail = (body) => (
+    <div className="flex gap-2.5">
+      <div className="flex w-6 shrink-0 flex-col items-center pt-2.5">
+        {badge}
+        {!last && <span className="mt-1 w-px flex-1 bg-slate-200" aria-hidden />}
+      </div>
+      <div className="min-w-0 flex-1 space-y-2">
+        {banner}
+        {body}
+      </div>
+    </div>
+  );
+
   if (!open) {
-    return (
+    return withRail(
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full items-center gap-2.5 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-start shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+        className={`flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-start shadow-sm transition ${
+          done ? 'border-emerald-200 bg-emerald-50/60 hover:bg-emerald-50' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+        }`}
       >
-        {badge}
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">{title}</span>
-        {summary && <span className="min-w-0 max-w-[45%] shrink-0 truncate text-xs text-slate-500">{summary}</span>}
+        {StepIcon && <StepIcon className={`h-4 w-4 shrink-0 ${done ? 'text-emerald-600' : 'text-slate-400'}`} aria-hidden />}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold text-slate-800">{title}</span>
+          {hint && <span className="mt-0.5 block truncate text-xs text-slate-500">{hint}</span>}
+        </span>
+        {summary && (
+          <span className="inline-flex min-w-0 max-w-[45%] shrink-0 items-center gap-1.5 rounded-lg bg-white/70 px-2 py-1 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">
+            <span className="truncate">{summary}</span>
+          </span>
+        )}
         <Icon.ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-slate-300 rtl:rotate-90" aria-hidden />
-      </button>
+      </button>,
     );
   }
 
-  return (
-    <section className="rounded-2xl border border-indigo-200 bg-white shadow-sm ring-1 ring-indigo-100">
+  return withRail(
+    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
       <header className="flex items-start gap-2.5 border-b border-slate-100 px-4 py-3">
-        <span className="mt-0.5">{badge}</span>
+        {StepIcon && <StepIcon className="mt-0.5 h-5 w-5 shrink-0 text-rose-500" aria-hidden />}
         <span className="min-w-0">
           <span className="block text-sm font-semibold text-slate-800">{title}</span>
           {hint && <span className="mt-0.5 block text-xs text-slate-500">{hint}</span>}
@@ -390,7 +419,7 @@ function Step({ n, title, hint, done = false, children, open = true, onOpen, sum
           </button>
         </div>
       )}
-    </section>
+    </section>,
   );
 }
 
@@ -1907,6 +1936,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     onOpen: () => setActiveStep(n),
     onNext: n === lastDecideStep ? undefined : () => setActiveStep(n + 1),
     nextLabel: t('workflow.decideStep.continue'),
+    // The rail stops at the last step. A connector running down past the final card points at nothing
+    // and reads as a fifth step that failed to render.
+    last: n === lastDecideStep,
   });
 
   // What still blocks the submit button, and which step to open to fix it. The gate already existed —
@@ -2015,8 +2047,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           </div>
         )}
 
-        {/* Stage timing — per-stage durations + total downtime, at a glance on any existing ticket */}
-        {ticket && <StageTimeline ticket={ticket} t={t} />}
+        {/* Stage timing — per-stage durations + total downtime, at a glance on any existing ticket.
+            The test-drive report renders it INSIDE step 1 instead (see the `banner` below): closing out
+            the drive is what the clocks are about, and floating free above four numbered steps made the
+            report read as though it started somewhere other than step 1. */}
+        {ticket && action !== 'decide' && <StageTimeline ticket={ticket} t={t} />}
 
         {/* Original findings — inherited and shown at every stage, grouped by source. Temporary Release
             renders its OWN findings panel below (with explicit "Not fixed" badges), so it's excluded here
@@ -2099,7 +2134,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             Laid out as four numbered steps (mileage → findings → diagnosis → decision + routing) so a long form
             reads as a sequence the inspector works down, not one undifferentiated scroll. */}
         {action === 'decide' && (
-          <>
+          <div className="space-y-1.5">
             {/* STEP 1 — end-of-test-drive odometer. Optional here, so the inspector can log the reading when
                 they step out of the car. Runs the same continuity + >10 km note gate as every other capture
                 and lands as its own "End of test drive" row in the mileage timeline. */}
@@ -2111,6 +2146,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               )}
               title={t('workflow.decideStep.mileageTitle')}
               hint={t('workflow.decideStep.mileageHint')}
+              icon={Icon.Gauge}
+              banner={ticket ? <StageTimeline ticket={ticket} t={t} /> : null}
             >
               <Input label={t('workflow.field.reportOdometerKm')} type="number" min="1" value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={ticket?.test_odometer ? t('workflow.ph.startedAt', { km: Number(ticket.test_odometer).toLocaleString() }) : t('workflow.ph.odometerExample')} />
               <OdometerContinuityHint previous={prevOdometer} continuity={continuity} confirmed={odoConfirmed} onConfirm={setOdoConfirmed} noteRequired={odoNoteRequired} note={odoNote} onNote={setOdoNote} ignoreTolerance={ignoreOdoTolerance} t={t} />
@@ -2140,6 +2177,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               )}
               title={t('workflow.decideStep.findingsTitle')}
               hint={t('workflow.decideStep.findingsHint')}
+              icon={Icon.Engine}
             >
               {/* SYSTEM CHECKS — above the findings picker, deliberately. These are the questions the
                   platform ASKED; the picker below is what the inspector found on his own. Answering a
@@ -2162,9 +2200,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   post-idle list rides along inside that panel, under its own heading, as the agenda it is.
                   Tappable here (and only here): the inspector is the one who decides a suggestion is real.
                   Falls back to the ticket's own checklist when the car isn't identified yet. */}
-              {suggestedChecksVehicleId ? (
-                <SuggestedChecks vehicleId={suggestedChecksVehicleId} onPick={pickSuggestedCheck} />
-              ) : inspectChecklist.length > 0 && (
+              {!suggestedChecksVehicleId && inspectChecklist.length > 0 && (
                 <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3">
                   <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-sky-700">
                     <Icon.Shield className="h-3.5 w-3.5" /> {t('workflow.field.inspectChecklistTitle')}
@@ -2179,7 +2215,27 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   </ul>
                 </div>
               )}
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} required={requiredFindings} requiredNote={t('Required by the oil follow-up — the recall exists because this car needs an oil change.')} suggested={dataSuggested} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="test_findings" focusCategory={focusCategory} />
+              <FindingsPicker
+                catalog={findingsCatalog}
+                keywordMeta={keywordMeta}
+                value={symptoms}
+                onChange={setSymptoms}
+                locked={lockedFindings}
+                required={requiredFindings}
+                requiredNote={t('Required by the oil follow-up — the recall exists because this car needs an oil change.')}
+                suggested={dataSuggested}
+                statusConditions={diagConditions}
+                ticketId={ticket?.id ?? null}
+                vehicleId={ticket?.vehicle_id ?? vehicleId ?? null}
+                aiContext="test_findings"
+                focusCategory={focusCategory}
+                // What this car should be looked over for, rendered directly under the picker's search
+                // box. It used to sit above the whole picker, which put the car's own evidence and the
+                // one field you'd use to act on it at opposite ends of a scroll.
+                suggestedPanel={suggestedChecksVehicleId
+                  ? <SuggestedChecks vehicleId={suggestedChecksVehicleId} onPick={pickSuggestedCheck} className="" />
+                  : null}
+              />
               {/* Faults the answered system checks will add on submit. Shown because they are NOT in
                   the picker above — the inspector never tapped them — and a fault appearing on the
                   ticket that nobody selected reads as a bug rather than as his own decision. */}
@@ -2226,6 +2282,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               )}
               title={t('workflow.decideStep.diagnosisTitle')}
               hint={t('workflow.decideStep.diagnosisHint')}
+              icon={Icon.Activity}
             >
               {symptoms.length > 0 ? (
                 <div>
@@ -2287,6 +2344,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               )}
               title={t('workflow.decideStep.decisionTitle')}
               hint={t('workflow.decideStep.decisionHint')}
+              icon={Icon.Invoice}
             >
               {/* THREE ANSWERS, THREE CARDS. Stacked rather than side by side, and each carrying the one
                   sentence that says what it DOES to the car, because the whole risk with a middle option
@@ -2574,7 +2632,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 below the fold, and "disabled button, no reason given" is exactly the dead end the accordion
                 would otherwise create. */}
             {decideBlockers.length > 0 && (
-              <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-500/25">
+              <div className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-500/25">
+                <Icon.Alert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                <div className="min-w-0 flex-1">
                 <p className="font-semibold">{t('workflow.decideStep.stillNeeded')}</p>
                 <ul className="mt-1 space-y-0.5">
                   {decideBlockers.map((b) => (
@@ -2589,9 +2649,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                     </li>
                   ))}
                 </ul>
+                </div>
               </div>
             )}
-          </>
+          </div>
         )}
 
         {/* PHASE 2 — Supervisor (dispatcher) picks the garage; the whole Driver pool is then notified to collect */}

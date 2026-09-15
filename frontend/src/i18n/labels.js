@@ -789,6 +789,12 @@ const en = {
       checkpointTitle: 'Progress update · {label}',
       checkpointFiled: 'Progress update filed.',
       checkpointFailed: 'Could not open a progress update for this car.',
+      // The two tiles over the grid. Each counts every car the source filter and the plate box left
+      // standing, and each is also the control that narrows the grid to that set.
+      summaryCars: 'Cars in the workshop',
+      summaryCarsHint: 'Show every car in the workshop',
+      summaryOverdue: 'Past their date',
+      summaryOverdueHint: 'Show only the cars that have passed the date they were promised back',
     },
     flags: {
       title: 'Proactive Flags',
@@ -798,6 +804,7 @@ const en = {
       emptyAll: 'No cars in the workshop right now',
       emptySource: 'No cars in the workshop from this source right now',
       emptyPlate: 'No car in the workshop matches that plate',
+      emptyOverdue: 'No car in the workshop is past its date',
       platePlaceholder: 'Plate or model…',
       plateAria: 'Find a car in the shop by plate or model',
       plateClear: 'Clear the plate search',
@@ -1517,6 +1524,13 @@ const en = {
     dueNow: 'Due now',
     bothSources: 'history + forecast',
     openCategory: 'Open {category} checks',
+    // A catalog keyword goes straight in as a finding; the row says so rather than leaving the
+    // inspector to discover what tapping it does.
+    addFinding: 'Add {name}',
+    // WHAT THIS PANEL IS. Named faults drawn from real history, sitting on top of a catalog, read as
+    // findings already logged unless this sentence is under them. It is an agenda. See
+    // [[vehicle-suggested-checks]].
+    agendaNote: 'These are suggested checks. You can add issues manually using the search above.',
     group: {
       recurring: 'Recurring history',
       forecast: 'Forecast',
@@ -4619,7 +4633,10 @@ const en = {
     // The consequence, said out loud. You may still log it — but it will be held, and the ticket will
     // not move until a manager approves or refuses it. See [[FindingApprovalService]].
     statusConflictHeld: 'You can still log it, but it will wait for a manager’s approval and the ticket won’t move until then.',
-    searchPlaceholder: 'Search all issues — e.g. brake, A/C, oil…',
+    searchPlaceholder: 'Search for issues (e.g. brake, A/C, vibration, oil leak…)',
+    // Folds the suggested-checks panel. Not "AI" and not "analyse": it shows what this car's own
+    // record already says, and the button says only that.
+    suggestChecks: 'Suggest checks',
     clearSearch: 'Clear search',
     searchResults: '{count} matching issues',
     selectedCount: '{count} selected',
@@ -7504,6 +7521,10 @@ const ar = {
       checkpointTitle: 'تحديث التقدّم · {label}',
       checkpointFiled: 'تم تسجيل تحديث التقدّم.',
       checkpointFailed: 'تعذّر فتح تحديث التقدّم لهذه السيارة.',
+      summaryCars: 'سيارات في الورشة',
+      summaryCarsHint: 'عرض كل السيارات في الورشة',
+      summaryOverdue: 'تجاوزت موعدها',
+      summaryOverdueHint: 'عرض السيارات التي تجاوزت الموعد الموعود بإعادتها فيه فقط',
     },
     flags: {
       title: 'التنبيهات الاستباقية',
@@ -7513,6 +7534,7 @@ const ar = {
       emptyAll: 'لا توجد سيارات في الورشة الآن',
       emptySource: 'لا توجد سيارات في الورشة من هذا المصدر الآن',
       emptyPlate: 'لا توجد سيارة في الورشة تطابق هذه اللوحة',
+      emptyOverdue: 'لا توجد سيارة في الورشة تجاوزت موعدها',
       platePlaceholder: 'اللوحة أو الطراز…',
       plateAria: 'ابحث عن سيارة في الورشة باللوحة أو الطراز',
       plateClear: 'امسح بحث اللوحة',
@@ -7887,6 +7909,8 @@ const ar = {
     dueNow: 'مستحق الآن',
     bothSources: 'سجل + توقّع',
     openCategory: 'افتح فحوصات {category}',
+    addFinding: 'أضف {name}',
+    agendaNote: 'هذه فحوصات مقترحة. يمكنك إضافة الأعطال يدويًا من خانة البحث أعلاه.',
     group: {
       recurring: 'أعطال متكررة',
       forecast: 'توقّعات الصيانة',
@@ -10752,7 +10776,8 @@ const ar = {
     statusConflict: 'حالة السيارة الحالية تقول إنها غير مستحقة — {summary}. تأكّد قبل تسجيلها.',
     statusConflictFallback: 'حالة السيارة الحالية سليمة',
     statusConflictHeld: 'يمكنك تسجيلها رغم ذلك، لكنها ستنتظر موافقة المسؤول ولن تتحرّك البطاقة قبلها.',
-    searchPlaceholder: 'ابحث في كل الأعطال — مثل: فرامل، تكييف، زيت…',
+    searchPlaceholder: 'ابحث عن عطل (مثل: فرامل، تكييف، اهتزاز، تسريب زيت…)',
+    suggestChecks: 'اقترح فحوصات',
     clearSearch: 'مسح البحث',
     searchResults: '{count} عطل مطابق',
     selectedCount: '{count} محدَّد',
