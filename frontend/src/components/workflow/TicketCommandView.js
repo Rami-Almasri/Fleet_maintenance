@@ -727,7 +727,10 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                 tk.trigger_reason === 'customer_reported' ? (
                   <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50/60 px-4 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-500">{t('workflow.detail.complaint')}</p>
-                    <p className="mt-1 text-sm text-amber-900">{tk.customer_complaint}</p>
+                    {/* A complaint accumulates too — a second person adding to the open request is
+                        appended to the same string — so it is a list of statements for the same
+                        reason the agenda is. */}
+                    <NoteLines value={tk.customer_complaint} className="mt-1 text-sm text-amber-900" />
                   </div>
                 ) : (
                   <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">

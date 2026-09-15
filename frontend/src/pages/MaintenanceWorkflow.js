@@ -23,6 +23,7 @@ import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import TestIntakeModal from '../components/workflow/TestIntakeModal';
 import CreateMoveModal from './logistics/CreateMoveModal';
 import CycleGuide from '../components/workflow/CycleGuide';
+import { noteFacts } from '../components/workflow/NoteLines';
 import {
   resolveAction, allows, ctaLabel, TASK_STATUS, stageAge, stageSeconds,
   isAtGarage, custodyBlocked, custodyHolderName, heldFindings, findingHoldBlocks,
@@ -38,6 +39,10 @@ import './maintenance-workflow.css';
 // Cards shown per lane before the "+N more" toggle. Keeps every collapsed column short and roughly
 // even (no scroll); expanding a lane reveals all its cards on demand.
 const LANE_PAGE_SIZE = 3;
+
+// Statements of the raised note shown on a card before it is summarised as "+N more". A composed
+// agenda can run to five or six facts; a card that prints all of them stops being a card.
+const AGENDA_LINES = 3;
 
 /**
  * The car's photograph, or the honest fallbacks behind it. A picture is a claim about which vehicle
@@ -478,29 +483,49 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
           )}
         </div>
 
-        {/* System / driver-raised agenda (a complaint has its own pill above). The note is composed
-            elsewhere as "<what it is> — <what was measured>"; where it carries that dash the first
-            clause is set as the note's heading. Nothing is rewritten, and a note without the dash is
-            shown whole — the split is typography, not parsing. */}
-        {tk.customer_complaint && tk.trigger_reason !== 'customer_reported' && (
-          <div className="mwf-agenda" title={tk.customer_complaint}>
-            <span className="ic" aria-hidden="true">🕗</span>
-            <div className="tx">
-              {(() => {
-                const cut = tk.customer_complaint.indexOf('—');
-                if (cut > 0 && cut < 60) {
+        {/* System / driver-raised agenda (a complaint has its own pill above).
+            A composed note is SEVERAL independent statements glued together — the routine agenda, the
+            overdue clock, and whatever a colleague later added to the same open request — so it is
+            split back into those statements and each is given its own line. Read as one paragraph it
+            was a wall of amber text; read as a list it is the checklist it always was.
+            Within a line the note is composed as "<what it is> — <what was measured>", and where a
+            line carries that dash the first clause is set as its heading. Nothing is rewritten — the
+            stored note stays the frozen record of why the ticket was raised. */}
+        {tk.customer_complaint && tk.trigger_reason !== 'customer_reported' && (() => {
+          const facts = noteFacts(tk.customer_complaint);
+          if (facts.length === 0) return null;
+          // A board card is a glance, not a document: the first few statements are the ones that put
+          // the car on this lane. The rest are counted, and the full note stays on the hover title.
+          const shown = facts.slice(0, AGENDA_LINES);
+          const hidden = facts.length - shown.length;
+
+          return (
+            <div className="mwf-agenda" title={tk.customer_complaint}>
+              <span className="ic" aria-hidden="true">🕗</span>
+              <div className="tx">
+                {shown.map((fact, i) => {
+                  const cut = fact.indexOf('—');
+                  const heading = cut > 0 && cut < 60 ? fact.slice(0, cut).trim() : null;
                   return (
-                    <>
-                      <b>{tk.customer_complaint.slice(0, cut).trim()}</b>
-                      <span>{tk.customer_complaint.slice(cut + 1).trim()}</span>
-                    </>
+                    <p className="ln" key={i} dir="auto">
+                      {heading ? (
+                        <>
+                          <b>{heading}</b>
+                          <span>{fact.slice(cut + 1).trim()}</span>
+                        </>
+                      ) : (
+                        <span>{fact}</span>
+                      )}
+                    </p>
                   );
-                }
-                return <span>{tk.customer_complaint}</span>;
-              })()}
+                })}
+                {hidden > 0 && (
+                  <p className="more">{tp('workflow.agenda.more', hidden)}</p>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Live position — where the car actually is */}
         {tk.position?.label && (

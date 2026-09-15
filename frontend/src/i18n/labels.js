@@ -3289,6 +3289,14 @@ const en = {
         other: 'Needs approval · {n}',
       },
     },
+    // The raised note is a LIST of statements and the card prints the first few. The rest are counted
+    // here rather than dropped, so nobody reads a trimmed note as the whole reason.
+    agenda: {
+      more: {
+        one: '+1 more line',
+        other: '+{n} more lines',
+      },
+    },
     cardAction: {
       triage: 'Handle complaint',
       start: 'Start test',
@@ -9492,6 +9500,16 @@ const ar = {
         few: 'يحتاج موافقة · {n}',
         many: 'يحتاج موافقة · {n}',
         other: 'يحتاج موافقة · {n}',
+      },
+    },
+    agenda: {
+      more: {
+        zero: '',
+        one: '+ سطر واحد آخر',
+        two: '+ سطران آخران',
+        few: '+ {n} أسطر أخرى',
+        many: '+ {n} سطرًا آخر',
+        other: '+ {n} سطر آخر',
       },
     },
     cardAction: {

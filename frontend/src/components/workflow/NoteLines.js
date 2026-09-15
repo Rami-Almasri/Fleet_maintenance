@@ -21,11 +21,17 @@ import React from 'react';
 // regex literal parses on every browser the fleet is opened on.
 const FACT_BOUNDARY = /([^0-9][.!?])\s+(?=[A-Z“"(~])/g;
 
+// The other boundary is explicit: when a second person adds to an open request the backend appends
+// their sentence to the note joined by " · " (MaintenanceWorkflowService::addToOpenRequest). That
+// middot is a seam between two people's statements, so it separates facts even without a full stop —
+// and it must, because the appended sentence may be Arabic and never starts with [A-Z].
+const THREAD_SEPARATOR = /\s+·\s+/;
+
 /** Split a note into its separate facts, in order. Returns [] for an empty note. */
 export function noteFacts(value) {
   const out = [];
 
-  for (const line of String(value || '').split(/\r?\n+/)) {
+  for (const line of String(value || '').split(/\r?\n+/).flatMap((l) => l.split(THREAD_SEPARATOR))) {
     let start = 0;
     let match;
     FACT_BOUNDARY.lastIndex = 0;
@@ -63,7 +69,9 @@ export default function NoteLines({ value, facts, className = '', quote = false 
       {lines.map((fact, i) => (
         <li key={i} className="flex gap-1.5">
           <span aria-hidden className="select-none opacity-50">–</span>
-          <span className="min-w-0 flex-1">{fact}</span>
+          {/* dir="auto" per line: a thread can hold an English fact and an Arabic one, and each must
+              be laid out by its OWN script rather than by the paragraph's. */}
+          <span dir="auto" className="min-w-0 flex-1">{fact}</span>
         </li>
       ))}
     </ul>

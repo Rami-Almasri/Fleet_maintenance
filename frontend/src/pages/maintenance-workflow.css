@@ -235,8 +235,13 @@
   overflow-wrap:anywhere;word-break:break-word}
 .mwf-agenda .ic{flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:50%;
   font-size:13px;background:rgba(245,165,36,.16)}
-.mwf-agenda .tx{min-width:0;display:flex;flex-direction:column;gap:2px}
-.mwf-agenda .tx b{font-size:12px;font-weight:800;letter-spacing:-.01em;color:var(--ink)}
+.mwf-agenda .tx{min-width:0;display:flex;flex-direction:column;gap:6px}
+/* one statement per line, each led by its own heading. The lines are separated by a hairline rather
+   than by whitespace alone, so three facts never read as one wrapped sentence. */
+.mwf-agenda .ln{display:flex;flex-direction:column;gap:1px;min-width:0;margin:0}
+.mwf-agenda .ln + .ln{border-top:1px solid rgba(245,165,36,.22);padding-top:6px}
+.mwf-agenda .ln b{font-size:12px;font-weight:800;letter-spacing:-.01em;color:var(--ink)}
+.mwf-agenda .more{margin:0;font-size:10.5px;font-weight:700;color:var(--ink-3,var(--ink-2));opacity:.8}
 
 /* the fault block — where the work is happening, and everything that is wrong with the car */
 .mwf-tasks{display:flex;flex-direction:column;gap:5px;padding:0 9px 9px;border-radius:11px;
