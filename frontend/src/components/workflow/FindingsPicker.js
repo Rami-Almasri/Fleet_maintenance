@@ -238,13 +238,22 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
   // Diagnosis-step watchdog through useFaultHistory, so step 2 and step 3 cannot disagree.
   const { byTag: faultHistory } = useFaultHistory(vehicleId, value, ticketId, true);
 
-  // Only FAULTS get a history line. A planned service repeating is normal — telling an inspector that
-  // "Oil Change" has happened four times before is noise dressed as a warning, and is the same audit
-  // ruling (M2) that keeps services out of the chronic-fault watchdog.
-  const faultHistoryRows = useMemo(
+  // BOTH sides of the pick get a "when was this last?" line — but they are not the same sentence.
+  //
+  // A fault repeating is a WARNING: "Seen 4× before, last 11 days ago" is the thing that changes what
+  // the inspector writes down as the cause. A service repeating is normal, and audit ruling M2 keeps
+  // it out of the chronic-fault watchdog for exactly that reason. What M2 bans is ALARMING about a
+  // repeating service — not stating when it was last done. "Oil Change — last done 14 Mar, 184 days
+  // ago" is the plain fact an inspector needs before confirming he is about to order it again, and
+  // withholding it is how the same service gets done twice in a month.
+  //
+  // So services are included here and rendered in the neutral sky/slate treatment below, never in the
+  // amber "seen n× before" one. The fetch already carried them: the backend answers per tag and has
+  // never filtered by kind — this filter was the only thing dropping them.
+  const historyRows = useMemo(
     () => value
-      .filter((k) => kwKind(k) === 'fault' && faultHistory[k])
-      .map((k) => ({ keyword: k, it: faultHistory[k] })),
+      .filter((k) => (kwKind(k) === 'fault' || kwKind(k) === 'service') && faultHistory[k])
+      .map((k) => ({ keyword: k, it: faultHistory[k], service: kwKind(k) === 'service' })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [value, faultHistory],
   );
@@ -544,28 +553,35 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
               Read from BOTH ledgers. `history` is the exact fault; `related` is a different fault in
               the same system — a weaker, separate claim, named and dated so it can be judged rather
               than merely hinted at. */}
-          {faultHistoryRows.length > 0 && (
+          {historyRows.length > 0 && (
             <div className="mt-2 space-y-1 border-t border-indigo-200/70 pt-2">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
                 {t('On this car before')}
               </p>
-              {faultHistoryRows.map(({ keyword, it }) => (
+              {historyRows.map(({ keyword, it, service }) => (
                 <div key={`hist-${keyword}`} className="rounded-lg bg-white/80 px-2 py-1.5 text-[11px] ring-1 ring-indigo-200/60">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="min-w-0 truncate font-medium text-slate-700">{kwLabel(keyword)}</span>
+                    {/* The count, said in the register the KIND deserves. A service that has been done
+                        four times is a maintained car (sky, a statement); a fault seen four times is a
+                        car that keeps failing (amber, a warning). Same number, opposite news. */}
                     {it.occurrences > 0 ? (
-                      <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-px font-bold text-amber-700">
-                        {t('Seen {n}× before', { n: it.occurrences })}
+                      <span className={`shrink-0 rounded-full px-1.5 py-px font-bold ${service ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {service
+                          ? tf('findingsPicker.doneBefore', 'Done {n}× before', { n: it.occurrences })
+                          : t('Seen {n}× before', { n: it.occurrences })}
                       </span>
                     ) : (
                       <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-px font-semibold text-slate-500">
-                        {t('First time')}
+                        {service ? tf('findingsPicker.noServiceRecord', 'No record of this service') : t('First time')}
                       </span>
                     )}
                   </div>
                   {it.occurrences > 0 && it.last_seen && (
                     <p className="mt-0.5 text-slate-500">
-                      {t('Last {date}', { date: it.last_seen })}
+                      {service
+                        ? tf('findingsPicker.lastDone', 'Last done {date}', { date: it.last_seen })
+                        : t('Last {date}', { date: it.last_seen })}
                       {it.days_since_last != null && ` · ${t('{n} days ago', { n: it.days_since_last })}`}
                       {it.source_code === 'BOTH'
                         ? ` · ${t('Seen in both sources')}`
@@ -575,8 +591,10 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
                     </p>
                   )}
                   {/* Named and dated, never "this car has had engine trouble" — a system word is not
-                      something anyone can act on. */}
-                  {it.related_count > 0 && (
+                      something anyone can act on. Faults only: "you picked Oil Change, and this car
+                      has also had an oil leak" is a real and useful link on a FAULT, but under a
+                      planned service it reads as a reason not to do the service. */}
+                  {!service && it.related_count > 0 && (
                     <p className="mt-0.5 text-slate-400">
                       {t('Same system:')}{' '}
                       {it.related.map((r) => `${r.label} ${r.count}× (${r.last})`).join(' · ')}

@@ -4649,6 +4649,13 @@ const en = {
     // Reworded from the old `noMatches`: it used to end the road at "add it as a custom issue", which
     // is what put real faults outside the vocabulary. The ontology now gets the same text first.
     noLiteralMatch: 'No issue is named “{query}”.',
+    // WHEN WAS THIS LAST? — said for a picked SERVICE as well as for a picked fault, in the register
+    // each deserves. A service repeating is not a warning (audit ruling M2 keeps it out of the
+    // chronic-fault watchdog), but an inspector about to order an oil change needs to know the last
+    // one was fourteen days ago. "Done", not "seen": a service is work carried out, not a symptom.
+    doneBefore: 'Done {n}× before',
+    lastDone: 'Last done {date}',
+    noServiceRecord: 'No record of this service',
   },
   // THE HOLD — a finding the car's own data disagrees with, parked until somebody with the authority
   // approves or refuses it. Every sentence names a PERSON and a CONSEQUENCE ("won't move", "goes
@@ -10789,6 +10796,9 @@ const ar = {
     expandAll: 'فتح الكل',
     collapseAll: 'طي الكل',
     noLiteralMatch: 'لا يوجد عطل بهذا الاسم «{query}».',
+    doneBefore: 'نُفِّذت {n} مرة من قبل',
+    lastDone: 'آخر مرة {date}',
+    noServiceRecord: 'لا سجل لهذه الصيانة',
   },
   findingApproval: {
     title: {
