@@ -1,8 +1,10 @@
 import { useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import TabbedHub from '../components/ui/TabbedHub';
 import Icon from '../components/ui/Icon';
 import { useI18n } from '../i18n/I18nContext';
 import Parts from './Parts';
+import PartsOverview from './PartsOverview';
 import PartInvoices from './PartInvoices';
 import PartsCatalog from './PartsCatalog';
 import PartVariants from './PartVariants';
@@ -27,11 +29,22 @@ import Warranties from './Warranties';
  * their own per-action permissions (approving a purchase, curating the catalog, filing a claim).
  * The old /part-invoices, /parts-catalog and /warranties URLs redirect into their tab.
  */
+// The board's own deep-link params. A URL carrying one of these was written for the requests board —
+// before Overview existed and took the first slot — so it still opens the board.
+const BOARD_PARAMS = ['focus', 'ticket', 'request', 'request_id', 'purchase', 'status'];
+
 export default function PartsHub() {
   const { t } = useI18n();
+  const [params] = useSearchParams();
+  const initialTab = BOARD_PARAMS.some((p) => params.get(p)) ? 'board' : undefined;
 
   const tabs = useMemo(
     () => [
+      // Overview comes first because it is the only tab that answers a question WITHOUT a row in
+      // mind: how much is moving, what we keep buying, where the queue is sitting. Every tile and
+      // slice on it is a door into the board beside it, so it reads as a way in rather than a
+      // detour. It counts the same requests the board lists — it stores nothing of its own.
+      { key: 'overview', label: t('Overview'), icon: <Icon.Chart className="h-4 w-4" />, permission: 'parts.view', Component: PartsOverview },
       { key: 'board', label: t('Requests & Purchases'), icon: <Icon.Coins className="h-4 w-4" />, permission: 'parts.view', was: '/parts', Component: Parts },
       // The shelf sits next to the board because the first question at request time is "do we
       // already have one?" — and the answer to it lives here.
@@ -60,6 +73,7 @@ export default function PartsHub() {
       subtitle={t('Everything about a part in one place — what was asked for and bought, what the supplier charged, the names the whole app selects from, and the warranty that came with it.')}
       ariaLabel={t('Parts sections')}
       tabs={tabs}
+      initialTab={initialTab}
     />
   );
 }

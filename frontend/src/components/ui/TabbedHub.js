@@ -25,7 +25,7 @@ import { useI18n } from '../../i18n/I18nContext';
  *   permission — omit (or null) for "any authenticated user"; `permissionAny` takes a list instead.
  *   was        — the pre-consolidation route, checked against the role deny list.
  */
-export default function TabbedHub({ title, subtitle, ariaLabel, tabs, children }) {
+export default function TabbedHub({ title, subtitle, ariaLabel, tabs, initialTab, children }) {
   const { can, canAny, roles } = usePermissions();
   const { t } = useI18n();
 
@@ -39,9 +39,17 @@ export default function TabbedHub({ title, subtitle, ariaLabel, tabs, children }
   );
 
   // The active tab lives in the URL (?tab=…) so every section stays deep-linkable. An unknown or
-  // not-permitted tab falls back to the first one this user can actually see.
+  // not-permitted tab falls back to `initialTab` if the hub named one, then to the first tab this
+  // user can actually see.
+  //
+  // `initialTab` exists for the links that predate a hub's tab order: /parts?focus=812 means the
+  // requests board and always did, and putting a new tab in front of it must not silently redirect
+  // every such link. The hub reads its own deep-link params and names the tab they belong to.
   const [searchParams, setSearchParams] = useSearchParams();
-  const current = visible.find((tab) => tab.key === searchParams.get('tab')) || visible[0];
+  const current =
+    visible.find((tab) => tab.key === searchParams.get('tab')) ||
+    (initialTab ? visible.find((tab) => tab.key === initialTab) : null) ||
+    visible[0];
   // Switching tabs drops the previous section's own params (?focus, ?ticket, …) — they mean nothing
   // to the tab being opened.
   const setActive = (key) => setSearchParams({ tab: key }, { replace: true });
