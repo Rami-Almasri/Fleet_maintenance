@@ -26,7 +26,9 @@ const PAGE_SIZE = 15;
 const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
 
 // Lifecycle → badge tone. Ordered from intake to done, then the two terminals.
-const STATUS_TONE = {
+// Exported because the Overview tab badges and colours the SAME statuses. One map, so a badge on the
+// board and a slice of the Overview donut can never disagree about what "purchased" looks like.
+export const STATUS_TONE = {
   requested: 'slate',
   under_review: 'blue',
   approved: 'cyan',
@@ -36,7 +38,7 @@ const STATUS_TONE = {
   rejected: 'red',
   cancelled: 'gray',
 };
-const STATUS_LABEL = {
+export const STATUS_LABEL = {
   requested: 'Requested',
   under_review: 'Under review',
   approved: 'Approved',
@@ -50,10 +52,10 @@ const STATUS_LABEL = {
 // 'under_review' is retired (the Review step was removed) so it's no longer a headline tile;
 // STATUS_META/STATUS_LABEL keep it defined so any legacy row still renders its badge.
 const TILE_STATUSES = ['requested', 'approved', 'purchased', 'installed', 'completed'];
-const ALL_STATUSES = [...TILE_STATUSES, 'rejected', 'cancelled'];
+export const ALL_STATUSES = [...TILE_STATUSES, 'rejected', 'cancelled'];
 
-const CLASS_TONE = { consumable: 'gray', standard: 'blue', major: 'amber' };
-const CLASS_LABEL = { consumable: 'Consumable', standard: 'Standard', major: 'Major' };
+export const CLASS_TONE = { consumable: 'gray', standard: 'blue', major: 'amber' };
+export const CLASS_LABEL = { consumable: 'Consumable', standard: 'Standard', major: 'Major' };
 const SOURCE_TONE = { customer: 'violet', garage: 'amber' };
 // Who raised the request. The English here is the translation key; an unknown value falls back to the raw enum.
 const REQUEST_SOURCE_LABEL = { customer: 'Customer', garage: 'Garage' };
@@ -914,17 +916,24 @@ export default function Parts() {
     return () => { alive = false; };
   }, []);
 
-  const [search, setSearch] = useState('');
-  const [source, setSource] = useState('');
-  const [status, setStatus] = useState('');
-  const [page, setPage] = useState(1);
-
-  // ─── Deep links from the ticket's Parts section ───────────────────────────
+  // ─── Deep links from the ticket's Parts section, and from the Overview tab ────────────────
   // ?focus=<request id> → jump to the page holding that row, scroll to it, highlight it.
   // ?ticket=<maintenance id> → scope the board to one ticket's parts.
+  // ?status=<lifecycle status> → land on the board already filtered, which is what an Overview tile
+  //   or a slice of its status donut means when it is clicked. Read once, as the opening position:
+  //   the dropdown and the tiles stay in charge from then on, so changing the filter here doesn't
+  //   fight the URL.
   const [params, setParams] = useSearchParams();
   const focusId = Number(params.get('focus')) || null;
   const ticketId = Number(params.get('ticket')) || null;
+
+  const [search, setSearch] = useState('');
+  const [source, setSource] = useState('');
+  const [status, setStatus] = useState(() => {
+    const s = params.get('status');
+    return ALL_STATUSES.includes(s) ? s : '';
+  });
+  const [page, setPage] = useState(1);
   const [highlightId, setHighlightId] = useState(null);
   const focusHandled = useRef(false);
   useEffect(() => { focusHandled.current = false; }, [focusId]);
